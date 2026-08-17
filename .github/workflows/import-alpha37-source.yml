@@ -1,0 +1,84 @@
+name: Import SiteScope Pro alpha37 source
+
+on:
+  push:
+    paths:
+      - 'SiteScopePro-0.39.0-alpha37-Sources.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive='SiteScopePro-0.39.0-alpha37-Sources.zip'
+          test -f "$archive"
+          unzip -t "$archive" >/dev/null
+          rm -rf .source-unpack
+          mkdir .source-unpack
+          unzip -q "$archive" -d .source-unpack
+          root="$(find .source-unpack -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          test -n "$root"
+          test -d "$root/android-direct/src"
+          test -d "$root/android-direct/res"
+          test -f "$root/android-direct/AndroidManifest.xml"
+          grep -R -q '0.39.0-alpha37' "$root" --include='*.gradle' --include='*.kts' --include='*.txt' --include='*.md' --include='*.java' || {
+            echo 'Expected version 0.39.0-alpha37 not found in source snapshot.' >&2
+            exit 1
+          }
+          echo "SOURCE_ROOT=$root" >> "$GITHUB_ENV"
+
+      - name: Expand project into repository root
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s dotglob nullglob
+          for item in "$SOURCE_ROOT"/*; do
+            name="$(basename "$item")"
+            case "$name" in
+              README.md|.github) continue ;;
+            esac
+            rm -rf -- "$name"
+            cp -a -- "$item" "$name"
+          done
+          rm -rf .source-unpack .source-import .source-stage-v039 .source-import-fixed
+          rm -f SiteScopePro-0.39.0-alpha37-Sources.zip
+
+      - name: Verify expanded tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d android-direct/src
+          test -d android-direct/res
+          test -d scripts
+          test -d tests
+          test -d backend
+          test -d contracts
+          test -d docs
+          test -f android-direct/AndroidManifest.xml
+          test -f TEST_REPORT_0.39.0-alpha37.txt
+          grep -q 'OVERALL=PASS' TEST_REPORT_0.39.0-alpha37.txt
+
+      - name: Commit expanded source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'Nothing to commit.'
+            exit 0
+          fi
+          git commit -m 'Expand SiteScope Pro 0.39.0 alpha37 source in repository root'
+          git push origin HEAD:main
