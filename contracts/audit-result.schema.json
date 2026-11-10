@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuditResult",
+  "type": "object",
+  "required": [
+    "target",
+    "score",
+    "issues",
+    "pages"
+  ],
+  "properties": {
+    "target": {
+      "type": "string"
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "issues": {
+      "type": "array"
+    },
+    "pages": {
+      "type": "array"
+    }
+  }
+}

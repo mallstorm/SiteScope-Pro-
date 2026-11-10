@@ -1,0 +1,1 @@
+-keep class pro.sitescope.app.data.** { *; }

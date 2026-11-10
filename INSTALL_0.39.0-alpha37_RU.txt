@@ -1,0 +1,37 @@
+SiteScope Pro 0.39.0-alpha37
+
+Установка:
+1. Установите APK поверх версии 0.38.
+2. Удалять приложение не требуется: сертификат совпадает.
+3. Xray-профили и hosts-профили сохраняются.
+
+Проверка:
+1. Отключите другой VPN и дождитесь исчезновения его значка.
+2. Откройте SiteScope → IP Engineering → Hosts Manager.
+3. Нажмите «Применить» → XRAY один раз.
+4. После XRAY_READY кнопка «Применить» должна стать неактивной с текстом
+   «VPN активен», а «Отключить VPN» — активной.
+5. Необязательная проверка Интернета продолжится в фоне.
+
+Нормальный журнал:
+VPN_SLOT_READY
+VPN_UNDERLAY_READY
+XRAY_ENDPOINT_READY
+VPN_UNDERLYING_SET
+VPN_TUN_ESTABLISHED
+XRAY_CORE_READY
+HEV_READY
+XRAY_RUNTIME_READY
+XRAY_RUNTIME_RETURN
+VPN_NETWORK_CHECK | visible=true, own=true
+XRAY_READY | bootstrap confirmed, health=pending
+XRAY_HEALTH_PROBE_START
+
+Затем:
+XRAY_OUTBOUND_CONFIRMED
+или XRAY_HEALTH_WARNING.
+
+XRAY_HEALTH_WARNING больше не отключает VPN.
+
+Если Android/нативный core перезапустит процесс, через 9 секунд появится
+VPN_STALE_RECOVERED, кнопки разблокируются, а Hosts Manager откроется снова.

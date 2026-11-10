@@ -1,0 +1,221 @@
+SiteScope Pro 0.39.0-alpha37
+OVERALL=PASS
+
+Change set: ACTIVE before non-fatal health probe; removed process-wide network binding; own-VPN detection; stale-service recovery and automatic return to Hosts Manager.
+
+===== validate =====
+Static validation PASS: 89 files + SEO technology detection + full DNS/RDAP infrastructure + SQLite migration + atomic DB-IP staging + modular activities
+RESULT: PASS validate
+
+===== hosts-manager =====
+warning: [options] bootstrap class path not set in conjunction with -source 8
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+4 warnings
+Hosts Manager harness PASS
+Hosts Manager Android contract PASS
+RESULT: PASS hosts-manager
+
+===== hosts-xray =====
+Hosts + Xray combined VPN contract PASS
+warning: [options] bootstrap class path not set in conjunction with -source 8
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+Note: /mnt/data/sitescope_work/SiteScopePro_0.39.0-alpha37/android-direct/src/pro/sitescope/app/DnsAnalyzer.java uses unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+4 warnings
+Hosts + Xray Java compile contract PASS
+RESULT: PASS hosts-xray
+
+===== xray-config =====
+warning: [options] bootstrap class path not set in conjunction with -source 8
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+4 warnings
+XRAY_CONFIG_HARNESS_PASS
+RESULT: PASS xray-config
+
+===== scanner =====
+warning: [options] bootstrap class path not set in conjunction with -source 8
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+Note: /tmp/sitescope-scanner-test-3268/src/pro/sitescope/app/ScannerHarness.java uses unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+4 warnings
+PASS: CIDR /30
+PASS: dotted mask
+PASS: short range
+PASS: wildcard
+PASS: port expressions
+PASS: extended full port range
+PASS: extended private /16
+PASS: private target policy
+PASS: public target policy
+PASS: standard profile remains bounded
+PASS: task pause state
+PASS: task resume state
+PASS: scan completion
+PASS: SSH custom port: {28080=HTTP, 25060=SIP, 22022=SSH, 24022=udpxy, 25672=AMQP, 22025=SMTP, 28554=RTSP, 21211=Memcached, 21883=MQTT, 23390=RDP}
+PASS: SMTP custom port: {28080=HTTP, 25060=SIP, 22022=SSH, 24022=udpxy, 25672=AMQP, 22025=SMTP, 28554=RTSP, 21211=Memcached, 21883=MQTT, 23390=RDP}
+PASS: RDP custom port: {28080=HTTP, 25060=SIP, 22022=SSH, 24022=udpxy, 25672=AMQP, 22025=SMTP, 28554=RTSP, 21211=Memcached, 21883=MQTT, 23390=RDP}
+PASS: HTTP custom port: {28080=HTTP, 25060=SIP, 22022=SSH, 24022=udpxy, 25672=AMQP, 22025=SMTP, 28554=RTSP, 21211=Memcached, 21883=MQTT, 23390=RDP}
+PASS: RTSP custom port: {28080=HTTP, 25060=SIP, 22022=SSH, 24022=udpxy, 25672=AMQP, 22025=SMTP, 28554=RTSP, 21211=Memcached, 21883=MQTT, 23390=RDP}
+PASS: SIP custom port: {28080=HTTP, 25060=SIP, 22022=SSH, 24022=udpxy, 25672=AMQP, 22025=SMTP, 28554=RTSP, 21211=Memcached, 21883=MQTT, 23390=RDP}
+PASS: MQTT custom port: {28080=HTTP, 25060=SIP, 22022=SSH, 24022=udpxy, 25672=AMQP, 22025=SMTP, 28554=RTSP, 21211=Memcached, 21883=MQTT, 23390=RDP}
+PASS: Memcached custom port: {28080=HTTP, 25060=SIP, 22022=SSH, 24022=udpxy, 25672=AMQP, 22025=SMTP, 28554=RTSP, 21211=Memcached, 21883=MQTT, 23390=RDP}
+PASS: AMQP custom port: {28080=HTTP, 25060=SIP, 22022=SSH, 24022=udpxy, 25672=AMQP, 22025=SMTP, 28554=RTSP, 21211=Memcached, 21883=MQTT, 23390=RDP}
+PASS: udpxy custom port: {28080=HTTP, 25060=SIP, 22022=SSH, 24022=udpxy, 25672=AMQP, 22025=SMTP, 28554=RTSP, 21211=Memcached, 21883=MQTT, 23390=RDP}
+SCANNER_HARNESS_PASS rows=10 services={28080=HTTP, 25060=SIP, 22022=SSH, 24022=udpxy, 25672=AMQP, 22025=SMTP, 28554=RTSP, 21211=Memcached, 21883=MQTT, 23390=RDP}
+RESULT: PASS scanner
+
+===== discovery =====
+warning: [options] bootstrap class path not set in conjunction with -source 8
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+Note: /tmp/sitescope-discovery-test-g0Ce/src/pro/sitescope/app/NetworkDiscoveryEngine.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+4 warnings
+PASS: SSDP LOCATION
+PASS: SSDP router classification
+PASS: ONVIF XAddrs
+PASS: ONVIF scope name
+PASS: mDNS printer classification
+PASS: DNS-SD PTR query
+DISCOVERY_HARNESS_PASS bytes=46
+RESULT: PASS discovery
+
+===== ip-intelligence =====
+warning: [options] bootstrap class path not set in conjunction with -source 8
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+Note: /tmp/sitescope-ip-intelligence-test-3475/src/pro/sitescope/app/IpDataStore.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+4 warnings
+PASS: CIDR network
+PASS: CIDR broadcast/end
+PASS: range to minimal CIDR
+PASS: aggregate adjacent ranges
+PASS: decimal to IPv4
+PASS: IPv6 expansion
+PASS: RFC4180 quoted CSV
+PASS: DB source version parsing
+PASS: current DB version freshness
+IP_INTELLIGENCE_HARNESS_PASS
+RESULT: PASS ip-intelligence
+
+===== provider-core =====
+warning: [options] bootstrap class path not set in conjunction with -source 8
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+4 warnings
+PROVIDER_CORE_HARNESS_PASS
+RESULT: PASS provider-core
+
+===== iptv =====
+warning: [options] bootstrap class path not set in conjunction with -source 8
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+Note: /tmp/sitescope-iptv-test-3592/src/pro/sitescope/app/IptvEngine.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+4 warnings
+PASS M3U count
+PASS M3U name
+PASS M3U group
+PASS udpxy URL http://192.168.1.1:4022/udp/239.1.1.1:1234
+PASS udpxy probe
+PASS MPEG-TS probe error=
+PASS DVB-SDT name=News HD
+PASS PMT video=H.264/AVC
+PASS PMT audio=AAC
+IPTV_HARNESS_PASS service=News HD video=H.264/AVC audio=AAC
+RESULT: PASS iptv
+
+===== multicast =====
+warning: [options] bootstrap class path not set in conjunction with -source 8
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+4 warnings
+PASS: UDP parse
+PASS: RTP parse
+PASS: TS sync
+PASS: RTP strip
+PASS: RTP TS payload
+PASS: unicast reject
+MULTICAST_SUPPORT_HARNESS_PASS
+RESULT: PASS multicast
+
+===== mdns =====
+warning: [options] bootstrap class path not set in conjunction with -source 8
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+4 warnings
+PASS SRV parsed
+PASS SRV endpoint
+PASS A record
+PASS TXT record
+PASS service type
+PASS protocol mapping
+MDNS_PARSER_HARNESS_PASS
+RESULT: PASS mdns
+
+===== protocol-router =====
+warning: [options] bootstrap class path not set in conjunction with -source 8
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+4 warnings
+Protocol Router harness PASS
+RESULT: PASS protocol-router
+
+===== native-clients =====
+Native protocol packaging contract PASS: classes and declared protocol primitives are present; real-device compatibility is not asserted
+RESULT: PASS native-clients
+
+===== connection-inventory =====
+CONNECTION_INVENTORY_CONTRACT_PASS
+RESULT: PASS connection-inventory
+
+===== backup =====
+BACKUP_PROJECTS_CONTRACT_PASS
+RESULT: PASS backup
+
+===== tls =====
+TLS trust contract PASS: one-time proceed + exact SHA-256 host pin + mismatch block + trust removal
+RESULT: PASS tls
+
+===== stabilization =====
+Stabilization contract PASS: SQLite migration, atomic DB-IP, split IP workspaces, modular root activities, virtualized lists, active scan result persistence, honest readiness labels
+RESULT: PASS stabilization
+
+===== ui-cleanup =====
+UI_HEADER_CLEANUP_PASS
+RESULT: PASS ui-cleanup
+
+===== seo-domain =====
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+Note: /mnt/data/sitescope_work/SiteScopePro_0.39.0-alpha37/android-direct/src/pro/sitescope/app/DnsAnalyzer.java uses unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+3 warnings
+SEO domain harness PASS: CMS=WordPress 99% ? DNS records=3
+RESULT: PASS seo-domain
+
+===== backend-pytest =====
+...............                                                          [100%]
+15 passed in 0.19s
+RESULT: PASS backend-pytest
+
+OVERALL=PASS
