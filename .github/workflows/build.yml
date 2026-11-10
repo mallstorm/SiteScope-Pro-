@@ -1,0 +1,78 @@
+name: Build APK
+
+on:
+  push:
+    branches: [redesign, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore original signing key (optional)
+        env:
+          P12_B64: ${{ secrets.SITESCOPE_SIGNING_P12_BASE64 }}
+        run: |
+          if [ -n "$P12_B64" ]; then
+            echo "$P12_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+            echo "SITESCOPE_SIGNING_P12=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
+          fi
+
+      - name: Test and build
+        env:
+          SITESCOPE_KEYSTORE_PASSWORD: ${{ secrets.SITESCOPE_KEYSTORE_PASSWORD }}
+          SITESCOPE_KEY_ALIAS: ${{ secrets.SITESCOPE_KEY_ALIAS }}
+          SITESCOPE_KEY_PASSWORD: ${{ secrets.SITESCOPE_KEY_PASSWORD }}
+        run: |
+          set -o pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace testReleaseUnitTest assembleRelease 2>&1 | tee build.log
+
+      - name: Publish build log
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/logs" && cd "$RUNNER_TEMP/logs"
+          cp "$GITHUB_WORKSPACE/build.log" build.log 2>/dev/null || echo "no log" > build.log
+          grep -nE "^e: |^w: .*error|error:|FAILED|What went wrong|Unresolved|Exception" -A4 build.log | head -n 600 > errors.log || true
+          tail -n 250 build.log > tail.log
+          echo "$GITHUB_SHA ${{ job.status }}" > status.txt
+          rm -f build.log
+          git init -q && git checkout -q -b ci-logs
+          git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add . && git commit -q -m "CI log for $GITHUB_SHA"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-logs
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          apk=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
+          version=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          cp "$apk" "dist/SiteScopePro-$version.apk"
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        with: { name: SiteScopePro-apk, path: dist/ }
+
+      - name: Publish beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete beta --yes --cleanup-tag 2>/dev/null || true
+          gh release create beta dist/* --prerelease --target "$GITHUB_SHA" \
+            --title "SiteScope Pro — свежая сборка" \
+            --notes "Автоматическая сборка из ветки ${GITHUB_REF_NAME} (${GITHUB_SHA::7}). Установите APK на телефон (arm64)."
