@@ -1,6 +1,7 @@
 package pro.sitescope.app.tv
 
 import android.content.Context
+import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
 import pro.sitescope.app.DataStore
@@ -31,11 +32,14 @@ object TvStore {
         installBridge(context.applicationContext)
         val file = File(context.filesDir, FILE)
         try {
-            if (file.exists()) read(JSONObject(file.readText())) else migrateLegacy(context)
+            if (file.exists() || File(file.path + ".bak").exists()) {
+                AtomicFile(file).openRead().bufferedReader().use { read(JSONObject(it.readText())) }
+            } else migrateLegacy(context)
         } catch (e: Exception) { /* повреждённый файл — начинаем с чистого листа */ }
     }
 
     private fun read(o: JSONObject) {
+        sources.clear(); channels.clear(); epgUrls.clear()
         udpxyBase = o.optString("udpxy"); threads = o.optInt("threads", 8); timeoutMs = o.optInt("timeout", 8000)
         lastCheckAt = o.optLong("lastCheck"); autoCheck = o.optBoolean("autoCheck")
         o.optJSONArray("epg")?.let { for (i in 0 until it.length()) epgUrls.add(it.getString(i)) }
@@ -77,7 +81,13 @@ object TvStore {
 
     @Synchronized fun save(context: Context) {
         try {
-            val o = JSONObject()
+            writeState(context, snapshotState())
+            if (channels.isEmpty()) DataStore(context).removeProject("IPTV", "iptv://catalog")
+        } catch (e: Exception) { android.util.Log.e("TvStore", "Cannot save TV catalog", e) }
+    }
+
+    private fun snapshotState(): JSONObject {
+            val o = JSONObject().put("schemaVersion", 1)
             o.put("udpxy", udpxyBase); o.put("threads", threads); o.put("timeout", timeoutMs)
             o.put("lastCheck", lastCheckAt); o.put("autoCheck", autoCheck)
             o.put("epg", JSONArray(epgUrls))
@@ -88,15 +98,43 @@ object TvStore {
             val ch = JSONArray()
             for (c in channels) ch.put(channelTo(c))
             o.put("channels", ch)
-            val tmp = File(context.filesDir, "$FILE.tmp")
-            tmp.writeText(o.toString())
-            tmp.renameTo(File(context.filesDir, FILE))
-            // Раздел «Проекты» прежней версии продолжает видеть каталог
-            try {
-                val playable = channels.count { it.status == StreamStatus.OK || it.status == StreamStatus.SLOW }
-                if (channels.isEmpty()) DataStore(context).removeProject("IPTV", "iptv://catalog")
-            } catch (e: Exception) { }
-        } catch (e: Exception) { }
+            return o
+    }
+
+    private fun writeState(context: Context, state: JSONObject) {
+        val file = AtomicFile(File(context.filesDir, FILE))
+        val output = file.startWrite()
+        try { output.write(state.toString().toByteArray(Charsets.UTF_8)); file.finishWrite(output) }
+        catch (e: Exception) { file.failWrite(output); throw e }
+    }
+
+    @Synchronized fun exportState(context: Context): JSONObject {
+        load(context)
+        return snapshotState()
+    }
+
+    fun validateState(state: JSONObject) {
+        require(state.optInt("schemaVersion", 1) == 1) { "Неподдерживаемый формат ТВ-каталога" }
+        for (key in listOf("sources", "channels", "epg")) {
+            val rows = state.getJSONArray(key)
+            for (i in 0 until rows.length()) {
+                if (key == "epg") require(rows.get(i) is String) { "Неверный адрес телепрограммы" }
+                else rows.getJSONObject(i)
+            }
+        }
+    }
+
+    @Synchronized fun restoreState(context: Context, state: JSONObject) {
+        validateState(state)
+        writeState(context, state)
+        read(state); loaded = true; installBridge(context.applicationContext)
+    }
+
+    /** Backups before schema 7 stored the catalog in legacy preferences. */
+    @Synchronized fun restoreLegacy(context: Context) {
+        read(JSONObject()); loaded = true; installBridge(context.applicationContext)
+        migrateLegacy(context)
+        writeState(context, snapshotState())
     }
 
     @Synchronized fun snapshot(): List<Channel> = ArrayList(channels)
@@ -136,14 +174,14 @@ object TvStore {
     }
 
     private fun channelTo(c: Channel): JSONObject = JSONObject()
-        .put("id", c.id).put("n", c.name).put("g", c.group).put("l", c.logo).put("u", c.url).put("t", c.tvgId)
+        .put("id", c.id).put("n", c.name).put("g", c.group).put("l", c.logo).put("u", c.url).put("t", c.tvgId).put("tn", c.tvgName)
         .put("ua", c.userAgent).put("ref", c.referrer).put("cu", c.catchup).put("cs", c.catchupSource).put("cd", c.catchupDays)
         .put("s", c.sourceId).put("no", c.number).put("st", c.status.name).put("d", c.detail).put("ms", c.startMs)
         .put("br", c.bitrateKbps).put("v", c.video).put("a", c.audio).put("r", c.resolution).put("c", c.container)
         .put("h", c.httpCode).put("at", c.checkedAt).put("ok", c.okCount).put("ko", c.failCount).put("f", c.favorite).put("w", c.lastWatched)
 
     private fun channelFrom(o: JSONObject): Channel = Channel().apply {
-        id = o.optString("id"); name = o.optString("n"); group = o.optString("g"); logo = o.optString("l"); url = o.optString("u"); tvgId = o.optString("t")
+        id = o.optString("id"); name = o.optString("n"); group = o.optString("g"); logo = o.optString("l"); url = o.optString("u"); tvgId = o.optString("t"); tvgName = o.optString("tn")
         userAgent = o.optString("ua"); referrer = o.optString("ref"); catchup = o.optString("cu"); catchupSource = o.optString("cs"); catchupDays = o.optInt("cd")
         sourceId = o.optString("s"); number = o.optInt("no")
         status = try { StreamStatus.valueOf(o.optString("st", "UNKNOWN")) } catch (e: Exception) { StreamStatus.UNKNOWN }

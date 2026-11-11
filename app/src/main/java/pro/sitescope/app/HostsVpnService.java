@@ -440,7 +440,7 @@ public final class HostsVpnService extends VpnService {
             for (Network network : cm.getAllNetworks()) {
                 NetworkCapabilities caps = cm.getNetworkCapabilities(network);
                 if (caps == null || !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
-                if (Build.VERSION.SDK_INT >= 29 && caps.getOwnerUid() == android.os.Process.myUid()) return true;
+                if (Build.VERSION.SDK_INT >= 30 && caps.getOwnerUid() == android.os.Process.myUid()) return true;
                 LinkProperties link = cm.getLinkProperties(network);
                 if (link != null) {
                     String text = link.toString();

@@ -76,6 +76,7 @@ import java.util.Locale
 class TrackOption(val title: String, val selected: Boolean, val apply: () -> Unit)
 
 /** Плеер на Media3: HLS, DASH, MPEG-TS, RTSP и локальный UDP/RTP через прежний MulticastRelay. */
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class TvPlayerActivity : ComponentActivity() {
     private var player: ExoPlayer? = null
     private var relay: MulticastRelay? = null

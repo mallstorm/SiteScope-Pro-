@@ -19,8 +19,6 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URLDecoder
 import java.util.Properties
-import javax.net.ssl.SSLSocket
-import javax.net.ssl.SSLSocketFactory
 
 class RemoteItem(val name: String, val path: String, val directory: Boolean, val size: Long, val modified: Long = 0)
 
@@ -42,7 +40,11 @@ fun parentPath(path: String): String { val p = path.trimEnd('/'); val i = p.last
 
 private fun readLine(input: InputStream): String? {
     val b = ByteArrayOutputStream(); var c: Int
-    while (true) { c = input.read(); if (c == -1 || c == '\n'.code) break; if (c != '\r'.code) b.write(c) }
+    while (true) {
+        c = input.read(); if (c == -1 || c == '\n'.code) break
+        if (b.size() >= 16384) throw java.io.IOException("Слишком длинная строка ответа")
+        if (c != '\r'.code) b.write(c)
+    }
     return if (c == -1 && b.size() == 0) null else b.toString("UTF-8")
 }
 
@@ -61,13 +63,12 @@ class FtpFs(private val host: String, private val port: Int, private val tls: Bo
         val p = if (port > 0) port else 21
         val implicit = tls && p == 990
         var s: Socket
-        if (implicit) { s = SSLSocketFactory.getDefault().createSocket(); s.connect(InetSocketAddress(host, p), 10000); (s as SSLSocket).startHandshake() }
+        if (implicit) { s = TlsSockets.connect(host, p) }
         else { s = Socket(); s.connect(InetSocketAddress(host, p), 10000) }
         s.soTimeout = 15000; streams(s); expect(220)
         if (tls && !implicit) {
             send("AUTH TLS"); expect(234)
-            val ssl = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(s, host, p, true) as SSLSocket
-            ssl.startHandshake(); s = ssl; streams(s)
+            s = TlsSockets.upgrade(s, host, p); streams(s)
         }
         control = s
         send("USER $user")
@@ -91,7 +92,7 @@ class FtpFs(private val host: String, private val port: Int, private val tls: Bo
         if (code == 229) { val a = last.lastIndexOf("|||"); val b = last.indexOf('|', a + 3); p = last.substring(a + 3, b).toInt() }
         else { send("PASV"); expect(227); val x = last.substring(last.indexOf('(') + 1, last.indexOf(')')).split(","); p = x[4].trim().toInt() * 256 + x[5].trim().toInt() }
         val data = Socket(); data.connect(InetSocketAddress(host, p), 10000); data.soTimeout = 20000
-        if (tls) { val ssl = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(data, host, p, true) as SSLSocket; ssl.startHandshake(); return ssl }
+        if (tls) return TlsSockets.upgrade(data, host, p, 20000)
         return data
     }
 
@@ -134,6 +135,8 @@ class FtpFs(private val host: String, private val port: Int, private val tls: Bo
 class WebDavFs(private val host: String, private val port: Int, private val tls: Boolean, private val user: String, private val pass: String, private val root: String = "/") : RemoteFs {
     override val title = "WebDAV"
     private class Response(val code: Int, val body: ByteArray)
+    private val active = java.util.Collections.synchronizedSet(HashSet<Socket>())
+    @Volatile private var closed = false
 
     override fun home(): String = root.ifEmpty { "/" }
 
@@ -145,7 +148,7 @@ class WebDavFs(private val host: String, private val port: Int, private val tls:
         var open = false; var href = ""; var name = ""; var dir = false; var size = 0L; var tag = ""; var ev = p.eventType
         while (ev != XmlPullParser.END_DOCUMENT) {
             if (ev == XmlPullParser.START_TAG) { tag = localName(p.name); if (tag == "response") { open = true; href = ""; name = ""; dir = false; size = 0 }; if (open && tag == "collection") dir = true }
-            else if (ev == XmlPullParser.TEXT && open) { val v = p.text.trim(); if (v.isNotEmpty()) when (tag) { "href" -> href = URLDecoder.decode(v.substringAfter("://", v).let { if (v.contains("://")) "/" + it.substringAfter('/', "") else v }, "UTF-8"); "displayname" -> name = v; "getcontentlength" -> size = v.toLongOrNull() ?: 0 } }
+            else if (ev == XmlPullParser.TEXT && open) { val v = p.text.trim(); if (v.isNotEmpty()) when (tag) { "href" -> href = URLDecoder.decode(v.substringAfter("://", v).let { if (v.contains("://")) "/" + it.substringAfter('/', "") else v }.replace("+", "%2B"), "UTF-8"); "displayname" -> name = v; "getcontentlength" -> size = v.toLongOrNull() ?: 0 } }
             else if (ev == XmlPullParser.END_TAG && localName(p.name) == "response" && open) {
                 open = false
                 if (href.isNotEmpty() && href.trimEnd('/') != path.trimEnd('/')) out.add(RemoteItem(name.ifEmpty { href.trimEnd('/').substringAfterLast('/') }, href, dir, size))
@@ -155,39 +158,107 @@ class WebDavFs(private val host: String, private val port: Int, private val tls:
         return out
     }
 
-    override fun download(path: String, target: OutputStream) { val r = request("GET", path, "", ByteArray(0)); check(r); target.write(r.body) }
-    override fun upload(path: String, source: InputStream) = check(request("PUT", path, "Content-Type: application/octet-stream\r\n", source.readBytes()))
+    override fun download(path: String, target: OutputStream) { check(request("GET", path, "", ByteArray(0), target = target)) }
+    override fun upload(path: String, source: InputStream) { check(request("PUT", path, "Content-Type: application/octet-stream\r\n", ByteArray(0), source = source)) }
     override fun mkdir(path: String) = check(request("MKCOL", path, "", ByteArray(0)))
     override fun delete(item: RemoteItem) = check(request("DELETE", item.path, "", ByteArray(0)))
     override fun rename(from: String, to: String) = check(request("MOVE", from, "Destination: " + (if (tls) "https" else "http") + "://" + host + ":" + realPort() + encode(to) + "\r\nOverwrite: F\r\n", ByteArray(0)))
-    override fun close() { }
+    override fun close() {
+        synchronized(active) {
+            closed = true
+            active.forEach { try { it.close() } catch (_: Exception) { } }
+            active.clear()
+        }
+    }
 
     private fun check(r: Response) { if (r.code == 401) throw Exception("Неверный логин или пароль"); if (r.code == 403) throw Exception("Нет прав на это действие"); if (r.code !in 200..299) throw Exception("Сервер ответил ошибкой ${r.code}") }
     private fun realPort() = if (port > 0) port else if (tls) 443 else 80
     private fun encode(path: String): String = path.split('/').joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
 
-    private fun request(method: String, path: String, headers: String, body: ByteArray): Response {
+    private fun request(method: String, path: String, headers: String, body: ByteArray, target: OutputStream? = null, source: InputStream? = null): Response {
         val p = realPort()
-        val s: Socket = if (tls) SSLSocketFactory.getDefault().createSocket() else Socket()
+        val plain = Socket()
+        synchronized(active) {
+            if (closed) throw java.io.IOException("Соединение закрыто")
+            active.add(plain)
+        }
+        var s: Socket = plain
         try {
-            s.connect(InetSocketAddress(host, p), 10000); if (s is SSLSocket) s.startHandshake(); s.soTimeout = 20000
+            plain.connect(InetSocketAddress(host, p), 10000)
+            s = if (tls) TlsSockets.upgrade(plain, host, p, 20000) else plain
+            s.soTimeout = 20000
             val out = BufferedOutputStream(s.getOutputStream())
             val auth = if (user.isNotEmpty()) "Authorization: Basic " + Base64.encodeToString("$user:$pass".toByteArray(Charsets.UTF_8), Base64.NO_WRAP) + "\r\n" else ""
-            var target = if (path.isEmpty()) "/" else path; if (!target.startsWith("/")) target = "/$target"
-            out.write(("$method ${encode(target)} HTTP/1.1\r\nHost: $host:$p\r\nUser-Agent: SiteScopePro/1.0\r\nConnection: close\r\n$auth${headers}Content-Length: ${body.size}\r\n\r\n").toByteArray(Charsets.UTF_8))
-            out.write(body); out.flush()
+            var requestPath = path.ifEmpty { "/" }; if (!requestPath.startsWith("/")) requestPath = "/$requestPath"
+            val framing = if (source == null) "Content-Length: ${body.size}\r\n" else "Transfer-Encoding: chunked\r\n"
+            val authority = if (host.contains(':')) "[$host]:$p" else "$host:$p"
+            out.write(("$method ${encode(requestPath)} HTTP/1.1\r\nHost: $authority\r\nUser-Agent: SiteScopePro/1.0\r\nConnection: close\r\n$auth$headers$framing\r\n").toByteArray(Charsets.UTF_8))
+            if (source == null) out.write(body) else writeChunked(source, out)
+            out.flush()
             val input = BufferedInputStream(s.getInputStream())
-            val status = readLine(input) ?: throw Exception("Сервер не ответил")
-            val code = status.split(" ").getOrNull(1)?.toIntOrNull() ?: throw Exception("Непонятный ответ сервера")
-            var chunked = false; var length = -1
-            while (true) { val line = readLine(input) ?: break; if (line.isEmpty()) break; val lower = line.lowercase(); if (lower.startsWith("content-length:")) length = line.substringAfter(':').trim().toIntOrNull() ?: -1; if (lower.startsWith("transfer-encoding:") && lower.contains("chunked")) chunked = true }
-            val data = when {
-                chunked -> { val b = ByteArrayOutputStream(); while (true) { val line = readLine(input) ?: break; val n = line.substringBefore(';').trim().toIntOrNull(16) ?: break; if (n == 0) break; b.write(readExact(input, n)); readLine(input) }; b.toByteArray() }
-                length >= 0 -> readExact(input, length)
-                else -> input.readBytes()
+            var code: Int; var chunked: Boolean; var length: Long?
+            do {
+                val status = readLine(input) ?: throw java.io.IOException("Сервер не ответил")
+                code = status.split(" ").getOrNull(1)?.toIntOrNull() ?: throw java.io.IOException("Непонятный ответ сервера")
+                chunked = false; length = null
+                var headerBytes = 0
+                while (true) {
+                    val line = readLine(input) ?: throw java.io.EOFException("Неполные заголовки ответа")
+                    headerBytes += line.length
+                    if (headerBytes > 65536) throw java.io.IOException("Слишком большие заголовки ответа")
+                    if (line.isEmpty()) break
+                    if (line.startsWith("content-length:", true)) {
+                        length = line.substringAfter(':').trim().toLongOrNull()?.takeIf { it >= 0 }
+                            ?: throw java.io.IOException("Неверная длина ответа")
+                    }
+                    if (line.startsWith("transfer-encoding:", true) && line.contains("chunked", true)) chunked = true
+                }
+            } while (code in 100..199 && code != 101)
+            val captured = ByteArrayOutputStream()
+            val destination = if (code in 200..299 && target != null) target else captured
+            val limit = if (destination === captured) 8L * 1024 * 1024 else Long.MAX_VALUE
+            if (code != 204 && code != 304) {
+                if (chunked) {
+                    var remaining = limit
+                    while (true) {
+                        val line = readLine(input) ?: throw java.io.EOFException("Неполный ответ")
+                        val size = line.substringBefore(';').trim().toLongOrNull(16)?.takeIf { it >= 0 }
+                            ?: throw java.io.IOException("Неверная длина блока")
+                        if (size == 0L) break
+                        if (size > remaining) throw java.io.IOException("Слишком большой ответ сервера")
+                        copyBody(input, destination, size, remaining); remaining -= size
+                        if (readLine(input) != "") throw java.io.IOException("Неверный конец блока")
+                    }
+                } else copyBody(input, destination, length, limit)
             }
-            return Response(code, data)
-        } finally { try { s.close() } catch (e: Exception) { } }
+            return Response(code, captured.toByteArray())
+        } finally { try { s.close() } finally { active.remove(plain) } }
+    }
+
+    private fun writeChunked(source: InputStream, out: OutputStream) {
+        val buffer = ByteArray(32768)
+        while (true) {
+            if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+            val n = source.read(buffer); if (n < 0) break; if (n == 0) continue
+            out.write((n.toString(16) + "\r\n").toByteArray(Charsets.US_ASCII))
+            out.write(buffer, 0, n); out.write(byteArrayOf(13, 10))
+        }
+        out.write("0\r\n\r\n".toByteArray(Charsets.US_ASCII))
+    }
+
+    private fun copyBody(input: InputStream, out: OutputStream, length: Long?, limit: Long) {
+        if (length != null && length > limit) throw java.io.IOException("Слишком большой ответ сервера")
+        val buffer = ByteArray(32768); var copied = 0L
+        while (length == null || copied < length) {
+            if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+            val n = input.read(buffer, 0, if (length == null) buffer.size else minOf(buffer.size.toLong(), length - copied).toInt())
+            if (n < 0) {
+                if (length != null) throw java.io.EOFException("Передача файла оборвалась")
+                break
+            }
+            if (copied > limit - n) throw java.io.IOException("Слишком большой ответ сервера")
+            out.write(buffer, 0, n); copied += n
+        }
     }
 }
 

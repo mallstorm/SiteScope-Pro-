@@ -42,6 +42,8 @@ object SiteMonitor {
         manager.enqueueUniquePeriodicWork(WORK, ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
+    fun reschedule(context: Context) = schedule(context, targets(context).isNotEmpty())
+
     fun notify(context: Context, id: Int, title: String, text: String, tab: String) {
         if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val intent = Intent().setClassName(context, "pro.sitescope.app.ui.ShellActivity").putExtra("tab", tab)

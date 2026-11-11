@@ -39,7 +39,18 @@ jobs:
         run: |
           set -o pipefail
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace testReleaseUnitTest assembleRelease 2>&1 | tee build.log
+          ./gradlew --no-daemon --stacktrace testReleaseUnitTest lintRelease assembleRelease 2>&1 | tee build.log
+
+      - name: Publish test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SiteScopePro-checks
+          path: |
+            app/build/reports/
+            app/build/test-results/
+            build.log
+          if-no-files-found: warn
 
       - name: Publish build log
         if: always()

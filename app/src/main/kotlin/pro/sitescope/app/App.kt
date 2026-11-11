@@ -20,6 +20,7 @@ class App : Application() {
         manager?.createNotificationChannel(NotificationChannel(CHANNEL_ALERTS, "Оповещения SiteScope", NotificationManager.IMPORTANCE_DEFAULT).apply {
             description = "Результаты проверок сайтов и каналов"
         })
+        Thread({ pro.sitescope.app.data.RestoredState.reload(this) }, "SiteScopeSchedules").start()
     }
 
     companion object { const val CHANNEL_ALERTS = "sitescope_alerts" }

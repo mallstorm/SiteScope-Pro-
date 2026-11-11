@@ -3,6 +3,8 @@ package pro.sitescope.app;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.database.sqlite.SQLiteDatabase;
+import pro.sitescope.app.tv.TvStore;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -24,7 +26,7 @@ import java.util.Set;
 
 /** Portable, versioned backup for user-created non-secret application data. */
 public final class BackupManager {
-    public static final int SCHEMA_VERSION = 6;
+    public static final int SCHEMA_VERSION = 7;
     private static final long MAX_IMPORT_BYTES = 64L * 1024L * 1024L;
     private static final List<String> PREF_FILES = Arrays.asList(
         "sitescope_data_v1",
@@ -52,10 +54,11 @@ public final class BackupManager {
         root.put("schemaVersion", SCHEMA_VERSION);
         root.put("createdAt", System.currentTimeMillis());
         root.put("package", context.getPackageName());
-        root.put("appVersion", "0.34.0-alpha32");
+        root.put("appVersion", context.getPackageManager().getPackageInfo(context.getPackageName(), 0).versionName);
         root.put("secretsIncluded", false);
-        root.put("note", "OAuth/API secrets, credentials and downloaded GeoIP SQLite databases are intentionally excluded");
+        root.put("note", "Credentials in URLs and known token fields are redacted. Protected credentials and downloaded GeoIP databases are excluded. Re-enter credentials after restoring.");
         root.put("database", AppDatabase.get(context).exportPortable());
+        root.put("tv", TvStore.INSTANCE.exportState(context));
 
         JSONObject prefsRoot = new JSONObject();
         for (String file : PREF_FILES) {
@@ -72,7 +75,7 @@ public final class BackupManager {
         }
         root.put("preferences", prefsRoot);
         root.put("summary", summaryJson(context));
-        return root;
+        return BackupSanitizer.clean(root);
     }
 
     public static void exportTo(Context context, Uri uri) throws Exception {
@@ -110,7 +113,7 @@ public final class BackupManager {
         return root;
     }
 
-    public static void restore(Context context, JSONObject root) throws Exception {
+    public static synchronized void restore(Context context, JSONObject root) throws Exception {
         validate(root);
         JSONObject prefsRoot = root.getJSONObject("preferences");
 
@@ -130,14 +133,50 @@ public final class BackupManager {
             decoded.add(item);
         }
 
-        for (DecodedPrefs item : decoded) {
+        // TvStore writes can also update SQLite. Keep the same lock order: TV, then database.
+        synchronized (TvStore.INSTANCE) {
+            List<DecodedPrefs> before = new ArrayList<DecodedPrefs>();
+            for (DecodedPrefs item : decoded) {
+                DecodedPrefs old = new DecodedPrefs(item.file);
+                for (Map.Entry<String, ?> entry : context.getSharedPreferences(item.file, Context.MODE_PRIVATE).getAll().entrySet()) {
+                    Object value = entry.getValue();
+                    old.values.put(entry.getKey(), value instanceof Set ? new HashSet<Object>((Set<?>) value) : value);
+                }
+                before.add(old);
+            }
+            JSONObject oldTv = TvStore.INSTANCE.exportState(context);
+            SQLiteDatabase db = AppDatabase.get(context).write();
+            boolean open = true;
+            boolean tvChanged = false;
+            db.beginTransaction();
+            try {
+                JSONObject database = root.optJSONObject("database");
+                if (database != null) AppDatabase.get(context).restorePortable(database);
+                writePreferences(context, decoded);
+                if (database == null) AppDatabase.get(context).remigrateLegacy();
+                tvChanged = true;
+                if (root.has("tv")) TvStore.INSTANCE.restoreState(context, root.getJSONObject("tv"));
+                else if (prefsRoot.has("sitescope_iptv")) TvStore.INSTANCE.restoreLegacy(context);
+                db.setTransactionSuccessful();
+                try { db.endTransaction(); } finally { open = false; }
+            } catch (Exception failure) {
+                if (open) {
+                    try { db.endTransaction(); } catch (Exception rollback) { failure.addSuppressed(rollback); }
+                }
+                try { writePreferences(context, before); } catch (Exception rollback) { failure.addSuppressed(rollback); }
+                if (tvChanged) try { TvStore.INSTANCE.restoreState(context, oldTv); } catch (Exception rollback) { failure.addSuppressed(rollback); }
+                throw failure;
+            }
+        }
+        pro.sitescope.app.data.RestoredState.reload(context);
+    }
+
+    private static void writePreferences(Context context, List<DecodedPrefs> items) {
+        for (DecodedPrefs item : items) {
             SharedPreferences.Editor editor = context.getSharedPreferences(item.file, Context.MODE_PRIVATE).edit().clear();
             for (Map.Entry<String, Object> entry : item.values.entrySet()) put(editor, entry.getKey(), entry.getValue());
             if (!editor.commit()) throw new IllegalStateException("Не удалось восстановить раздел " + item.file);
         }
-        JSONObject database = root.optJSONObject("database");
-        if (database != null) AppDatabase.get(context).restorePortable(database);
-        else AppDatabase.get(context).remigrateLegacy();
     }
 
     public static String describe(JSONObject root) {
@@ -174,8 +213,8 @@ public final class BackupManager {
             result.put("audits", store.audits().size());
             result.put("scans", store.scans().size());
             result.put("iptvSnapshots", store.iptvHistory().size());
-            String channelsRaw = context.getSharedPreferences("sitescope_iptv", Context.MODE_PRIVATE).getString("channels", "[]");
-            result.put("iptvChannels", new JSONArray(channelsRaw).length());
+            TvStore.INSTANCE.load(context);
+            result.put("iptvChannels", TvStore.INSTANCE.snapshot().size());
             result.put("connections", ConnectionProfileStore.list(context).size());
             result.put("inventorySnapshots", DeviceInventoryStore.list(context).size());
             result.put("connectionEvents", ConnectionSessionStore.list(context).size());
@@ -191,6 +230,8 @@ public final class BackupManager {
         JSONObject prefs = root.optJSONObject("preferences");
         if (prefs == null) throw new IllegalArgumentException("В резервной копии отсутствуют данные");
         if (schema >= 5 && root.optJSONObject("database") == null) throw new IllegalArgumentException("В резервной копии отсутствует SQLite-раздел");
+        if (root.has("database")) AppDatabase.validatePortable(root.getJSONObject("database"));
+        if (schema >= 7 || root.has("tv")) TvStore.INSTANCE.validateState(root.getJSONObject("tv"));
         for (String file : PREF_FILES) {
             JSONObject values = prefs.optJSONObject(file);
             if (values == null) continue;

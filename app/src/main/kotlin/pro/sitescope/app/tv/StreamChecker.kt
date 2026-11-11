@@ -73,7 +73,7 @@ object StreamChecker {
             r.steps.add("Ответ сервера: ${first.code}" + if (first.redirects > 0) " (переадресаций: ${first.redirects})" else "")
             if (first.code !in 200..299) { applyHttpError(r, first.code); return r }
 
-            val head = String(first.data, 0, minOf(first.data.size, 4096), Charsets.ISO_8859_1).trimStart('﻿', ' ', '\r', '\n')
+            val head = String(first.data, 0, minOf(first.data.size, 4096), Charsets.ISO_8859_1).trimStart('\uFEFF', ' ', '\r', '\n')
             val type = first.contentType.lowercase()
             when {
                 head.startsWith("#EXTM3U") || type.contains("mpegurl") -> checkHls(r, first, userAgent, referrer, timeoutMs, started)

@@ -112,7 +112,15 @@ class TvViewModel(app: Application) : AndroidViewModel(app) {
         busy = "Читаем файл…"
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw IllegalStateException("Не удалось открыть файл")
+                val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+                    val out = java.io.ByteArrayOutputStream(); val buffer = ByteArray(32768)
+                    while (true) {
+                        val n = input.read(buffer); if (n < 0) break
+                        if (out.size() > 40_000_000 - n) throw IllegalArgumentException("Плейлист превышает 40 МБ")
+                        out.write(buffer, 0, n)
+                    }
+                    out.toByteArray()
+                } ?: throw IllegalStateException("Не удалось открыть файл")
                 val text = String(bytes, Charsets.UTF_8)
                 if (!Playlist.looksLikeM3u(text)) throw IllegalStateException("Это не плейлист M3U")
                 val name = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "Файл"

@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Before
+import org.junit.After
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -13,10 +15,12 @@ import pro.sitescope.app.ConnectionProfileStore
 import pro.sitescope.app.DeviceInventoryStore
 import pro.sitescope.app.Models
 import pro.sitescope.app.ServiceEndpoint
+import pro.sitescope.app.TestStores
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28, 35], application = Application::class)
 class NetViewModelTest {
+    @Before @After fun resetSingletons() = TestStores.reset()
     @Test
     fun opensWithEmptyDataAndRestoresSavedNetworkDataAfterRecreation() {
         val app = RuntimeEnvironment.getApplication() as Application

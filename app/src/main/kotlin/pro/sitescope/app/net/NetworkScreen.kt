@@ -2,7 +2,7 @@
 
 package pro.sitescope.app.net
 
-import android.app.Activity
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -70,7 +70,7 @@ private fun deviceIcon(item: DeviceInventoryStore.Aggregate): ImageVector {
 
 @Composable
 private fun DevicesTab(vm: NetViewModel) {
-    val activity = LocalContext.current as? Activity
+    val activity = LocalActivity.current
     val context = LocalContext.current
     var selected by remember { mutableStateOf<DeviceInventoryStore.Aggregate?>(null) }
     var showWol by remember { mutableStateOf(false) }
@@ -216,7 +216,7 @@ private fun WolSheet(vm: NetViewModel, onClose: () -> Unit) {
 
 @Composable
 private fun ScannerTab(vm: NetViewModel) {
-    val activity = LocalContext.current as? Activity
+    val activity = LocalActivity.current
     val context = LocalContext.current
     val s = vm.scan
     var error by remember { mutableStateOf<String?>(null) }
@@ -328,7 +328,7 @@ fun PortRow(r: Models.PortResult, onClick: () -> Unit) {
 
 @Composable
 private fun ConnectionsTab(vm: NetViewModel) {
-    val activity = LocalContext.current as? Activity
+    val activity = LocalActivity.current
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var adding by remember { mutableStateOf(false) }

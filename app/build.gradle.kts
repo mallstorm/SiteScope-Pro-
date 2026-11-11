@@ -17,8 +17,8 @@ android {
         applicationId = "pro.sitescope.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1_000_009
-        versionName = "1.0.0-beta9"
+        versionCode = 1_000_010
+        versionName = "1.0.0-beta10"
         ndk { abiFilters += "arm64-v8a" }
     }
 
@@ -62,11 +62,15 @@ android {
         jniLibs { useLegacyPackaging = true }
         resources { excludes += setOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/9/OSGI-INF/MANIFEST.MF") }
     }
-    lint { checkReleaseBuilds = false; abortOnError = false }
+    lint { checkReleaseBuilds = true; abortOnError = true }
     testOptions { unitTests.isReturnDefaultValues = true }
 }
 
 tasks.withType<JavaCompile>().configureEach { options.encoding = "UTF-8"; options.compilerArgs.add("-Xlint:-options") }
+tasks.withType<Test>().configureEach {
+    // Robolectric's TLS server fixture on JDK 17 uses InetAddress through reflection.
+    jvmArgs("--add-opens=java.base/java.net=ALL-UNNAMED")
+}
 
 dependencies {
     implementation(files("libs/jsch-0.2.16.jar", "libs/libv2ray.jar"))

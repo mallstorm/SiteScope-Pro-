@@ -59,7 +59,7 @@ object Playlist {
     }
 
     fun looksLikeM3u(text: String): Boolean {
-        val head = text.trimStart('﻿', ' ', '\n', '\r').take(2048)
+        val head = text.trimStart('\uFEFF', ' ', '\n', '\r').take(2048)
         return head.startsWith("#EXTM3U") || head.contains("#EXTINF")
     }
 
@@ -70,7 +70,7 @@ object Playlist {
         var pendingGroup = ""
         var number = 0
         for (raw in text.lineSequence()) {
-            val line = raw.trim().trimStart('﻿')
+            val line = raw.trim().trimStart('\uFEFF')
             if (line.isEmpty()) continue
             when {
                 line.startsWith("#EXTM3U") -> {

@@ -245,6 +245,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
     }
 
     public void restorePortable(JSONObject root) throws Exception {
+        validatePortable(root);
         SQLiteDatabase db = write(); db.beginTransaction();
         try {
             db.delete("active_scan_results", null, null); db.delete("scan_results", null, null); db.delete("scan_sessions", null, null); db.delete("audits", null, null);
@@ -261,9 +262,26 @@ public final class AppDatabase extends SQLiteOpenHelper {
                 JSONObject o = aliases.getJSONObject(i); ContentValues v = new ContentValues(); v.put("ip", o.optString("ip")); v.put("alias", o.optString("alias"));
                 db.insertWithOnConflict("inventory_aliases", null, v, SQLiteDatabase.CONFLICT_REPLACE);
             }
+            if (root.has("hostsProfiles")) new HostsStore(context).restoreProfiles(root.getJSONArray("hostsProfiles"));
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
-        if (root.has("hostsProfiles")) new HostsStore(context).restoreProfiles(root.optJSONArray("hostsProfiles"));
+    }
+
+    /** Validate all row containers before deleting any current data. */
+    public static void validatePortable(JSONObject root) throws Exception {
+        String[] fields = {"projects", "audits", "scans", "iptvHistory", "connectionProfiles", "connectionEvents", "inventorySnapshots", "inventoryAliases", "hostsProfiles"};
+        for (String field : fields) {
+            if (!root.has(field)) continue;
+            JSONArray rows = root.getJSONArray(field);
+            for (int i = 0; i < rows.length(); i++) {
+                JSONObject row = rows.getJSONObject(i);
+                String nested = "hostsProfiles".equals(field) ? "entries" : "inventorySnapshots".equals(field) ? "devices" : "scans".equals(field) ? "openResults" : "";
+                if (!nested.isEmpty() && row.has(nested)) {
+                    JSONArray children = row.getJSONArray(nested);
+                    for (int j = 0; j < children.length(); j++) children.getJSONObject(j);
+                }
+            }
+        }
     }
 
     private void importProjects(SQLiteDatabase db, JSONArray array) throws Exception {
@@ -279,7 +297,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
     private void importSimple(SQLiteDatabase db, String table, JSONArray array, String timestampField) throws Exception {
         if (array == null) return;
         for (int i = array.length() - 1; i >= 0; i--) {
-            JSONObject o = array.getJSONObject(i); ContentValues v = new ContentValues(); v.put("timestamp", o.optLong(timestampField, System.currentTimeMillis())); v.put("json", o.toString()); db.insert(table, null, v);
+            JSONObject o = array.getJSONObject(i); ContentValues v = new ContentValues(); v.put("timestamp", o.optLong(timestampField, System.currentTimeMillis())); v.put("json", o.toString()); db.insertOrThrow(table, null, v);
         }
     }
 

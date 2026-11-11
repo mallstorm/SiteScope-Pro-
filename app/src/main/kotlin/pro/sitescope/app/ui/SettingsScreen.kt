@@ -93,6 +93,8 @@ fun SettingsScreen() {
         }
 
         SectionTitle("Резервная копия")
+        Text("Копия включает ТВ-каталог и избранное. Пароли и токены из ссылок удаляются: после переноса потребуется повторный вход.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         SoftCard {
             if (summary.isNotEmpty()) Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 10.dp))
             Text("В копию попадают проекты, история, плейлисты, подключения и настройки. Пароли и ключи доступа в неё не входят.", style = MaterialTheme.typography.bodySmall,

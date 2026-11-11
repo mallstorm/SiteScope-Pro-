@@ -1,22 +1,19 @@
 # SiteScope Pro
 
-SiteScope Pro is an Android engineering workspace that combines three independent areas: SEO audit, IP engineering, and IPTV engineering. The application package is `pro.sitescope.app`, the minimum Android API is 28, and the current direct-build target is Android API 36.
+Android-приложение для проверки сайтов, исследования своей сети, удалённых подключений, IPTV и VPN/Hosts. Текущая реализация находится в ветке `redesign`. Требования: Android 9+ (API 28), arm64; целевая версия Android — API 36.
 
-This source tree contains the direct Java Android implementation, local backend tests, offline build scripts, protocol clients, Hosts Manager, and the embedded ARM64 Xray/HEV combined VPN implementation.
+Текущая версия: **1.0.0-beta10**. Исправлены проверка имени TLS-сервера, резервное копирование ТВ-каталога, откат неудачного импорта, удаление секретов из экспортируемых URL, граница Android API в проверке VPN, сохранение tvg-name и декодирование SNMP OID. WebDAV передаёт файлы буферами без загрузки целого файла в память.
 
-## Offline build
+Для сборки нужны JDK 17 и Android SDK 36:
 
 ```bash
-SITESCOPE_OFFLINE_ENV=/mnt/data/offline-build-runtime/APKForge-Offline-Dev-Linux-x86_64 \
-  ./scripts/build-direct-release.sh
+bash gradlew --no-daemon testReleaseUnitTest lintRelease assembleRelease
 ```
 
-A signed build additionally requires an explicitly supplied PKCS#12 key through the `SITESCOPE_SIGNING_*` environment variables. Private signing material is not included in this source tree.
+GitHub Actions выполняет те же проверки, сохраняет XML/HTML отчёты и публикует APK с SHA256 в beta release. Ошибки Lint блокируют публикацию. APK находится в `app/build/outputs/apk/release/`.
 
-## Current release
+При наличии `SITESCOPE_SIGNING_P12` и `SITESCOPE_KEYSTORE_PASSWORD` используется исходный ключ. Иначе применяется публичный тестовый ключ из `signing/`, пакет получает суффикс `.next` и устанавливается отдельно. Закрытый ключ основной публикации передаётся через GitHub Secrets.
 
-`0.38.0-alpha36` fixes a native-runtime startup deadlock observed after a standalone Xray profile test. The UI preflight no longer starts libv2ray, startup no longer calls a native version query between HEV bootstrap and the bounded SOCKS probe, and all profile preflight operations are process-wide cancellable.
+Формат резервной копии — версия 7: SQLite, пользовательские настройки, ТВ-источники, каталог и избранное. Поддерживается импорт предыдущих схем. Защищённые учётные данные не экспортируются; секреты в URL и известных полях удаляются, поэтому после переноса может потребоваться повторный вход. Перед изменением данных импорт проверяет структуру; ошибка записи откатывает SQLite, настройки и ТВ-каталог.
 
-## 0.38.0-alpha36
-
-Adds explicit Android VPN-slot coordination for switching from another VPN app. Before creating TUN, SiteScope verifies that it still owns VPN permission, waits for the previous VPN network to disappear, selects a stable validated non-VPN underlay, passes it to `Builder.setUnderlyingNetworks()`, and temporarily binds startup traffic to that network. The Hosts Manager now detects a foreign VPN, offers a shortcut to system VPN settings, and keeps the red cancel control on one line with the other bottom buttons.
+[Карта улучшений и расширений](docs/ROADMAP_RU.md) описывает этапы, зависимости и критерии готовности. Материалы прежней версии, backend и автономные тесты находятся в `legacy/`.

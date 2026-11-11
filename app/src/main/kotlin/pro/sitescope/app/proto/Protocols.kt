@@ -27,8 +27,6 @@ import java.util.TimeZone
 import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
-import javax.net.ssl.SSLSocket
-import javax.net.ssl.SSLSocketFactory
 
 // Протоколы без интерфейса: экраны только вызывают эти классы и показывают результат.
 
@@ -252,7 +250,8 @@ object Snmp {
             for (b in x) { v = (v shl 7) or (b.toLong() and 0x7F); if (b.toInt() and 0x80 == 0) { values.add(v); v = 0 } }
             if (values.isEmpty()) return ""
             val first = values.removeAt(0)
-            return (listOf(first / 40, first % 40) + values).joinToString(".")
+            val arc = if (first < 40) 0L else if (first < 80) 1L else 2L
+            return (listOf(arc, first - arc * 40) + values).joinToString(".")
         }
     }
 
@@ -285,15 +284,14 @@ class MqttClient(private val host: String, private val port: Int, private val tl
             var error: String? = null
             try {
                 val p = if (port > 0) port else if (tls) 8883 else 1883
-                val s: Socket = if (tls) SSLSocketFactory.getDefault().createSocket() else Socket()
-                s.connect(InetSocketAddress(host, p), 10000)
-                if (s is SSLSocket) s.startHandshake()
-                s.soTimeout = 0; socket = s
+                val s = if (tls) TlsSockets.connect(host, p) else Socket().apply { socket = this; connect(InetSocketAddress(host, p), 10000); soTimeout = 15000 }
+                socket = s
                 val input = BufferedInputStream(s.getInputStream()); out = BufferedOutputStream(s.getOutputStream())
                 send(connectPacket())
                 if (input.read() != 0x20) throw Exception("Сервер не подтвердил подключение")
                 val body = readExact(input, remaining(input))
                 if (body.size < 2 || body[1].toInt() != 0) throw Exception(when (body.getOrNull(1)?.toInt()) { 4 -> "Неверный логин или пароль"; 5 -> "Доступ запрещён"; 2 -> "Сервер отклонил имя клиента"; else -> "Сервер отказал в подключении" })
+                s.soTimeout = 0
                 running = true; listener.onConnected()
                 Thread { ping() }.start()
                 while (running) {
@@ -518,9 +516,9 @@ class RawConsole(private val host: String, private val port: Int, private val tl
         Thread {
             var error: String? = null
             try {
-                val s: Socket = if (tls) SSLSocketFactory.getDefault().createSocket() else Socket()
-                s.connect(InetSocketAddress(host, port), 10000); if (s is SSLSocket) s.startHandshake()
-                socket = s; val input = BufferedInputStream(s.getInputStream()); out = BufferedOutputStream(s.getOutputStream())
+                val s = if (tls) TlsSockets.connect(host, port) else Socket().apply { socket = this; connect(InetSocketAddress(host, port), 10000) }
+                socket = s; s.soTimeout = 0
+                val input = BufferedInputStream(s.getInputStream()); out = BufferedOutputStream(s.getOutputStream())
                 running = true; listener.onOpen()
                 val buffer = ByteArray(4096)
                 while (running) {

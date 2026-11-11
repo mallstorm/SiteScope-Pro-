@@ -15,6 +15,7 @@ import android.view.MotionEvent
 import android.view.View
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.net.toUri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -206,14 +207,18 @@ fun FileScreen(ep: ServiceEndpoint) {
             scope.launch {
                 val result = withContext(Dispatchers.IO) {
                     try {
-                        if (ep.protocol == "WEBDAV") { val tls = ep.port == 443 || ep.port == 8443 || ep.uri.startsWith("https"); WebDavFs(ep.host, ep.port, tls, user, password).also { it.list("/") } }
+                        if (ep.protocol == "WEBDAV") {
+                            val tls = ep.port == 443 || ep.port == 8443 || ep.uri.startsWith("https")
+                            val root = ep.uri.toUri().path?.ifBlank { "/" } ?: "/"
+                            WebDavFs(ep.host, ep.port, tls, user, password, root).also { it.list(root) }
+                        }
                         else FtpFs(ep.host, ep.port, ep.protocol == "FTPS", user, password).also { it.connect() }
                     } catch (e: Exception) { error = e.message ?: "Не удалось подключиться"; null }
                 }
                 fs = result; busy = false
             }
         }
-        Text(if (ep.protocol == "FTP") "FTP передаёт пароль и файлы открыто. В чужих сетях лучше использовать SFTP или FTPS." else "Соединение зашифровано.",
+        Text(if (ep.protocol == "FTP" || (ep.protocol == "WEBDAV" && ep.port != 443 && ep.port != 8443 && !ep.uri.startsWith("https"))) "Соединение без TLS: пароль и файлы передаются открыто. Для защищённого доступа используйте SFTP, FTPS или HTTPS." else "Соединение зашифровано; сертификат проверяется.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
     }
 }
