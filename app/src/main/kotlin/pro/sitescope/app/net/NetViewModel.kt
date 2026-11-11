@@ -110,13 +110,6 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
     var scan by mutableStateOf(ScanService.snapshot()); private set
     private val observer = ScanService.Observer { s -> main.post { scan = s } }
 
-    init {
-        ScanService.register(observer)
-        loadSnapshots(); loadProfiles(); loadWol()
-        if (scan.targetExpression.isNotEmpty()) { targets = scan.targetExpression; ports = scan.portExpression }
-        else targets = localSubnet()
-    }
-
     override fun onCleared() { ScanService.unregister(observer); task?.cancel(); super.onCleared() }
 
     /** Подсеть, к которой сейчас подключён телефон (не шире /24, чтобы проверка была быстрой). */
@@ -196,6 +189,15 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- Включение по сети (Wake-on-LAN) ----------
     var wol by mutableStateOf<List<WolEntry>>(emptyList()); private set
     private val wolPrefs get() = context.getSharedPreferences("wake_on_lan", Context.MODE_PRIVATE)
+
+    // Kotlin выполняет инициализаторы полей и init сверху вниз. Загрузка данных
+    // должна идти после создания всех State, в которые она записывает значения.
+    init {
+        loadSnapshots(); loadProfiles(); loadWol()
+        if (scan.targetExpression.isNotEmpty()) { targets = scan.targetExpression; ports = scan.portExpression }
+        else targets = localSubnet()
+        ScanService.register(observer)
+    }
 
     private fun loadWol() {
         wol = (wolPrefs.getString("items", "") ?: "").split('\n').mapNotNull {

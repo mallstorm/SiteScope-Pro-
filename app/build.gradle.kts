@@ -17,8 +17,8 @@ android {
         applicationId = "pro.sitescope.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1_000_008
-        versionName = "1.0.0-beta8"
+        versionCode = 1_000_009
+        versionName = "1.0.0-beta9"
         ndk { abiFilters += "arm64-v8a" }
     }
 
@@ -92,4 +92,5 @@ dependencies {
     implementation("androidx.media3:media3-ui:$media3")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }
