@@ -77,7 +77,7 @@ class ShellActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) handle(intent)
         setContent { AppTheme { Shell(state) } }
-        if (recovered) window.decorView.post { startActivity(Intent(this, HostsActivity::class.java)) }
+        if (recovered) window.decorView.post { startActivity(Intent(this, ToolActivity::class.java).putExtra("screen", "vpn")) }
     }
 
     override fun onNewIntent(intent: Intent) {

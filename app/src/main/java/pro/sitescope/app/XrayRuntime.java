@@ -33,6 +33,7 @@ public final class XrayRuntime {
     private volatile Thread activeProbeThread;
     private volatile boolean stopping;
     private volatile boolean started;
+    private String lastConfig = "";
 
     public XrayRuntime(Context context) { this.context = context.getApplicationContext(); }
 
@@ -42,22 +43,10 @@ public final class XrayRuntime {
         started = false;
         XrayAssets.prepare(context);
         VpnDiagnostics.log(context, "XRAY_CORE_START", "initializing embedded core");
-        controller = Libv2ray.newCoreController(new CoreCallbackHandler() {
-            @Override public long onEmitStatus(long code, String status) {
-                VpnDiagnostics.log(context, "XRAY_STATUS_" + code, status);
-                return 0L;
-            }
-            @Override public long startup() {
-                VpnDiagnostics.log(context, "XRAY_CALLBACK", "startup");
-                return 0L;
-            }
-            @Override public long shutdown() {
-                VpnDiagnostics.log(context, "XRAY_CALLBACK", "shutdown");
-                return 0L;
-            }
-        });
+        controller = Libv2ray.newCoreController(callbacks());
         try {
             controller.startLoop(config, 0);
+            lastConfig = config;
             if (!controller.getIsRunning()) throw new IllegalStateException("Xray core не перешёл в рабочее состояние");
             VpnDiagnostics.log(context, "XRAY_CORE_READY", "embedded core is running");
 
@@ -134,6 +123,65 @@ public final class XrayRuntime {
             }
         }
         throw new IllegalStateException("Профиль не установил исходящее соединение: " + safeMessage(first));
+    }
+
+    private CoreCallbackHandler callbacks() {
+        return new CoreCallbackHandler() {
+            @Override public long onEmitStatus(long code, String status) {
+                VpnDiagnostics.log(context, "XRAY_STATUS_" + code, status);
+                return 0L;
+            }
+            @Override public long startup() {
+                VpnDiagnostics.log(context, "XRAY_CALLBACK", "startup");
+                return 0L;
+            }
+            @Override public long shutdown() {
+                VpnDiagnostics.log(context, "XRAY_CALLBACK", "shutdown");
+                return 0L;
+            }
+        };
+    }
+
+    /**
+     * Replaces the running core configuration (hosts, DNS) without touching the Android TUN
+     * or the HEV bridge: the VPN slot stays owned, only in-flight connections are re-established.
+     * If the new configuration is rejected, the previous one is started again.
+     */
+    public synchronized void reloadCore(String config) throws Exception {
+        if (!started || stopping || controller == null) throw new IllegalStateException("Xray core не запущен");
+        String previous = lastConfig;
+        try { if (controller.getIsRunning()) controller.stopLoop(); } catch (Throwable ignored) { }
+        try {
+            controller = Libv2ray.newCoreController(callbacks());
+            controller.startLoop(config, 0);
+            if (!controller.getIsRunning()) throw new IllegalStateException("Xray core не принял новую конфигурацию");
+            lastConfig = config;
+            VpnDiagnostics.log(context, "XRAY_CORE_RELOADED", "configuration replaced, TUN and HEV untouched");
+        } catch (Throwable e) {
+            VpnDiagnostics.log(context, "XRAY_RELOAD_FAILED", safeMessage(e));
+            try {
+                controller = Libv2ray.newCoreController(callbacks());
+                controller.startLoop(previous, 0);
+                VpnDiagnostics.log(context, "XRAY_RELOAD_ROLLBACK", "previous configuration restored");
+            } catch (Throwable rollback) {
+                VpnDiagnostics.log(context, "XRAY_RELOAD_ROLLBACK_FAILED", safeMessage(rollback));
+            }
+            if (e instanceof Exception) throw (Exception)e;
+            throw new IllegalStateException(safeMessage(e), e);
+        }
+    }
+
+    /**
+     * Restarts only the HEV bridge on another descriptor: the real TUN, or the capture tee's
+     * socket end. Xray core and the Android VPN interface keep running.
+     */
+    public synchronized void restartBridge(ParcelFileDescriptor descriptor, String reason) throws Exception {
+        if (!started || stopping) throw new IllegalStateException("Xray runtime не запущен");
+        if (tunnel != null) tunnel.stopTun2Socks();
+        try { Thread.sleep(200L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw e; }
+        tunnel = new TProxyService(context, descriptor, XrayConfigBuilder.SOCKS_PORT);
+        tunnel.startTun2Socks();
+        VpnDiagnostics.log(context, "HEV_BRIDGE_RESTARTED", reason);
     }
 
     public synchronized boolean isRunning() {

@@ -18,6 +18,7 @@ import pro.sitescope.app.ip.IpDbScreen
 import pro.sitescope.app.net.NetworkScreen
 import pro.sitescope.app.site.MetricsScreen
 import pro.sitescope.app.tv.TvLanScreen
+import pro.sitescope.app.vpn.VpnScreen
 
 /** Экраны второго уровня из раздела «Ещё»: сеть, мои данные, настройки. */
 class ToolActivity : ComponentActivity() {
@@ -36,6 +37,7 @@ class ToolActivity : ComponentActivity() {
                 Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding()) {
                     when (screen) {
                         "data" -> { BackHeader("Мои данные", { finish() }); DataScreen(tab) }
+                        "vpn" -> { BackHeader("VPN и свои адреса", { finish() }); VpnScreen() }
                         "settings" -> { BackHeader("Настройки", { finish() }); SettingsScreen() }
                         "ipdb" -> { BackHeader("База адресов", { finish() }); IpDbScreen(tab) }
                         "tvlan" -> { BackHeader("ТВ в локальной сети", { finish() }); TvLanScreen() }

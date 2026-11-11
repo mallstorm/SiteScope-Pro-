@@ -30,6 +30,9 @@ public final class HostsVpnService extends VpnService {
     public static final String ACTION_START = "pro.sitescope.app.hosts.START";
     public static final String ACTION_STOP = "pro.sitescope.app.hosts.STOP";
     public static final String ACTION_RELOAD = "pro.sitescope.app.hosts.RELOAD";
+    public static final String ACTION_CAPTURE_START = "pro.sitescope.app.hosts.CAPTURE_START";
+    public static final String ACTION_CAPTURE_STOP = "pro.sitescope.app.hosts.CAPTURE_STOP";
+    public static final String EXTRA_FILTER = "filter";
     public static final String EXTRA_MODE = "mode";
     public static final String MODE_BASIC = "BASIC";
     public static final String MODE_XRAY = "XRAY";
@@ -61,6 +64,8 @@ public final class HostsVpnService extends VpnService {
     private volatile Map<String,List<InetAddress>> overrides = new LinkedHashMap<String,List<InetAddress>>();
     private InetAddress upstream;
     private Network underlyingNetwork;
+    private pro.sitescope.app.vpn.TunTee captureTee;
+    private final Object reloadLock = new Object();
 
     @Override public void onCreate() {
         super.onCreate();
@@ -93,8 +98,28 @@ public final class HostsVpnService extends VpnService {
         if (requested.length() == 0) requested = MODE_BASIC;
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("desiredMode", requested).apply();
 
-        if (ACTION_RELOAD.equals(action) && running && MODE_BASIC.equals(activeMode)) {
-            loadOverrides(); updateState(STATE_ACTIVE, true, MODE_BASIC, "BASIC · профиль hosts обновлён", "", "", "", ""); return START_STICKY;
+        if (ACTION_CAPTURE_START.equals(action) || ACTION_CAPTURE_STOP.equals(action)) {
+            if (!running) { if (tunnel == null && starter == null) stopSelf(); return START_NOT_STICKY; }
+            final boolean enable = ACTION_CAPTURE_START.equals(action);
+            final String filter = intent == null ? "" : intent.getStringExtra(EXTRA_FILTER);
+            new Thread(new Runnable() { @Override public void run() { switchCapture(enable, filter == null ? "" : filter); } }, "SiteScopeCaptureSwitch").start();
+            return START_STICKY;
+        }
+        if (ACTION_RELOAD.equals(action)) {
+            if (running && MODE_BASIC.equals(activeMode)) {
+                loadOverrides();
+                new Thread(new Runnable() { @Override public void run() {
+                    try { upstream = findUpstreamDns(underlyingNetwork); } catch (Exception ignored) { }
+                    setMessage("BASIC · адреса и DNS обновлены без разрыва · upstream " + (upstream == null ? "?" : upstream.getHostAddress()));
+                    VpnDiagnostics.log(HostsVpnService.this, "BASIC_HOT_RELOAD", "hosts=" + overrides.size());
+                } }, "SiteScopeBasicReload").start();
+                return START_STICKY;
+            }
+            if (running && MODE_XRAY.equals(activeMode)) {
+                new Thread(new Runnable() { @Override public void run() { reloadXray(); } }, "SiteScopeXrayReload").start();
+                return START_STICKY;
+            }
+            if (!running) { if (tunnel == null && starter == null) stopSelf(); return START_NOT_STICKY; }
         }
 
         final String requestedMode = requested;
@@ -208,13 +233,12 @@ public final class HostsVpnService extends VpnService {
     private void startXrayVpn(final int token, final int request, Network underlay) throws Exception {
         if (!supportsArm64()) throw new IllegalStateException("XRAY-режим этой сборки доступен только на arm64-v8a");
         XrayProfileStore profileStore = new XrayProfileStore(this);
-        XrayProfileStore.Info selectedProfile = profileStore.info();
-        String raw = selectedProfile.id.length() == 0 ? "" : profileStore.raw(selectedProfile.id);
-        if (raw.length() == 0) throw new IllegalStateException("Сначала выберите профиль Xray");
-        XrayConfigBuilder.ConfigResult config = XrayConfigBuilder.build(raw, overrides);
+        final boolean direct = pro.sitescope.app.vpn.VpnSettings.directMode(this);
+        XrayProfileStore.Info selectedProfile = direct ? new XrayProfileStore.Info() : profileStore.info();
+        XrayConfigBuilder.ConfigResult config = buildXrayConfig(direct, profileStore, selectedProfile);
         VpnDiagnostics.log(this, "XRAY_PROFILE", "type=" + config.profileType + ", endpoint=" + config.endpoint + ", " + config.transportSummary);
         updateState(STATE_STARTING, false, MODE_XRAY, "Проверка сервера через базовую сеть…", config.profileName, selectedProfile.id, config.endpoint, "");
-        try {
+        if (!direct) try {
             XrayProfilePreflight.Result endpointCheck = XrayProfilePreflight.check(config.endpoint);
             VpnDiagnostics.log(this, "XRAY_ENDPOINT_READY", "endpoint=" + endpointCheck.host + ":" + endpointCheck.port + ", delay=" + endpointCheck.delayMs + "ms");
         } catch (InterruptedException e) {
@@ -258,6 +282,7 @@ public final class HostsVpnService extends VpnService {
 
         activeMode = MODE_XRAY;
         running = true;
+        if (!direct && pro.sitescope.app.vpn.VpnSettings.appThroughTunnel(this)) pro.sitescope.app.vpn.TunnelProxy.install(this);
         updateNotification("XRAY · " + config.profileName + " · проверка Интернета");
         updateState(STATE_ACTIVE, true, MODE_XRAY,
             "XRAY · туннель поднят · проверка Интернета выполняется в фоне",
@@ -315,9 +340,10 @@ public final class HostsVpnService extends VpnService {
             FileOutputStream output = new FileOutputStream(localTunnel.getFileDescriptor());
             while (running && token == generation && localTunnel == tunnel) {
                 int length = input.read(buffer); if (length <= 0) continue;
+                pro.sitescope.app.vpn.CaptureHub.tap(buffer, length);
                 HostsVpnPacket.QueryPacket query = HostsVpnPacket.parse(buffer, length); if (query == null) continue;
                 byte[] dns = HostsVpnPacket.localDnsResponse(query, overrides); if (dns == null) dns = forward(query.dns);
-                if (dns != null) { byte[] response = HostsVpnPacket.responsePacket(query, dns); output.write(response); output.flush(); }
+                if (dns != null) { byte[] response = HostsVpnPacket.responsePacket(query, dns); pro.sitescope.app.vpn.CaptureHub.tap(response, response.length); output.write(response); output.flush(); }
             }
         } catch (Exception e) {
             if (running && token == generation) {
@@ -382,6 +408,8 @@ public final class HostsVpnService extends VpnService {
     }
 
     private InetAddress findUpstreamDns(Network preferred) throws Exception {
+        String custom = pro.sitescope.app.vpn.VpnSettings.basicUpstream(this);
+        if (custom.length() > 0) { try { String literal = HostsParser.normalizeAddress(custom); if (literal != null && literal.length() > 0) return InetAddress.getByName(literal); } catch (Exception ignored) { } }
         ConnectivityManager cm = (ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm != null && preferred != null) {
             LinkProperties link = cm.getLinkProperties(preferred);
@@ -422,7 +450,7 @@ public final class HostsVpnService extends VpnService {
     }
 
     private Notification notification(String text) {
-        Intent open = new Intent(this, HostsActivity.class);
+        Intent open = new Intent(this, pro.sitescope.app.ui.ToolActivity.class).putExtra("screen", "vpn");
         PendingIntent pending = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
         b.setContentTitle("SiteScope Hosts / Xray").setContentText(text).setSmallIcon(android.R.drawable.stat_sys_download_done)
@@ -474,10 +502,88 @@ public final class HostsVpnService extends VpnService {
         if (watchdog != null && watchdog != Thread.currentThread()) watchdog.interrupt(); watchdog = null;
         if (heartbeat != null && heartbeat != Thread.currentThread()) heartbeat.interrupt(); heartbeat = null;
         if (healthProbe != null && healthProbe != Thread.currentThread()) healthProbe.interrupt(); healthProbe = null;
+        pro.sitescope.app.vpn.TunnelProxy.remove(this);
         if (xrayRuntime != null) { xrayRuntime.stop(); xrayRuntime = null; }
+        if (captureTee != null) { try { captureTee.stop(); } catch (Throwable ignored) { } captureTee = null; }
+        pro.sitescope.app.vpn.CaptureHub.stop();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("capturing", false).apply();
         if (tunnel != null) { try { tunnel.close(); } catch (Exception ignored) { } tunnel = null; }
         updateState(lifecycle, false, "", message, "", "", "", "");
         stopForeground(removeNotification);
+    }
+
+    private XrayConfigBuilder.ConfigResult buildXrayConfig(boolean direct, XrayProfileStore profileStore, XrayProfileStore.Info selectedProfile) throws Exception {
+        XrayConfigBuilder.ConfigResult config;
+        if (direct) config = XrayConfigBuilder.buildDirect(overrides);
+        else {
+            String raw = selectedProfile.id.length() == 0 ? "" : profileStore.raw(selectedProfile.id);
+            if (raw.length() == 0) throw new IllegalStateException("Сначала выберите профиль Xray");
+            config = XrayConfigBuilder.build(raw, overrides);
+        }
+        config.json = pro.sitescope.app.vpn.VpnSettings.applyDns(this, config.json);
+        return config;
+    }
+
+    /** Applies edited hosts rules and DNS servers to the running Xray core without recreating the VPN. */
+    private void reloadXray() {
+        synchronized (reloadLock) {
+            XrayRuntime runtime = xrayRuntime;
+            if (!running || runtime == null || !MODE_XRAY.equals(activeMode)) return;
+            try {
+                loadOverrides();
+                String runningId = getSharedPreferences(PREFS, MODE_PRIVATE).getString("profileId", "");
+                boolean direct = runningId.length() == 0;
+                XrayProfileStore store = new XrayProfileStore(this);
+                XrayProfileStore.Info info = direct ? new XrayProfileStore.Info() : store.info(runningId);
+                XrayConfigBuilder.ConfigResult config = buildXrayConfig(direct, store, info);
+                runtime.reloadCore(config.json);
+                if (!direct && pro.sitescope.app.vpn.VpnSettings.appThroughTunnel(this)) pro.sitescope.app.vpn.TunnelProxy.install(this);
+                else pro.sitescope.app.vpn.TunnelProxy.remove(this);
+                setMessage("XRAY · адреса и DNS обновлены без разрыва VPN · правил: " + config.hostsCount);
+                VpnDiagnostics.log(this, "XRAY_HOT_RELOAD", "hosts=" + config.hostsCount + ", dns=" + pro.sitescope.app.vpn.VpnSettings.dnsServers(this).size());
+            } catch (Throwable e) {
+                setMessage("XRAY · не удалось применить изменения: " + safeMessage(e));
+                VpnDiagnostics.log(this, "XRAY_HOT_RELOAD_FAILED", safeMessage(e));
+            }
+        }
+    }
+
+    /** Starts or stops traffic capture. In XRAY mode only the HEV bridge is restarted; the VPN stays up. */
+    private void switchCapture(boolean enable, String filter) {
+        synchronized (reloadLock) {
+            if (!running) return;
+            try {
+                if (enable) {
+                    pro.sitescope.app.vpn.CaptureHub.start(new java.io.File(getFilesDir(), "captures"), filter);
+                    if (MODE_XRAY.equals(activeMode) && captureTee == null && xrayRuntime != null && tunnel != null) {
+                        pro.sitescope.app.vpn.TunTee tee = new pro.sitescope.app.vpn.TunTee(tunnel, this);
+                        tee.start();
+                        try { xrayRuntime.restartBridge(tee.getTunnelSide(), "capture tee attached"); captureTee = tee; }
+                        catch (Throwable e) { tee.stop(); xrayRuntime.restartBridge(tunnel, "capture tee failed, direct TUN restored"); throw e; }
+                    }
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("capturing", true).apply();
+                    VpnDiagnostics.log(this, "CAPTURE_START", "mode=" + activeMode + ", filter=" + (filter.length() == 0 ? "none" : "set"));
+                } else {
+                    pro.sitescope.app.vpn.CaptureHub.stop();
+                    if (captureTee != null) {
+                        pro.sitescope.app.vpn.TunTee tee = captureTee; captureTee = null;
+                        if (xrayRuntime != null && tunnel != null) xrayRuntime.restartBridge(tunnel, "capture tee detached");
+                        tee.stop();
+                    }
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("capturing", false).apply();
+                    VpnDiagnostics.log(this, "CAPTURE_STOP", "mode=" + activeMode);
+                }
+            } catch (Throwable e) {
+                pro.sitescope.app.vpn.CaptureHub.stop();
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("capturing", false).apply();
+                setMessage("Запись трафика не запустилась: " + safeMessage(e));
+                VpnDiagnostics.log(this, "CAPTURE_FAILED", safeMessage(e));
+            }
+        }
+    }
+
+    private void setMessage(String message) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("message", message).putLong("changedAt", System.currentTimeMillis()).apply();
     }
 
     private void cancelPendingStart() {

@@ -11,6 +11,41 @@ import pro.sitescope.app.tv.*
 private fun ck(c: Boolean, n: String) = assertTrue(n, c)
 
 class EnginesTest {
+    @Test fun trafficCapture() {
+    fun ip4(proto: Int, src: IntArray, dst: IntArray, l4: ByteArray): ByteArray {
+        val p = ByteArray(20 + l4.size); p[0] = 0x45; p[9] = proto.toByte()
+        for (i in 0 until 4) { p[12 + i] = src[i].toByte(); p[16 + i] = dst[i].toByte() }
+        System.arraycopy(l4, 0, p, 20, l4.size); return p
+    }
+    fun udp(sp: Int, dp: Int, data: ByteArray) = byteArrayOf((sp shr 8).toByte(), sp.toByte(), (dp shr 8).toByte(), dp.toByte(), 0, 0, 0, 0) + data
+    fun tcp(sp: Int, dp: Int) = byteArrayOf((sp shr 8).toByte(), sp.toByte(), (dp shr 8).toByte(), dp.toByte()) + ByteArray(8) + byteArrayOf(0x50, 0, 0, 0, 0, 0, 0, 0)
+    fun qname(n: String) = n.split('.').fold(ByteArray(0)) { acc, l -> acc + byteArrayOf(l.length.toByte()) + l.toByteArray() } + byteArrayOf(0)
+    fun dnsQuery(n: String) = byteArrayOf(0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0) + qname(n) + byteArrayOf(0, 1, 0, 1)
+    fun dnsAnswer(n: String, ip: IntArray) = byteArrayOf(0, 1, 0x81.toByte(), 0x80.toByte(), 0, 1, 0, 1, 0, 0, 0, 0) + qname(n) + byteArrayOf(0, 1, 0, 1) +
+        byteArrayOf(0xC0.toByte(), 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4) + ip.map { it.toByte() }.toByteArray()
+    val me = intArrayOf(10, 10, 14, 1); val dns = intArrayOf(1, 1, 1, 1); val site = intArrayOf(93, 184, 216, 34); val other = intArrayOf(8, 8, 4, 4)
+    val m = pro.sitescope.app.vpn.DnsMessage.parse(dnsAnswer("www.example.com", site), 0, dnsAnswer("www.example.com", site).size)!!
+    ck(m.response && m.name == "www.example.com" && m.addresses == listOf("93.184.216.34"), "dns parse ${m.name} ${m.addresses}")
+    val info = pro.sitescope.app.vpn.PacketInfo.parse(ip4(6, me, site, tcp(40000, 443)), 40)!!
+    ck(info.protocolName == "TCP" && info.dst == "93.184.216.34" && info.dstPort == 443 && info.payloadOffset == 40, "packet parse")
+    val buf = java.io.ByteArrayOutputStream()
+    val s = pro.sitescope.app.vpn.CaptureSession(null, buf, "https://example.com/page")
+    fun feed(p: ByteArray) = s.onPacket(p, p.size, 1700000000123L)
+    feed(ip4(6, me, site, tcp(40000, 443)))                       // до DNS-ответа адрес сайта ещё неизвестен
+    feed(ip4(17, me, dns, udp(5000, 53, dnsQuery("other.org"))))  // чужой DNS-запрос
+    feed(ip4(17, me, dns, udp(5001, 53, dnsQuery("www.example.com"))))
+    feed(ip4(17, dns, me, udp(53, 5001, dnsAnswer("www.example.com", site))))
+    feed(ip4(6, me, site, tcp(40000, 443))); feed(ip4(6, site, me, tcp(443, 40000))); feed(ip4(6, me, other, tcp(40001, 443)))
+    s.close()
+    ck(s.filtered && s.seen == 7L && s.written == 4L, "filter seen=${s.seen} written=${s.written}")
+    val raw = buf.toByteArray()
+    ck(raw.size == 24 + 4 * 16 + 2 * (28 + dnsQuery("www.example.com").size) + 16 + 2 * 40 && raw[0] == 0xd4.toByte() && raw[3] == 0xa1.toByte() && raw[20] == 101.toByte(), "pcap bytes ${raw.size}")
+    val flow = s.topFlows(10).first { it.remote == "93.184.216.34" }
+    ck(flow.packets == 3L && flow.host == "www.example.com" && flow.sent == 80L && flow.received == 40L && flow.port == 443, "flow ${flow.packets} ${flow.host}")
+    val all = pro.sitescope.app.vpn.CaptureSession(null, java.io.ByteArrayOutputStream(), "")
+    all.onPacket(ip4(6, me, other, tcp(1, 2)), 40); ck(!all.filtered && all.written == 1L, "unfiltered")
+    }
+
     @Test fun wakeOnLan() {
     ck(pro.sitescope.app.net.NetViewModel.normalizeMac("aa-bb-cc-dd-ee-0f") == "AA:BB:CC:DD:EE:0F", "mac")
     ck(pro.sitescope.app.net.NetViewModel.normalizeMac("aa:bb:cc") == null && pro.sitescope.app.net.NetViewModel.normalizeMac("zz:bb:cc:dd:ee:ff") == null, "bad mac")

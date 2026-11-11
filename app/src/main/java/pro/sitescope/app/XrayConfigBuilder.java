@@ -41,6 +41,20 @@ public final class XrayConfigBuilder {
         return result;
     }
 
+    /** Local-only configuration: traffic leaves directly, but passes the app for hosts rules and capture. */
+    public static ConfigResult buildDirect(Map<String,List<InetAddress>> overrides) throws Exception {
+        JSONObject freedom = new JSONObject();
+        freedom.put("protocol", "freedom");
+        freedom.put("settings", new JSONObject().put("domainStrategy", "UseIP"));
+        JSONObject root = baseConfig(freedom, overrides);
+        ConfigResult result = new ConfigResult();
+        result.json = root.toString();
+        result.profileName = "Без сервера"; result.profileType = "direct"; result.endpoint = "";
+        result.hostsCount = overrides == null ? 0 : overrides.size();
+        result.transportSummary = "protocol=freedom";
+        return result;
+    }
+
     private static JSONObject baseConfig(JSONObject proxy, Map<String,List<InetAddress>> overrides) throws Exception {
         proxy.put("tag", PROXY_TAG);
         JSONObject root = new JSONObject();
