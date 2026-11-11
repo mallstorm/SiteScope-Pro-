@@ -258,7 +258,7 @@ public final class HostsVpnService extends VpnService {
             .addAddress("fc00::10:10:14:1", 126).addRoute("::", 0).addDnsServer("2606:4700:4700::1111");
         if (Build.VERSION.SDK_INT >= 29) builder.setMetered(false);
         if (underlay != null) builder.setUnderlyingNetworks(new Network[]{underlay});
-        try { builder.addDisallowedApplication(getPackageName()); } catch (Exception ignored) { }
+        applyAppScope(builder);
         ParcelFileDescriptor local = builder.establish();
         if (local == null) throw new IllegalStateException("Android не создал полный TUN-интерфейс");
         tunnel = local;
@@ -514,6 +514,17 @@ public final class HostsVpnService extends VpnService {
         stopForeground(removeNotification);
     }
 
+    /** Full-tunnel scope: all apps except SiteScope itself, or only the apps chosen for capture. */
+    private void applyAppScope(Builder builder) {
+        int allowed = 0;
+        for (String app : pro.sitescope.app.vpn.VpnSettings.targetApps(this)) {
+            if (app == null || app.length() == 0 || app.equals(getPackageName())) continue;
+            try { builder.addAllowedApplication(app); allowed++; } catch (Exception ignored) { }
+        }
+        if (allowed == 0) { try { builder.addDisallowedApplication(getPackageName()); } catch (Exception ignored) { } }
+        VpnDiagnostics.log(this, "VPN_APP_SCOPE", allowed == 0 ? "all apps" : "selected apps: " + allowed);
+    }
+
     private XrayConfigBuilder.ConfigResult buildXrayConfig(boolean direct, XrayProfileStore profileStore, XrayProfileStore.Info selectedProfile) throws Exception {
         XrayConfigBuilder.ConfigResult config;
         if (direct) config = XrayConfigBuilder.buildDirect(overrides);
@@ -523,6 +534,7 @@ public final class HostsVpnService extends VpnService {
             config = XrayConfigBuilder.build(raw, overrides);
         }
         config.json = pro.sitescope.app.vpn.VpnSettings.applyDns(this, config.json);
+        config.json = pro.sitescope.app.vpn.Mitm.apply(this, config.json);
         return config;
     }
 

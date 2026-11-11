@@ -43,6 +43,18 @@ object VpnSettings {
     @JvmStatic fun directMode(context: Context): Boolean = prefs(context).getBoolean("direct_mode", false)
     @JvmStatic fun setDirectMode(context: Context, value: Boolean) = prefs(context).edit().putBoolean("direct_mode", value).apply()
 
+    /** Расшифровка TLS при записи трафика. */
+    @JvmStatic fun mitm(context: Context): Boolean = prefs(context).getBoolean("mitm", false)
+    @JvmStatic fun setMitm(context: Context, value: Boolean) = prefs(context).edit().putBoolean("mitm", value).apply()
+
+    /** Запрет QUIC и закрытого DNS, чтобы приложения использовали обычный TLS, который можно расшифровать. */
+    @JvmStatic fun blockQuic(context: Context): Boolean = prefs(context).getBoolean("block_quic", true)
+    @JvmStatic fun setBlockQuic(context: Context, value: Boolean) = prefs(context).edit().putBoolean("block_quic", value).apply()
+
+    /** Приложения, для которых действует VPN и снимается дамп (пусто — все). */
+    @JvmStatic fun targetApps(context: Context): Set<String> = prefs(context).getStringSet("target_apps", emptySet())?.toSet() ?: emptySet()
+    @JvmStatic fun setTargetApps(context: Context, value: Set<String>) = prefs(context).edit().putStringSet("target_apps", HashSet(value)).apply()
+
     /** Подставляет выбранные DNS-серверы в готовую конфигурацию Xray. */
     @JvmStatic fun applyDns(context: Context, json: String): String {
         val servers = dnsServers(context)

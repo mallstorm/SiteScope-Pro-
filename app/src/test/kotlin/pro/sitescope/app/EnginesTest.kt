@@ -11,6 +11,22 @@ import pro.sitescope.app.tv.*
 private fun ck(c: Boolean, n: String) = assertTrue(n, c)
 
 class EnginesTest {
+    @Test fun dumpWithKeysAndCertificate() {
+    val ca = pro.sitescope.app.vpn.CertAuthority.generate("Test CA")
+    val cert = java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(ca.certificateDer.inputStream()) as java.security.cert.X509Certificate
+    cert.verify(cert.publicKey); cert.checkValidity()
+    ck(cert.basicConstraints >= 0 && cert.keyUsage[5] && cert.subjectX500Principal.name.contains("Test CA"), "ca certificate")
+    ck(pro.sitescope.app.vpn.CertAuthority.derOf(ca.certificatePem).contentEquals(ca.certificateDer) && ca.keyPem.startsWith("-----BEGIN PRIVATE KEY-----"), "pem")
+    val pcap = java.io.ByteArrayOutputStream(); val w = pro.sitescope.app.vpn.PcapWriter(pcap)
+    w.write(ByteArray(41), 0, 41, 1700000000123L); w.write(ByteArray(40), 0, 40, 1700000001000L); w.close()
+    val out = java.io.ByteArrayOutputStream()
+    ck(pro.sitescope.app.vpn.PcapNg.convert(pcap.toByteArray().inputStream(), "CLIENT_RANDOM aa bb\n".toByteArray(), out) == 2, "pcapng count")
+    val d = out.toByteArray(); val types = ArrayList<Int>(); var i = 0
+    fun u32(o: Int) = (d[o].toInt() and 255) or ((d[o + 1].toInt() and 255) shl 8) or ((d[o + 2].toInt() and 255) shl 16) or ((d[o + 3].toInt() and 255) shl 24)
+    while (i < d.size) { val len = u32(i + 4); ck(u32(i + len - 4) == len && len % 4 == 0, "block length"); types.add(u32(i)); i += len }
+    ck(types == listOf(0x0A0D0D0A, 1, 0x0A, 6, 6), "pcapng blocks $types")
+    }
+
     @Test fun protocolCodecs() {
     val m = pro.sitescope.app.proto.Snmp.message("public", 0xA2, 77, "1.3.6.1.2.1.1.5.0")
     val vb = pro.sitescope.app.proto.Snmp.parse(m, m.size, 77)!!

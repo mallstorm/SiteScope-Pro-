@@ -11,6 +11,7 @@ import android.net.Uri
 import android.net.VpnService
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -95,6 +96,12 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
     var writtenBytes by mutableStateOf(0L); private set
     var flows by mutableStateOf<List<Flow>>(emptyList()); private set
     var files by mutableStateOf<List<File>>(emptyList()); private set
+    var finishing by mutableStateOf(false); private set
+    var mitm by mutableStateOf(false); private set
+    var blockQuic by mutableStateOf(true); private set
+    var targets by mutableStateOf<Set<String>>(emptySet()); private set
+    var caInstalled by mutableStateOf(false); private set
+    var apps by mutableStateOf<List<Pair<String, String>>>(emptyList()); private set
 
     val active: Boolean get() = lifecycle == HostsVpnService.STATE_ACTIVE
     val busy: Boolean get() = lifecycle == HostsVpnService.STATE_STARTING || lifecycle == HostsVpnService.STATE_STOPPING
@@ -106,6 +113,8 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
             try { VpnStateRecovery.recoverIfStale(context) } catch (e: Throwable) { }
             dnsServers = VpnSettings.dnsServers(context).joinToString(", "); basicUpstream = VpnSettings.basicUpstream(context)
             appThroughTunnel = VpnSettings.appThroughTunnel(context)
+            mitm = VpnSettings.mitm(context); blockQuic = VpnSettings.blockQuic(context); targets = VpnSettings.targetApps(context)
+            if (mitm) caInstalled = Mitm.caInstalled(context)
             val desired = state.getString("desiredMode", HostsVpnService.MODE_BASIC)
             mode = if (desired == HostsVpnService.MODE_XRAY) (if (VpnSettings.directMode(context)) VpnMode.LOCAL else VpnMode.SERVER) else VpnMode.HOSTS
             reloadData()
@@ -124,7 +133,7 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
         val session = CaptureHub.session
         capturing = session != null && lifecycle == HostsVpnService.STATE_ACTIVE
         if (session != null) { seen = session.seen; written = session.written; writtenBytes = session.writtenBytes; flows = session.topFlows(25); session.flush() }
-        files = CaptureHub.files(captureDir)
+        files = CaptureHub.files(captureDir); finishing = CaptureHub.converting
     }
 
     private fun reloadData() {
@@ -211,6 +220,35 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
         VpnSettings.setDnsServers(context, dnsServers); VpnSettings.setBasicUpstream(context, basicUpstream); VpnSettings.setAppThroughTunnel(context, appThroughTunnel)
         applyLive()
     }
+
+    // ---------- расшифровка и выбор приложений ----------
+    fun switchMitm(on: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        if (on) try { Mitm.ensureCa(context) } catch (e: Exception) { appliedNote = "Не удалось создать сертификат"; return@launch }
+        VpnSettings.setMitm(context, on); mitm = on
+        caInstalled = on && Mitm.caInstalled(context)
+        if (active && runningMode == HostsVpnService.MODE_XRAY) applyLive()
+    }
+    fun switchQuic(on: Boolean) { VpnSettings.setBlockQuic(context, on); blockQuic = on; if (mitm && active && runningMode == HostsVpnService.MODE_XRAY) applyLive() }
+    fun refreshCa() = viewModelScope.launch(Dispatchers.IO) { caInstalled = mitm && Mitm.caInstalled(context) }
+    fun exportCa(target: Uri, done: (Boolean) -> Unit) = viewModelScope.launch {
+        val ok = withContext(Dispatchers.IO) { try { val file = Mitm.ensureCa(context); context.contentResolver.openOutputStream(target)?.use { it.write(file.readBytes()) }; true } catch (e: Exception) { false } }
+        done(ok)
+    }
+    fun loadApps() = viewModelScope.launch(Dispatchers.IO) {
+        if (apps.isNotEmpty()) return@launch
+        val pm = context.packageManager
+        apps = try {
+            pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+                .map { it.activityInfo.packageName to (it.loadLabel(pm)?.toString() ?: it.activityInfo.packageName) }
+                .filter { it.first != context.packageName }.distinctBy { it.first }.sortedBy { it.second.lowercase() }
+        } catch (e: Exception) { emptyList() }
+    }
+    /** Список приложений действует на уровне VPN, поэтому при включённом VPN он переподключается. */
+    fun chooseTargets(value: Set<String>) {
+        VpnSettings.setTargetApps(context, value); targets = value
+        if (active && runningMode == HostsVpnService.MODE_XRAY) { appliedNote = "VPN переподключается для выбранных приложений."; start() }
+    }
+    fun appLabel(pkg: String): String = apps.firstOrNull { it.first == pkg }?.second ?: pkg
 
     // ---------- запись ----------
     fun startCapture() { context.startService(Intent(context, HostsVpnService::class.java).setAction(HostsVpnService.ACTION_CAPTURE_START).putExtra(HostsVpnService.EXTRA_FILTER, filter.trim())); seen = 0; written = 0; writtenBytes = 0; flows = emptyList() }
@@ -510,15 +548,70 @@ private fun DnsTab(vm: VpnViewModel) {
 private fun CaptureTab(vm: VpnViewModel) {
     val context = LocalContext.current
     var saving by remember { mutableStateOf<File?>(null) }
-    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.tcpdump.pcap")) { uri: Uri? ->
+    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
         val file = saving
         if (uri != null && file != null) vm.copyFile(file, uri) { ok -> toast(context, if (ok) "Файл сохранён" else "Не удалось сохранить") }
         saving = null
     }
     val t = tones
+    var picking by remember { mutableStateOf(false) }
+    val saveCa = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-x509-ca-cert")) { uri: Uri? ->
+        if (uri != null) vm.exportCa(uri) { ok -> toast(context, if (ok) "Сертификат сохранён. Теперь установите его в настройках." else "Не удалось сохранить") }
+    }
+    LaunchedEffect(Unit) { vm.loadApps(); vm.refreshCa() }
+    val full = vm.mode != VpnMode.HOSTS || vm.runningMode == HostsVpnService.MODE_XRAY
+
+    SectionTitle("Что записывать")
+    SoftCard {
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { picking = true }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Apps, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Приложения", style = MaterialTheme.typography.titleSmall)
+                Text(if (vm.targets.isEmpty()) "Все приложения телефона" else vm.targets.take(3).joinToString(", ") { vm.appLabel(it) } + (if (vm.targets.size > 3) " и ещё ${vm.targets.size - 3}" else ""),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.outline)
+        }
+        if (vm.targets.isNotEmpty()) Text("VPN и запись действуют только для выбранных приложений. Остальные идут в сеть как обычно.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+        HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.LockOpen, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Расшифровка TLS", style = MaterialTheme.typography.titleSmall)
+                Text("Ключи сеансов сохраняются в файл дампа: Wireshark покажет содержимое HTTPS", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = vm.mitm, onCheckedChange = { vm.switchMitm(it) })
+        }
+        if (vm.mitm) {
+            Spacer(Modifier.height(8.dp))
+            if (vm.caInstalled) Pill("Сертификат SiteScope установлен", t.good, t.goodSoft, icon = Icons.Rounded.Check)
+            else Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(t.warnSoft).padding(12.dp)) {
+                Text("Нужно один раз установить сертификат", style = MaterialTheme.typography.titleSmall)
+                Text("1. Сохраните файл сертификата.\n2. Откройте настройки безопасности → «Шифрование и учётные данные» → «Установить сертификат» → «Сертификат ЦС».\n3. Выберите сохранённый файл.",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { saveCa.launch("sitescope-ca.crt") }) { Text("Сохранить файл") }
+                    OutlinedButton(onClick = { try { context.startActivity(Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS)) } catch (e: Exception) { toast(context, "Откройте Настройки → Безопасность") } }) { Text("Настройки") }
+                }
+                TextButton(onClick = { vm.refreshCa() }, contentPadding = PaddingValues(0.dp)) { Text("Я установил — проверить") }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Запретить QUIC и закрытый DNS", style = MaterialTheme.typography.bodyMedium)
+                    Text("Иначе часть трафика уйдёт по протоколам, которые расшифровать нельзя", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = vm.blockQuic, onCheckedChange = { vm.switchQuic(it) })
+            }
+            Text("Расшифровка работает для браузеров и приложений, которые доверяют пользовательским сертификатам. Многие приложения (банки, мессенджеры) им не доверяют и при включённой расшифровке не соединятся — выбирайте конкретные приложения выше.",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 6.dp))
+        }
+        if (!full) Text("Выбор приложений и расшифровка работают в режимах «Через сервер» и «Без сервера».", style = MaterialTheme.typography.labelSmall, color = t.warn, modifier = Modifier.padding(top = 6.dp))
+    }
+    if (picking) AppPicker(vm.apps, vm.targets, onClose = { picking = false }) { chosen -> picking = false; if (chosen != vm.targets) vm.chooseTargets(chosen) }
+
     SectionTitle("Запись трафика")
     SoftCard(color = if (vm.capturing) t.badSoft else MaterialTheme.colorScheme.surfaceContainerLowest) {
-        Text("Сохраняет сетевые пакеты в файл .pcap — его открывает Wireshark. Записывается трафик других приложений телефона, который идёт через VPN: откройте нужный сайт в браузере, пока идёт запись.",
+        Text("Сохраняет сетевые пакеты в файл .pcapng — его открывает Wireshark. Записывается трафик приложений, который идёт через VPN: откройте нужный сайт или приложение, пока идёт запись.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
         if (!vm.capturing) {
@@ -556,6 +649,7 @@ private fun CaptureTab(vm: VpnViewModel) {
             }
         }
     }
+    if (vm.finishing) { Spacer(Modifier.height(10.dp)); LoadingCard("Собираем файл дампа", "Вкладываем ключи TLS и пакеты") }
     if (vm.files.isNotEmpty()) {
         SectionTitle("Записанные файлы")
         vm.files.take(30).forEach { file ->
@@ -565,7 +659,7 @@ private fun CaptureTab(vm: VpnViewModel) {
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(file.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(bytesText(file.length()), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                        Text(bytesText(file.length()) + (if (file.name.contains("-tls.")) " · с ключами TLS" else ""), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                     }
                     IconButton(onClick = { saving = file; save.launch(file.name) }) { Icon(Icons.Rounded.SaveAlt, "Сохранить") }
                     IconButton(onClick = { vm.deleteFile(file) }) { Icon(Icons.Rounded.DeleteOutline, "Удалить") }
@@ -598,4 +692,37 @@ private fun LogTab(vm: VpnViewModel) {
     Text("Что происходило при подключении. Пароли и ключи в журнал не попадают.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(8.dp))
     MonoBlock(log.ifEmpty { "Пока пусто." })
+}
+
+
+@Composable
+private fun AppPicker(apps: List<Pair<String, String>>, selected: Set<String>, onClose: () -> Unit, onDone: (Set<String>) -> Unit) {
+    var chosen by remember { mutableStateOf(selected) }
+    var query by remember { mutableStateOf("") }
+    val shown = apps.filter { query.isBlank() || it.second.contains(query.trim(), true) || it.first.contains(query.trim(), true) }
+        .sortedByDescending { it.first in selected }
+    ModalBottomSheet(onDismissRequest = onClose) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 20.dp)) {
+            Text("Для каких приложений", style = MaterialTheme.typography.titleLarge)
+            Text(if (chosen.isEmpty()) "Сейчас: все приложения" else "Выбрано: ${chosen.size}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+            BigField(query, { query = it }, "Поиск приложения", keyboard = KeyboardType.Text)
+            androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().heightIn(max = 380.dp)) {
+                items(shown.size) { index ->
+                    val (pkg, label) = shown[index]
+                    Row(Modifier.fillMaxWidth().clickable { chosen = if (pkg in chosen) chosen - pkg else chosen + pkg }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = pkg in chosen, onCheckedChange = { chosen = if (it) chosen + pkg else chosen - pkg })
+                        Column(Modifier.weight(1f)) {
+                            Text(label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(pkg, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { chosen = emptySet() }, modifier = Modifier.weight(1f)) { Text("Все приложения") }
+                Button(onClick = { onDone(chosen) }, modifier = Modifier.weight(1f)) { Text("Готово") }
+            }
+        }
+    }
 }

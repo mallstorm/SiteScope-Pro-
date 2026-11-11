@@ -197,9 +197,15 @@ object CaptureHub {
     @JvmStatic fun tap(packet: ByteArray, length: Int) { try { session?.onPacket(packet, length) } catch (e: Throwable) { } }
     @JvmStatic fun active(): Boolean = session != null
 
+    @Volatile private var keyLog: File? = null
+    @Volatile private var keyOffset = 0L
+    @Volatile var converting = false; private set
+
     @JvmStatic @Synchronized fun start(dir: File, filter: String): CaptureSession {
         stop()
         if (!dir.exists()) dir.mkdirs()
+        val keys = File(dir.parentFile, "mitm/keys.log")
+        keyLog = keys; keyOffset = if (keys.isFile) keys.length() else 0L
         val label = filter.trim().lowercase(Locale.US).filter { it.isLetterOrDigit() || it == '.' || it == '-' }.take(40)
         val name = "sitescope-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + (if (label.isNotEmpty()) "-$label" else "") + ".pcap"
         val file = File(dir, name)
@@ -208,7 +214,21 @@ object CaptureHub {
         return s
     }
 
-    @JvmStatic @Synchronized fun stop() { val s = session; session = null; s?.close() }
+    /** Останавливает запись и собирает итоговый файл pcapng: сначала ключи TLS, затем пакеты. */
+    @JvmStatic @Synchronized fun stop() {
+        val s = session ?: return
+        session = null; s.close()
+        val pcap = s.file ?: return
+        val keys = PcapNg.keysSince(keyLog, keyOffset)
+        converting = true
+        Thread({
+            try {
+                val target = File(pcap.parentFile, pcap.name.removeSuffix(".pcap") + (if (keys.isNotEmpty()) "-tls" else "") + ".pcapng")
+                pcap.inputStream().use { input -> target.outputStream().buffered().use { out -> PcapNg.convert(input, keys, out) } }
+                pcap.delete(); lastFile = target
+            } catch (e: Throwable) { } finally { converting = false }
+        }, "SiteScopeCaptureFinish").start()
+    }
 
-    fun files(dir: File): List<File> = (dir.listFiles { f -> f.isFile && f.name.endsWith(".pcap") } ?: emptyArray()).sortedByDescending { it.lastModified() }
+    fun files(dir: File): List<File> = (dir.listFiles { f -> f.isFile && (f.name.endsWith(".pcapng") || f.name.endsWith(".pcap") && f != session?.file) } ?: emptyArray()).sortedByDescending { it.lastModified() }
 }
