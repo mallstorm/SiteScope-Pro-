@@ -55,6 +55,7 @@ fun play(context: Context, list: List<Channel>, index: Int) {
 
 @Composable
 fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
+    LaunchedEffect(TvViewModel.externalChange) { vm.syncFromStore() }
     val context = LocalContext.current
     var addSheet by remember { mutableStateOf(false) }
     var manageSheet by remember { mutableStateOf(false) }
@@ -82,7 +83,7 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
                 EmptyState(Icons.Rounded.LiveTv, "Добавьте свои каналы", "Вставьте ссылку на плейлист, выберите файл M3U или войдите по данным Xtream. Мы проверим, какие каналы работают, и покажем программу передач.") {
                     Button(onClick = { addSheet = true }, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(8.dp)); Text("Добавить плейлист") }
                     Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = { open(context, IptvActivity::class.java) }) { Text("Найти IPTV в моей сети (udpxy, SAP)") }
+                    TextButton(onClick = { open(context, ToolActivity::class.java) { putExtra("screen", "tvlan") } }) { Text("Найти IPTV в моей сети (udpxy, SAP)") }
                 }
             }
         } else if (vm.channels.isNotEmpty()) {
@@ -340,7 +341,7 @@ private fun ManageSheet(vm: TvViewModel, onClose: () -> Unit) {
             SectionTitle("Для локальной сети")
             OutlinedTextField(vm.udpxy, { vm.udpxy = it }, label = { Text("Адрес udpxy (необязательно)") }, placeholder = { Text("192.168.1.1:4022") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp))
             Text("Нужен, если каналы провайдера идут как udp:// или rtp://, а смотреть нужно через роутер.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
-            TextButton(onClick = { open(context, IptvActivity::class.java) }, contentPadding = PaddingValues(horizontal = 4.dp)) { Text("Поиск udpxy и анонсов SAP в сети") }
+            TextButton(onClick = { open(context, ToolActivity::class.java) { putExtra("screen", "tvlan") } }, contentPadding = PaddingValues(horizontal = 4.dp)) { Text("Поиск udpxy и анонсов SAP в сети") }
         }
     }
 }

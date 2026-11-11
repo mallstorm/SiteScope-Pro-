@@ -14,7 +14,10 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import pro.sitescope.app.data.DataScreen
+import pro.sitescope.app.ip.IpDbScreen
 import pro.sitescope.app.net.NetworkScreen
+import pro.sitescope.app.site.MetricsScreen
+import pro.sitescope.app.tv.TvLanScreen
 
 /** Экраны второго уровня из раздела «Ещё»: сеть, мои данные, настройки. */
 class ToolActivity : ComponentActivity() {
@@ -34,6 +37,9 @@ class ToolActivity : ComponentActivity() {
                     when (screen) {
                         "data" -> { BackHeader("Мои данные", { finish() }); DataScreen(tab) }
                         "settings" -> { BackHeader("Настройки", { finish() }); SettingsScreen() }
+                        "ipdb" -> { BackHeader("База адресов", { finish() }); IpDbScreen(tab) }
+                        "tvlan" -> { BackHeader("ТВ в локальной сети", { finish() }); TvLanScreen() }
+                        "metrics" -> { BackHeader("Метрики поиска", { finish() }); MetricsScreen(targets) }
                         else -> { BackHeader("Моя сеть", { finish() }); NetworkScreen(tab, targets) }
                     }
                 }

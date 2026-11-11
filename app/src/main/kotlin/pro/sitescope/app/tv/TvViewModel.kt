@@ -69,6 +69,9 @@ class TvViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun publish() { channels = TvStore.snapshot(); sources = ArrayList(TvStore.sources); tick++ }
+
+    /** Перечитывает хранилище после изменений, сделанных с других экранов (шлюз, каналы из локальной сети). */
+    fun syncFromStore() { if (loaded) { udpxy = TvStore.udpxyBase; publish() } }
     private fun persist() { TvStore.save(context) }
 
     fun groups(): List<String> = channels.map { it.group }.filter { it.isNotBlank() }.distinct()
@@ -241,7 +244,8 @@ class TvViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() { batch?.cancel(); super.onCleared() }
 
-    companion object { const val ALL = "\u0000all"; const val FAVORITES = "\u0000fav"; const val RECENT = "\u0000recent" }
+    companion object { const val ALL = "\u0000all"; const val FAVORITES = "\u0000fav"; const val RECENT = "\u0000recent"
+        var externalChange by androidx.compose.runtime.mutableIntStateOf(0) }
 }
 
 /** Ежедневная фоновая проверка каналов (только по Wi-Fi). */

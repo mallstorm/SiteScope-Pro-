@@ -34,10 +34,10 @@ fun MoreScreen() {
             Entry(Icons.Rounded.NetworkCheck, "Проверка сети", "Какие сервисы открыты на ваших адресах", ToolActivity::class.java, "network", 1),
             Entry(Icons.Rounded.Terminal, "Подключения", "SSH, файлы, удалённый экран, камеры", ToolActivity::class.java, "network", 2)
         ), context)
-        Group("Инструменты для специалиста", t.ip, t.ipSoft, listOf(
-            Entry(Icons.Rounded.Storage, "База адресов и каталог", "DB-IP, страны, провайдеры, диапазоны", IpIntelligenceActivity::class.java),
-            Entry(Icons.Rounded.SettingsInputAntenna, "IPTV в локальной сети", "Поиск udpxy, анонсы SAP, multicast", IptvActivity::class.java),
-            Entry(Icons.Rounded.QueryStats, "Метрики поиска", "PageSpeed, Search Console, Яндекс Вебмастер", SearchMetricsActivity::class.java)
+        Group("Дополнительно", t.ip, t.ipSoft, listOf(
+            Entry(Icons.Rounded.Storage, "База адресов", "Определение адресов без интернета, сети стран и провайдеров", ToolActivity::class.java, "ipdb", 0),
+            Entry(Icons.Rounded.SettingsInputAntenna, "ТВ в локальной сети", "Шлюз на роутере и каналы от провайдера", ToolActivity::class.java, "tvlan", 0),
+            Entry(Icons.Rounded.QueryStats, "Метрики поиска", "Скорость по Google, показы и клики, ИКС Яндекса", ToolActivity::class.java, "metrics", 0)
         ), context)
         Group("Мои данные", t.site, t.siteSoft, listOf(
             Entry(Icons.Rounded.Folder, "Проекты", "Сайты, сети и плейлисты, к которым вы возвращаетесь", ToolActivity::class.java, "data", 0),

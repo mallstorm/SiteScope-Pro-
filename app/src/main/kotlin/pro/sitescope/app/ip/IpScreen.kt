@@ -115,7 +115,7 @@ private fun LookupPage(vm: IpViewModel) {
             for (q in listOf("8.8.8.8", "1.1.1.1", "yandex.ru", "AS13335")) SuggestionChip(onClick = { vm.search(q) }, label = { Text(q) })
         }
         Spacer(Modifier.height(12.dp))
-        SoftCard(onClick = { open(context, IpIntelligenceActivity::class.java) }) {
+        SoftCard(onClick = { open(context, ToolActivity::class.java) { putExtra("screen", "ipdb") } }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconBadge(Icons.Rounded.Storage, tones.ip, tones.ipSoft, 40.dp)
                 Spacer(Modifier.width(12.dp))
@@ -210,7 +210,7 @@ private fun InfoView(vm: IpViewModel, info: IpInfo) {
             val s = vm.services ?: emptyList()
             if (s.isEmpty()) Text("Популярные порты закрыты или узел их скрывает", style = MaterialTheme.typography.bodyMedium)
             else FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { for ((port, name) in s) Pill("$name · $port", tones.net, tones.netSoft) }
-            TextButton(onClick = { open(context, ScannerActivity::class.java) { putExtra("target", info.ip) } }, contentPadding = PaddingValues(0.dp)) { Text("Открыть полный сканер") }
+            TextButton(onClick = { open(context, ToolActivity::class.java) { putExtra("screen", "network"); putExtra("tab", 1); putExtra("targets", info.ip) } }, contentPadding = PaddingValues(0.dp)) { Text("Открыть полный сканер") }
         }
         if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("Проверка сервисов") },
             text = { Text("Проверяйте только свои узлы или те, на проверку которых у вас есть разрешение владельца.") },

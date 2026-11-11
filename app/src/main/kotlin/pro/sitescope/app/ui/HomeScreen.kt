@@ -119,7 +119,7 @@ fun HomeScreen(state: AppState) {
         }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ActionTile(Icons.Rounded.Wifi, "Моя сеть", "Устройства и сервисы", t.net, t.netSoft, Modifier.weight(1f)) { open(context, ScannerActivity::class.java) }
+            ActionTile(Icons.Rounded.Wifi, "Моя сеть", "Устройства и сервисы", t.net, t.netSoft, Modifier.weight(1f)) { open(context, ToolActivity::class.java) { putExtra("screen", "network") } }
             ActionTile(Icons.Rounded.Shield, "VPN и Hosts", "Туннель и правила", t.info, t.infoSoft, Modifier.weight(1f)) { open(context, HostsActivity::class.java) }
         }
 

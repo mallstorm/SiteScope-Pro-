@@ -188,7 +188,7 @@ private fun ReportView(vm: SiteViewModel, r: Report, state: AppState) {
             }
             ActionRow(Icons.Rounded.Download, "Сохранить отчёт", "Файл HTML — можно отправить клиенту или коллеге") { saveHtml.launch("sitescope-${r.host}.html") }
             if (r.host.isNotEmpty()) ActionRow(Icons.Rounded.Public, "Где размещён сайт", "Провайдер, страна и сеть сервера") { state.ipRequest = r.host; state.tab = Tab.IP }
-            ActionRow(Icons.Rounded.QueryStats, "Метрики поиска", "PageSpeed, Search Console и Яндекс Вебмастер") { open(context, SearchMetricsActivity::class.java) }
+            ActionRow(Icons.Rounded.QueryStats, "Метрики поиска", "Скорость по Google, показы и клики, ИКС Яндекса") { open(context, ToolActivity::class.java) { putExtra("screen", "metrics"); putExtra("targets", r.target) } }
             ActionRow(Icons.Rounded.OpenInNew, "Открыть сайт", r.target) {
                 try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SiteExtras.normalize(r.target)))) } catch (e: Exception) { }
             }
