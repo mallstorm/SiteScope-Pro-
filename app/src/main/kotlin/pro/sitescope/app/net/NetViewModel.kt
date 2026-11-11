@@ -46,7 +46,7 @@ class Proto(val id: String, val title: String, val port: Int)
 val PROTOCOLS = listOf(
     Proto("SSH", "SSH — терминал", 22), Proto("SFTP", "SFTP — файлы", 22), Proto("FTP", "FTP — файлы", 21), Proto("FTPS", "FTPS — файлы", 990),
     Proto("WEBDAV", "WebDAV — файлы", 80), Proto("HTTP", "Веб-страница (HTTP)", 80), Proto("HTTPS", "Веб-страница (HTTPS)", 443),
-    Proto("VNC", "VNC — удалённый экран", 5900), Proto("RTSP", "RTSP — видеопоток", 554), Proto("ONVIF", "ONVIF — камера", 80),
+    Proto("RDP", "RDP — рабочий стол Windows", 3389), Proto("VNC", "VNC — удалённый экран", 5900), Proto("TELNET", "Telnet — консоль оборудования", 23), Proto("RTSP", "RTSP — видеопоток", 554), Proto("ONVIF", "ONVIF — камера", 80),
     Proto("SNMP", "SNMP — оборудование", 161), Proto("MQTT", "MQTT — умный дом", 1883)
 )
 

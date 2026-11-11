@@ -11,6 +11,20 @@ import pro.sitescope.app.tv.*
 private fun ck(c: Boolean, n: String) = assertTrue(n, c)
 
 class EnginesTest {
+    @Test fun protocolCodecs() {
+    val m = pro.sitescope.app.proto.Snmp.message("public", 0xA2, 77, "1.3.6.1.2.1.1.5.0")
+    val vb = pro.sitescope.app.proto.Snmp.parse(m, m.size, 77)!!
+    ck(vb.oid == "1.3.6.1.2.1.1.5.0" && vb.value == "", "snmp roundtrip ${vb.oid}")
+    ck(pro.sitescope.app.proto.Snmp.uptime(8640000L + 360000L) == "1 дн 1 ч 0 мин", "uptime")
+    ck(pro.sitescope.app.proto.Terminal.clean("\u001B[1;32mok\u001B[0m\r\nab\bc\u0007") == "ok\nac", "terminal clean")
+    val pkt = pro.sitescope.app.proto.MqttClient.packet(0x30, ByteArray(200))
+    ck(pkt.size == 203 && pro.sitescope.app.proto.MqttClient.remaining(java.io.ByteArrayInputStream(pkt, 1, 2)) == 200, "mqtt length")
+    ck(pro.sitescope.app.proto.VncClient.auth("secret", ByteArray(16)).size == 16, "vnc auth")
+    ck(pro.sitescope.app.proto.joinPath("/a/", "b") == "/a/b" && pro.sitescope.app.proto.parentPath("/a/b/") == "/a" && pro.sitescope.app.proto.parentPath("/a") == "/", "paths")
+    ck(pro.sitescope.app.vpn.TunnelProxy.isLocalHost("192.168.1.1") && pro.sitescope.app.vpn.TunnelProxy.isLocalHost("router") && pro.sitescope.app.vpn.TunnelProxy.isLocalHost("172.20.0.1") &&
+        !pro.sitescope.app.vpn.TunnelProxy.isLocalHost("172.40.0.1") && !pro.sitescope.app.vpn.TunnelProxy.isLocalHost("example.com"), "local hosts")
+    }
+
     @Test fun trafficCapture() {
     fun ip4(proto: Int, src: IntArray, dst: IntArray, l4: ByteArray): ByteArray {
         val p = ByteArray(20 + l4.size); p[0] = 0x45; p[9] = proto.toByte()

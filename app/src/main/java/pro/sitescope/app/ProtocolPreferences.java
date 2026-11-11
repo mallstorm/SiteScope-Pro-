@@ -28,7 +28,7 @@ public final class ProtocolPreferences {
             || "SSH".equals(protocol) || "SFTP".equals(protocol)
             || "FTP".equals(protocol) || "FTPS".equals(protocol) || "WEBDAV".equals(protocol)
             || "VNC".equals(protocol) || "SNMP".equals(protocol) || "MQTT".equals(protocol)
-            || "ONVIF".equals(protocol)) return BUILTIN;
+            || "ONVIF".equals(protocol) || "RDP".equals(protocol) || "TELNET".equals(protocol) || "DLNA".equals(protocol)) return BUILTIN;
         if ("UPNP".equals(protocol) || "MDNS".equals(protocol) || "UNKNOWN".equals(protocol)) return PANEL;
         return ASK;
     }

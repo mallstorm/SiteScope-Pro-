@@ -38,7 +38,51 @@ public final class ProtocolRouter {
             || "SSH".equals(protocol) || "SFTP".equals(protocol)
             || "FTP".equals(protocol) || "FTPS".equals(protocol) || "WEBDAV".equals(protocol)
             || "VNC".equals(protocol) || "SNMP".equals(protocol) || "MQTT".equals(protocol)
-            || "ONVIF".equals(protocol);
+            || "ONVIF".equals(protocol) || "RDP".equals(protocol) || "TELNET".equals(protocol) || "DLNA".equals(protocol);
+    }
+
+    private static boolean inApp(String protocol) {
+        return supportsBuiltIn(protocol) && !"HTTP".equals(protocol) && !"HTTPS".equals(protocol) && !"RTSP".equals(protocol);
+    }
+
+    public static void openBuiltIn(Activity activity, ServiceEndpoint endpoint) {
+        ConnectionProfileStore.recordOpened(activity, endpoint);
+        ConnectionSessionStore.recordOpen(activity, endpoint, "LAUNCHED", "Встроенный клиент");
+        if ("HTTP".equals(endpoint.protocol) || "HTTPS".equals(endpoint.protocol)) {
+            Intent intent = new Intent(activity, WebClientActivity.class);
+            endpoint.put(intent);
+            activity.startActivity(intent);
+            return;
+        }
+        if ("RTSP".equals(endpoint.protocol)) {
+            Intent intent = new Intent(activity, PlayerActivity.class);
+            String uri = endpoint.uri.length() > 0 ? endpoint.uri : ServiceEndpoint.buildUri("RTSP", endpoint.host, endpoint.port, "");
+            intent.putExtra("url", uri);
+            intent.putExtra("source_url", uri);
+            intent.putExtra("name", endpoint.displayName.length() > 0 ? endpoint.displayName : endpoint.endpointText());
+            intent.putExtra("details", "RTSP · " + endpoint.resourceType);
+            activity.startActivity(intent);
+            return;
+        }
+        if (inApp(endpoint.protocol)) {
+            Intent intent = new Intent(activity, pro.sitescope.app.client.ClientActivity.class);
+            endpoint.put(intent);
+            activity.startActivity(intent);
+            return;
+        }
+        openActionPanel(activity, endpoint);
+    }
+
+    public static boolean supportsBuiltIn(String protocol) {
+        return "HTTP".equals(protocol) || "HTTPS".equals(protocol) || "RTSP".equals(protocol)
+            || "SSH".equals(protocol) || "SFTP".equals(protocol)
+            || "FTP".equals(protocol) || "FTPS".equals(protocol) || "WEBDAV".equals(protocol)
+            || "VNC".equals(protocol) || "SNMP".equals(protocol) || "MQTT".equals(protocol)
+            || "ONVIF".equals(protocol) || "RDP".equals(protocol) || "TELNET".equals(protocol) || "DLNA".equals(protocol);
+    }
+
+    private static boolean inApp(String protocol) {
+        return supportsBuiltIn(protocol) && !"HTTP".equals(protocol) && !"HTTPS".equals(protocol) && !"RTSP".equals(protocol);
     }
 
     public static void openBuiltIn(Activity activity, ServiceEndpoint endpoint) {
@@ -101,8 +145,9 @@ public final class ProtocolRouter {
     }
 
     public static void openActionPanel(Activity activity, ServiceEndpoint endpoint) {
-        Intent intent = new Intent(activity, ServiceActionActivity.class);
+        Intent intent = new Intent(activity, pro.sitescope.app.client.ClientActivity.class);
         endpoint.put(intent);
+        intent.putExtra("panel", true);
         activity.startActivity(intent);
     }
 

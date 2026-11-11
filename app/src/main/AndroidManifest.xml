@@ -75,6 +75,7 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+        <activity android:name=".client.ClientActivity" android:exported="false" android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" android:theme="@style/Theme.SiteScope" />
         <activity android:name=".ui.ToolActivity" android:exported="false" android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.SiteScope" />
         <activity
             android:name=".tv.TvPlayerActivity"
