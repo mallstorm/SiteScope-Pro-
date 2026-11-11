@@ -11,6 +11,13 @@ import pro.sitescope.app.tv.*
 private fun ck(c: Boolean, n: String) = assertTrue(n, c)
 
 class EnginesTest {
+    @Test fun wakeOnLan() {
+    ck(pro.sitescope.app.net.NetViewModel.normalizeMac("aa-bb-cc-dd-ee-0f") == "AA:BB:CC:DD:EE:0F", "mac")
+    ck(pro.sitescope.app.net.NetViewModel.normalizeMac("aa:bb:cc") == null && pro.sitescope.app.net.NetViewModel.normalizeMac("zz:bb:cc:dd:ee:ff") == null, "bad mac")
+    val m = pro.sitescope.app.net.NetViewModel.magicPacket("AA:BB:CC:DD:EE:0F")
+    ck(m.size == 102 && m[0] == 0xFF.toByte() && m[5] == 0xFF.toByte() && m[6] == 0xAA.toByte() && m[11] == 0x0F.toByte() && m[101] == 0x0F.toByte(), "magic")
+    }
+
     @Test fun subnetAndSmartInput() {
     val n = Subnet.parse("192.168.1.10/24")
     ck(n.cidr == "192.168.1.0/24" && n.mask == "255.255.255.0" && n.wildcard == "0.0.0.255" && n.usable == 254L, "basic")

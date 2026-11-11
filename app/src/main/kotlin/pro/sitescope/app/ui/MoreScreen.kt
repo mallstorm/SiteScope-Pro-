@@ -18,7 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import pro.sitescope.app.*
 
-private class Entry(val icon: ImageVector, val title: String, val text: String, val target: Class<*>)
+private class Entry(val icon: ImageVector, val title: String, val text: String, val target: Class<*>, val screen: String? = null, val tab: Int = 0)
 
 @Composable
 fun MoreScreen() {
@@ -30,10 +30,9 @@ fun MoreScreen() {
             Entry(Icons.Rounded.Shield, "VPN и Hosts", "Туннель Xray, свои правила для адресов сайтов", HostsActivity::class.java)
         ), context)
         Group("Моя сеть", t.net, t.netSoft, listOf(
-            Entry(Icons.Rounded.NetworkCheck, "Сканер сети", "Какие сервисы открыты на ваших узлах", ScannerActivity::class.java),
-            Entry(Icons.Rounded.Devices, "Устройства рядом", "Роутеры, камеры, принтеры и ТВ в вашей сети", DiscoveryActivity::class.java),
-            Entry(Icons.Rounded.Inventory2, "Учёт устройств", "Снимки сети: что появилось и что пропало", InventoryActivity::class.java),
-            Entry(Icons.Rounded.Terminal, "Подключения", "SSH, файлы, VNC, камеры и другие клиенты", ConnectionsActivity::class.java)
+            Entry(Icons.Rounded.Devices, "Устройства рядом", "Кто в вашей сети, что появилось и что пропало", ToolActivity::class.java, "network", 0),
+            Entry(Icons.Rounded.NetworkCheck, "Проверка сети", "Какие сервисы открыты на ваших адресах", ToolActivity::class.java, "network", 1),
+            Entry(Icons.Rounded.Terminal, "Подключения", "SSH, файлы, удалённый экран, камеры", ToolActivity::class.java, "network", 2)
         ), context)
         Group("Инструменты для специалиста", t.ip, t.ipSoft, listOf(
             Entry(Icons.Rounded.Storage, "База адресов и каталог", "DB-IP, страны, провайдеры, диапазоны", IpIntelligenceActivity::class.java),
@@ -41,9 +40,9 @@ fun MoreScreen() {
             Entry(Icons.Rounded.QueryStats, "Метрики поиска", "PageSpeed, Search Console, Яндекс Вебмастер", SearchMetricsActivity::class.java)
         ), context)
         Group("Мои данные", t.site, t.siteSoft, listOf(
-            Entry(Icons.Rounded.Folder, "Проекты", "Сайты, сети и каталоги, к которым вы возвращаетесь", ProjectsActivity::class.java),
-            Entry(Icons.Rounded.History, "История", "Все прошлые проверки", HistoryActivity::class.java),
-            Entry(Icons.Rounded.Settings, "Настройки и резервная копия", "Параметры сканера, экспорт и восстановление", SettingsActivity::class.java)
+            Entry(Icons.Rounded.Folder, "Проекты", "Сайты, сети и плейлисты, к которым вы возвращаетесь", ToolActivity::class.java, "data", 0),
+            Entry(Icons.Rounded.History, "История", "Все прошлые проверки", ToolActivity::class.java, "data", 1),
+            Entry(Icons.Rounded.Settings, "Настройки и резервная копия", "Оформление, проверка сети, перенос данных", ToolActivity::class.java, "settings", 0)
         ), context)
         val version = try { context.packageManager.getPackageInfo(context.packageName, 0).versionName } catch (e: Exception) { "" }
         Text("SiteScope Pro $version", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -57,7 +56,7 @@ private fun Group(title: String, color: Color, soft: Color, entries: List<Entry>
         SectionTitle(title)
         SoftCard(padding = 6.dp) {
             entries.forEachIndexed { index, e ->
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { open(context, e.target) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { open(context, e.target) { if (e.screen != null) { putExtra("screen", e.screen); putExtra("tab", e.tab) } } }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconBadge(e.icon, color, soft, 42.dp)
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {

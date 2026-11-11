@@ -14,6 +14,7 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         registerActivityLifecycleCallbacks(LegacyInsets)
+        pro.sitescope.app.ui.ThemePrefs.load(this)
         val manager = getSystemService(NotificationManager::class.java)
         manager?.createNotificationChannel(NotificationChannel(CHANNEL_ALERTS, "Оповещения SiteScope", NotificationManager.IMPORTANCE_DEFAULT).apply {
             description = "Результаты проверок сайтов и каналов"

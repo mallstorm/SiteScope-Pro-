@@ -36,7 +36,7 @@ public final class ConnectionProfileStore {
         public long lastLatencyMs;
         public String lastMessage = "";
 
-        ServiceEndpoint endpoint() {
+        public ServiceEndpoint endpoint() {
             ServiceEndpoint endpoint = new ServiceEndpoint();
             endpoint.host = host;
             endpoint.port = port;

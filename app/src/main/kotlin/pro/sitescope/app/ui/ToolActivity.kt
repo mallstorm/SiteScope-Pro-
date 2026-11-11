@@ -1,0 +1,43 @@
+package pro.sitescope.app.ui
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.Modifier
+import pro.sitescope.app.data.DataScreen
+import pro.sitescope.app.net.NetworkScreen
+
+/** Экраны второго уровня из раздела «Ещё»: сеть, мои данные, настройки. */
+class ToolActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
+        super.onCreate(savedInstanceState)
+        val screen = intent.getStringExtra("screen") ?: "network"
+        val tab = intent.getIntExtra("tab", 0)
+        val targets = intent.getStringExtra("targets")
+        // Сканер работает в фоне с уведомлением о ходе проверки.
+        if (screen == "network" && Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED && savedInstanceState == null) {
+            try { requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7) } catch (e: Exception) { }
+        }
+        setContent {
+            AppTheme {
+                Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding()) {
+                    when (screen) {
+                        "data" -> { BackHeader("Мои данные", { finish() }); DataScreen(tab) }
+                        "settings" -> { BackHeader("Настройки", { finish() }); SettingsScreen() }
+                        else -> { BackHeader("Моя сеть", { finish() }); NetworkScreen(tab, targets) }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -82,7 +82,12 @@ private val AppTypography = Typography(
 )
 
 @Composable
-fun AppTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+fun AppTheme(dark: Boolean = when (ThemePrefs.mode) { 1 -> false; 2 -> true; else -> isSystemInDarkTheme() }, content: @Composable () -> Unit) {
+    val view = androidx.compose.ui.platform.LocalView.current
+    if (!view.isInEditMode) androidx.compose.runtime.SideEffect {
+        val window = (view.context as? android.app.Activity)?.window
+        if (window != null) androidx.core.view.WindowCompat.getInsetsController(window, view).apply { isAppearanceLightStatusBars = !dark; isAppearanceLightNavigationBars = !dark }
+    }
     CompositionLocalProvider(LocalTones provides if (dark) DarkTones else LightTones) {
         MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, shapes = AppShapes, typography = AppTypography, content = content)
     }

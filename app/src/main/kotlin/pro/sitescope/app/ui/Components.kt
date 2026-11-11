@@ -217,3 +217,30 @@ fun MonoBlock(text: String, modifier: Modifier = Modifier) {
     Text(text, fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 19.sp,
         modifier = modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh).clickable { copyText(context, text) }.padding(12.dp))
 }
+
+
+@Composable
+fun ConfirmDialog(title: String, text: String, confirmLabel: String, onDismiss: (() -> Unit)?, onConfirm: () -> Unit) {
+    AlertDialog(onDismissRequest = { (onDismiss ?: onConfirm)() }, title = { Text(title) }, text = { Text(text) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(confirmLabel) } },
+        dismissButton = if (onDismiss != null) ({ TextButton(onClick = onDismiss) { Text("Отмена") } }) else null)
+}
+
+@Composable
+fun TextDialog(title: String, initial: String, placeholder: String, onClose: () -> Unit, onSave: (String) -> Unit) {
+    var value by remember { mutableStateOf(initial) }
+    AlertDialog(onDismissRequest = onClose, title = { Text(title) },
+        text = { OutlinedTextField(value = value, onValueChange = { value = it }, singleLine = true, placeholder = { Text(placeholder) }, shape = RoundedCornerShape(14.dp)) },
+        confirmButton = { TextButton(onClick = { onSave(value) }) { Text("Сохранить") } },
+        dismissButton = { TextButton(onClick = onClose) { Text("Отмена") } })
+}
+
+/** Шапка экранов второго уровня: стрелка «назад» и заголовок. */
+@Composable
+fun BackHeader(title: String, onBack: () -> Unit, actions: @Composable RowScope.() -> Unit = {}) {
+    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 6.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Назад") }
+        Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        actions()
+    }
+}

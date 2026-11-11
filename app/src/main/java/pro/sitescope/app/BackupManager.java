@@ -34,7 +34,10 @@ public final class BackupManager {
         "protocol_router_preferences",
         ConnectionSessionStore.PREFS,
         DeviceInventoryStore.PREFS,
-        SettingsStore.PREFS
+        SettingsStore.PREFS,
+        "site_monitor",
+        "ip_recent",
+        "wake_on_lan"
     );
 
     private BackupManager() { }
