@@ -54,7 +54,7 @@ public final class XrayAssets {
         String id = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
         if (id == null || id.length() == 0) id = context.getPackageName();
         MessageDigest digest = MessageDigest.getInstance("SHA-256"); byte[] hash = digest.digest((context.getPackageName() + ":" + id).getBytes("UTF-8"));
-        StringBuilder out = new StringBuilder(); for (int i = 0; i < 16; i++) out.append(String.format("%02x", hash[i] & 0xff)); return out.toString();
+        return android.util.Base64.encodeToString(hash, android.util.Base64.URL_SAFE | android.util.Base64.NO_PADDING | android.util.Base64.NO_WRAP);
     }
 
     private static String safeMessage(Throwable e) { String value = e.getMessage(); return value == null || value.length() == 0 ? e.getClass().getSimpleName() : value; }

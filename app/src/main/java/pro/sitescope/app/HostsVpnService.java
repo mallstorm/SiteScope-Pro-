@@ -235,6 +235,8 @@ public final class HostsVpnService extends VpnService {
         XrayProfileStore profileStore = new XrayProfileStore(this);
         final boolean direct = pro.sitescope.app.vpn.VpnSettings.directMode(this);
         XrayProfileStore.Info selectedProfile = direct ? new XrayProfileStore.Info() : profileStore.info();
+        int socksPort = XrayConfigBuilder.chooseSocksPort();
+        VpnDiagnostics.log(this, "XRAY_SOCKS_PORT", socksPort == 10808 ? "10808" : "10808 занят другим приложением, выбран " + socksPort);
         XrayConfigBuilder.ConfigResult config = buildXrayConfig(direct, profileStore, selectedProfile);
         VpnDiagnostics.log(this, "XRAY_PROFILE", "type=" + config.profileType + ", endpoint=" + config.endpoint + ", " + config.transportSummary);
         updateState(STATE_STARTING, false, MODE_XRAY, "Проверка сервера через базовую сеть…", config.profileName, selectedProfile.id, config.endpoint, "");
@@ -282,7 +284,6 @@ public final class HostsVpnService extends VpnService {
 
         activeMode = MODE_XRAY;
         running = true;
-        if (!direct && pro.sitescope.app.vpn.VpnSettings.appThroughTunnel(this)) pro.sitescope.app.vpn.TunnelProxy.install(this);
         updateNotification("XRAY · " + config.profileName + " · проверка Интернета");
         updateState(STATE_ACTIVE, true, MODE_XRAY,
             "XRAY · туннель поднят · проверка Интернета выполняется в фоне",
@@ -305,6 +306,7 @@ public final class HostsVpnService extends VpnService {
             try {
                 long delay = runtime.probeOutbound();
                 if (!isCurrentXraySession(token, runtime)) return;
+                if (selectedProfile.id.length() > 0 && pro.sitescope.app.vpn.VpnSettings.appThroughTunnel(HostsVpnService.this)) pro.sitescope.app.vpn.TunnelProxy.install(HostsVpnService.this);
                 updateNotification("XRAY · " + config.profileName + " · " + delay + " мс");
                 updateState(STATE_ACTIVE, true, MODE_XRAY,
                     "XRAY · Интернет подтверждён · " + delay + " мс",
@@ -537,8 +539,8 @@ public final class HostsVpnService extends VpnService {
                 XrayProfileStore.Info info = direct ? new XrayProfileStore.Info() : store.info(runningId);
                 XrayConfigBuilder.ConfigResult config = buildXrayConfig(direct, store, info);
                 runtime.reloadCore(config.json);
-                if (!direct && pro.sitescope.app.vpn.VpnSettings.appThroughTunnel(this)) pro.sitescope.app.vpn.TunnelProxy.install(this);
-                else pro.sitescope.app.vpn.TunnelProxy.remove(this);
+                if (direct || !pro.sitescope.app.vpn.VpnSettings.appThroughTunnel(this)) pro.sitescope.app.vpn.TunnelProxy.remove(this);
+                else if (pro.sitescope.app.vpn.TunnelProxy.INSTANCE.getActive()) { pro.sitescope.app.vpn.TunnelProxy.remove(this); pro.sitescope.app.vpn.TunnelProxy.install(this); }
                 setMessage("XRAY · адреса и DNS обновлены без разрыва VPN · правил: " + config.hostsCount);
                 VpnDiagnostics.log(this, "XRAY_HOT_RELOAD", "hosts=" + config.hostsCount + ", dns=" + pro.sitescope.app.vpn.VpnSettings.dnsServers(this).size());
             } catch (Throwable e) {

@@ -12,7 +12,20 @@ import java.util.Map;
 
 /** Produces a locked-down single-profile Xray configuration for the SiteScope TUN. */
 public final class XrayConfigBuilder {
-    public static final int SOCKS_PORT = 10808;
+    /** Local SOCKS port of the embedded core. 10808 by default; another free port is chosen when it is taken (v2rayNG uses the same default). */
+    public static volatile int SOCKS_PORT = 10808;
+
+    public static int chooseSocksPort() {
+        try (java.net.ServerSocket probe = new java.net.ServerSocket()) {
+            probe.setReuseAddress(true);
+            probe.bind(new java.net.InetSocketAddress("127.0.0.1", 10808));
+            SOCKS_PORT = 10808;
+        } catch (Exception busy) {
+            try (java.net.ServerSocket any = new java.net.ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) { SOCKS_PORT = any.getLocalPort(); }
+            catch (Exception ignored) { SOCKS_PORT = 10808; }
+        }
+        return SOCKS_PORT;
+    }
     public static final String SOCKS_TAG = "sitescope-socks";
     public static final String DNS_TAG = "sitescope-dns";
     public static final String PROXY_TAG = "sitescope-proxy";

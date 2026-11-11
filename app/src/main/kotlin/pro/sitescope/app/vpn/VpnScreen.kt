@@ -236,7 +236,7 @@ fun VpnScreen(vm: VpnViewModel = viewModel()) {
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
-        StatusCard(vm, onConnect = { connect() })
+        StatusCard(vm, onConnect = { connect() }, onReason = { tab = 4 })
         if (vm.appliedNote.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { vm.appliedNote = "" }.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -258,7 +258,7 @@ fun VpnScreen(vm: VpnViewModel = viewModel()) {
 }
 
 @Composable
-private fun StatusCard(vm: VpnViewModel, onConnect: () -> Unit) {
+private fun StatusCard(vm: VpnViewModel, onConnect: () -> Unit, onReason: () -> Unit) {
     val context = LocalContext.current
     val t = tones
     val error = vm.lifecycle == HostsVpnService.STATE_ERROR
@@ -291,6 +291,7 @@ private fun StatusCard(vm: VpnViewModel, onConnect: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         if (vm.active || vm.busy) Button(onClick = { vm.stop() }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = t.bad)) { Text(if (vm.busy) "Отменить" else "Выключить") }
         else Button(onClick = onConnect, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.PowerSettingsNew, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Включить") }
+        if (error) TextButton(onClick = onReason) { Text("Показать причину сбоя") }
         if (error && vm.message.contains("VPN", true)) TextButton(onClick = {
             try { context.startActivity(VpnNetworkCoordinator.settingsIntent()) } catch (e: Exception) { toast(context, "Откройте Настройки → VPN") }
         }) { Text("Открыть настройки VPN в системе") }
@@ -580,7 +581,19 @@ private fun CaptureTab(vm: VpnViewModel) {
 private fun LogTab(vm: VpnViewModel) {
     val context = LocalContext.current
     var log by remember { mutableStateOf("") }
-    LaunchedEffect(vm.lifecycle, vm.message) { log = withContext(Dispatchers.IO) { VpnDiagnostics.read(context).lines().takeLast(120).joinToString("\n") } }
+    var crash by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(vm.lifecycle, vm.message) {
+        log = withContext(Dispatchers.IO) { VpnDiagnostics.read(context).lines().takeLast(120).joinToString("\n") }
+        crash = withContext(Dispatchers.IO) { CrashLog.read(context) }
+    }
+    SectionTitle("Причина последнего сбоя", action = if (crash.isNotEmpty()) "Очистить" else null, onAction = { CrashLog.clear(context); crash = "" })
+    if (crash.isEmpty()) Text("Сбоев не записано.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    else MonoBlock(crash.takeLast(9000))
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = { shareText(context, "SiteScope Pro · журнал VPN\n\n" + crash + "\n\n=== Журнал подключения ===\n" + log, "Журнал VPN SiteScope") }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Отправить журнал") }
+        OutlinedButton(onClick = { scope.launch { crash = withContext(Dispatchers.IO) { CrashLog.captureSystemLog(context, "снято вручную"); CrashLog.read(context) } } }) { Text("Снять сейчас") }
+    }
     SectionTitle("Журнал", action = "Копировать", onAction = { copyText(context, log, "Журнал скопирован") })
     Text("Что происходило при подключении. Пароли и ключи в журнал не попадают.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(8.dp))

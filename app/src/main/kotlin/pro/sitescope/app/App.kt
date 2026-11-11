@@ -13,6 +13,7 @@ import androidx.activity.ComponentActivity
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        pro.sitescope.app.vpn.CrashLog.install(this)
         registerActivityLifecycleCallbacks(LegacyInsets)
         pro.sitescope.app.ui.ThemePrefs.load(this)
         val manager = getSystemService(NotificationManager::class.java)

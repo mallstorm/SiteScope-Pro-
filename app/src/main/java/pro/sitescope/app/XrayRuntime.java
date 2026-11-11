@@ -45,6 +45,7 @@ public final class XrayRuntime {
         VpnDiagnostics.log(context, "XRAY_CORE_START", "initializing embedded core");
         controller = Libv2ray.newCoreController(callbacks());
         try {
+            registerFinder(controller);
             controller.startLoop(config, 0);
             lastConfig = config;
             if (!controller.getIsRunning()) throw new IllegalStateException("Xray core не перешёл в рабочее состояние");
@@ -125,6 +126,24 @@ public final class XrayRuntime {
         throw new IllegalStateException("Профиль не установил исходящее соединение: " + safeMessage(first));
     }
 
+    private void registerFinder(CoreController target) {
+        try {
+            target.registerProcessFinder(new libv2ray.ProcessFinder() {
+                @Override public long findProcessByConnection(String network, String sourceIp, long sourcePort, String destinationIp, long destinationPort) {
+                    try {
+                        if (android.os.Build.VERSION.SDK_INT < 29) return -1L;
+                        android.net.ConnectivityManager cm = (android.net.ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
+                        if (cm == null) return -1L;
+                        int protocol = network != null && network.toLowerCase(java.util.Locale.US).startsWith("udp") ? 17 : 6;
+                        return cm.getConnectionOwnerUid(protocol, new InetSocketAddress(sourceIp, (int)sourcePort), new InetSocketAddress(destinationIp, (int)destinationPort));
+                    } catch (Throwable ignored) { return -1L; }
+                }
+            });
+        } catch (Throwable e) {
+            VpnDiagnostics.log(context, "XRAY_FINDER_SKIPPED", safeMessage(e));
+        }
+    }
+
     private CoreCallbackHandler callbacks() {
         return new CoreCallbackHandler() {
             @Override public long onEmitStatus(long code, String status) {
@@ -153,6 +172,7 @@ public final class XrayRuntime {
         try { if (controller.getIsRunning()) controller.stopLoop(); } catch (Throwable ignored) { }
         try {
             controller = Libv2ray.newCoreController(callbacks());
+            registerFinder(controller);
             controller.startLoop(config, 0);
             if (!controller.getIsRunning()) throw new IllegalStateException("Xray core не принял новую конфигурацию");
             lastConfig = config;
