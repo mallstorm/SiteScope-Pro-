@@ -1,6 +1,5 @@
 package pro.sitescope.app
 
-import com.sun.net.httpserver.HttpServer
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import pro.sitescope.app.core.SmartInput
@@ -8,7 +7,6 @@ import pro.sitescope.app.ip.IpTools
 import pro.sitescope.app.ip.Subnet
 import pro.sitescope.app.site.*
 import pro.sitescope.app.tv.*
-import java.net.InetSocketAddress
 
 private fun ck(c: Boolean, n: String) = assertTrue(n, c)
 
@@ -75,7 +73,7 @@ http://s.example/noname.ts
     ck(StreamChecker.codecNames("avc1.64001f,mp4a.40.2") == ("H.264" to "AAC") && StreamChecker.codecNames("hvc1.1.6.L120,ec-3").first.contains("HEVC"), "codecs")
 
     val ts = ByteArray(188 * 400) { if (it % 188 == 0) 0x47 else 0x11 }
-    val srv = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+    val srv = MiniHttp()
     fun route(path: String, code: Int, type: String, body: ByteArray, ua: String? = null, loc: String? = null) = srv.createContext(path) { ex ->
         if (ua != null && ex.requestHeaders.getFirst("User-Agent") != ua) { ex.sendResponseHeaders(403, -1); ex.close(); return@createContext }
         if (loc != null) ex.responseHeaders.add("Location", loc)
@@ -113,7 +111,7 @@ http://s.example/noname.ts
     }
 
     @Test fun siteEngines() {
-    val srv = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+    val srv = MiniHttp()
     val html = """<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name=viewport content="width=device-width">
 <meta property="og:title" content="x"><meta property="og:image" content="y"><link rel="icon" href="/f.ico"><link rel="stylesheet" href="/a.css">
 <script src="/a.js"></script><script src="/b.js" defer></script><script type="application/ld+json">{"@type":"Organization","x":{"@type":"WebSite"}}</script></head>
@@ -167,3 +165,30 @@ http://s.example/noname.ts
     c.catchup = "flussonic"; c.catchupSource = ""; ck(Playlist.catchupUrl(c, 1000_000, 2000_000) == "http://s/ch/timeshift_abs-1000.m3u8?token=1", "flussonic")
     }
 }
+
+
+/** Крошечный HTTP-сервер для тестов (com.sun.net.httpserver недоступен на Android-classpath). */
+class MiniHeaders { val map = LinkedHashMap<String, MutableList<String>>()
+    fun add(k: String, v: String) { map.getOrPut(k) { mutableListOf() }.add(v) }
+    fun getFirst(k: String): String? = map.entries.firstOrNull { it.key.equals(k, true) }?.value?.firstOrNull() }
+class MiniExchange(val method: String, val requestURI: java.net.URI, val requestHeaders: MiniHeaders, private val out: java.io.OutputStream) {
+    val responseHeaders = MiniHeaders(); val responseBody = java.io.ByteArrayOutputStream()
+    private var code = 200; private var closed = false
+    fun sendResponseHeaders(c: Int, len: Long) { code = c }
+    fun close() { if (closed) return; closed = true
+        val body = responseBody.toByteArray(); val sb = StringBuilder("HTTP/1.1 $code X\r\n")
+        responseHeaders.map.forEach { (k, vs) -> vs.forEach { sb.append("$k: $it\r\n") } }
+        sb.append("Content-Length: ${body.size}\r\nConnection: close\r\n\r\n")
+        out.write(sb.toString().toByteArray(Charsets.ISO_8859_1)); if (method != "HEAD") out.write(body); out.flush() } }
+class MiniHttp { private val ss = java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
+    private val routes = ArrayList<Pair<String, (MiniExchange) -> Unit>>()
+    val address: java.net.InetSocketAddress get() = java.net.InetSocketAddress("127.0.0.1", ss.localPort)
+    fun createContext(path: String, h: (MiniExchange) -> Unit) { routes.add(path to h) }
+    fun start() { Thread { while (!ss.isClosed) { val c = try { ss.accept() } catch (e: Exception) { break }
+        Thread { try { c.use { sock -> val rd = java.io.BufferedReader(java.io.InputStreamReader(sock.getInputStream(), Charsets.ISO_8859_1))
+            val first = rd.readLine()?.split(" ") ?: return@use; val hs = MiniHeaders()
+            while (true) { val l = rd.readLine() ?: break; if (l.isEmpty()) break; val i = l.indexOf(':'); if (i > 0) hs.add(l.substring(0, i).trim(), l.substring(i + 1).trim()) }
+            val uri = java.net.URI(first[1]); val ex = MiniExchange(first[0], uri, hs, sock.getOutputStream())
+            val h = routes.filter { uri.path.startsWith(it.first) }.maxByOrNull { it.first.length }?.second
+            if (h == null) ex.sendResponseHeaders(404, -1) else h(ex); ex.close() } } catch (e: Exception) { } }.apply { isDaemon = true }.start() } }.apply { isDaemon = true }.start() }
+    fun stop(delay: Int) { ss.close() } }
