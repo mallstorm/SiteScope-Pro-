@@ -2,6 +2,12 @@ package pro.sitescope.app;
 
 import android.content.Context;
 import android.net.wifi.WifiManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.LinkProperties;
+import android.net.LinkAddress;
+import java.net.Inet4Address;
 
 import java.io.ByteArrayOutputStream;
 import java.net.DatagramPacket;
@@ -37,6 +43,10 @@ public final class NetworkDiscoveryEngine {
     public static final class Task {
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
         private volatile Thread thread;
+        private Network lan;
+        private boolean wifi;
+        private NetworkInterface networkInterface;
+        private InetAddress address;
         public void cancel() { cancelled.set(true); if (thread != null) thread.interrupt(); }
         public boolean isCancelled() { return cancelled.get(); }
     }
@@ -49,17 +59,27 @@ public final class NetworkDiscoveryEngine {
                 WifiManager.MulticastLock multicastLock = null;
                 String error = "";
                 try {
+                    selectLan(context, task);
                     WifiManager wifi = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-                    if (wifi != null) {
+                    if (wifi != null && task.wifi) {
                         multicastLock = wifi.createMulticastLock("SiteScope-Discovery");
                         multicastLock.setReferenceCounted(false);
                         multicastLock.acquire();
                     }
-                    if (!task.cancelled.get()) discoverSsdp(task, found, listener);
-                    if (!task.cancelled.get()) discoverOnvif(task, found, listener);
-                    if (!task.cancelled.get()) discoverMdns(task, found, listener);
+                    List<String> failures = new ArrayList<String>();
+                    for (int probe = 0; probe < 3 && !task.cancelled.get(); probe++) {
+                        try {
+                            if (probe == 0) discoverSsdp(task, found, listener);
+                            else if (probe == 1) discoverOnvif(task, found, listener);
+                            else discoverMdns(task, found, listener);
+                        } catch (Exception failure) {
+                            String message = discoveryFailure(failure);
+                            if (!failures.contains(message)) failures.add(message);
+                        }
+                    }
+                    error = join(failures, " · ", 3);
                 } catch (Exception unexpected) {
-                    error = unexpected.getMessage() == null ? unexpected.getClass().getSimpleName() : unexpected.getMessage();
+                    error = discoveryFailure(unexpected);
                 } finally {
                     if (multicastLock != null && multicastLock.isHeld()) multicastLock.release();
                     if (listener != null) listener.onComplete(new ArrayList<Models.DiscoveredDevice>(found.values()), task.cancelled.get(), error);
@@ -70,10 +90,52 @@ public final class NetworkDiscoveryEngine {
         return task;
     }
 
+    static boolean isLan(NetworkCapabilities caps) {
+        return caps != null && !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+            && (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET));
+    }
+
+    private static void selectLan(Context context, Task task) throws Exception {
+        ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm != null) for (Network network : cm.getAllNetworks()) {
+            NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+            if (!isLan(caps)) continue;
+            LinkProperties props = cm.getLinkProperties(network);
+            if (props == null || props.getInterfaceName() == null) continue;
+            NetworkInterface iface = NetworkInterface.getByName(props.getInterfaceName());
+            if (iface == null || !iface.isUp() || iface.isLoopback()) continue;
+            for (LinkAddress link : props.getLinkAddresses()) {
+                if (!(link.getAddress() instanceof Inet4Address) || link.getAddress().isLoopbackAddress()) continue;
+                task.wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
+                task.lan = network; task.networkInterface = iface; task.address = link.getAddress(); return;
+            }
+        }
+        throw new java.io.IOException("Подключитесь к Wi-Fi или Ethernet: поиск устройств работает в локальной сети, через мобильный интернет он недоступен.");
+    }
+
+    static String discoveryFailure(Exception failure) {
+        String message = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+        if (failure instanceof SecurityException || message.contains("EPERM") || message.contains("EACCES"))
+            return "Android запретил поиск multicast. Проверьте доступ к локальной сети в разрешениях приложения и настройки VPN/брандмауэра.";
+        return message;
+    }
+
+    private static MulticastSocket lanSocket(Task task, int port) throws Exception {
+        MulticastSocket socket = new MulticastSocket(null);
+        try {
+            socket.setReuseAddress(true);
+            socket.bind(new InetSocketAddress(port == 5353 ? null : task.address, port));
+            task.lan.bindSocket(socket);
+            socket.setNetworkInterface(task.networkInterface);
+            socket.setTimeToLive(1);
+            return socket;
+        } catch (Exception failure) { socket.close(); throw failure; }
+    }
+
     private static void discoverSsdp(Task task, Map<String, Models.DiscoveredDevice> found, Listener listener) throws Exception {
         if (listener != null) listener.onStatus("SSDP/UPnP: поиск маршрутизаторов, медиасерверов и IoT…");
         String request = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\nUSER-AGENT: SiteScopePro/0.7 UPnP/1.1\r\n\r\n";
-        DatagramSocket socket = new DatagramSocket();
+        DatagramSocket socket = lanSocket(task, 0);
         try {
             socket.setSoTimeout(300);
             socket.send(new DatagramPacket(request.getBytes("UTF-8"), request.getBytes("UTF-8").length,
@@ -110,7 +172,7 @@ public final class NetworkDiscoveryEngine {
             "<e:Envelope xmlns:e=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:w=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\">" +
             "<e:Header><w:MessageID>uuid:" + uuid + "</w:MessageID><w:To e:mustUnderstand=\"true\">urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To><w:Action e:mustUnderstand=\"true\">http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</w:Action></e:Header>" +
             "<e:Body><d:Probe><d:Types>dn:NetworkVideoTransmitter</d:Types></d:Probe></e:Body></e:Envelope>";
-        DatagramSocket socket = new DatagramSocket();
+        DatagramSocket socket = lanSocket(task, 0);
         try {
             socket.setSoTimeout(350);
             byte[] payload = xml.getBytes("UTF-8");
@@ -142,11 +204,11 @@ public final class NetworkDiscoveryEngine {
 
     private static void discoverMdns(Task task, Map<String, Models.DiscoveredDevice> found, Listener listener) throws Exception {
         if (listener != null) listener.onStatus("mDNS/DNS-SD: поиск локальных сервисов…");
-        MulticastSocket socket = new MulticastSocket(5353);
+        MulticastSocket socket = lanSocket(task, 5353);
         try {
             socket.setReuseAddress(true);
             socket.setSoTimeout(300);
-            NetworkInterface network = chooseNetworkInterface();
+            NetworkInterface network = task.networkInterface;
             if (network != null) socket.setNetworkInterface(network);
             InetAddress group = InetAddress.getByName("224.0.0.251");
             if (network != null) socket.joinGroup(new InetSocketAddress(group, 5353), network);
