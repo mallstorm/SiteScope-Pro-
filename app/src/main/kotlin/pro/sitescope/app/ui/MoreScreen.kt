@@ -32,12 +32,14 @@ fun MoreScreen() {
         Group("Моя сеть", t.net, t.netSoft, listOf(
             Entry(Icons.Rounded.Devices, "Устройства рядом", "Кто в вашей сети, что появилось и что пропало", ToolActivity::class.java, "network", 0),
             Entry(Icons.Rounded.NetworkCheck, "Проверка сети", "Какие сервисы открыты на ваших адресах", ToolActivity::class.java, "network", 1),
-            Entry(Icons.Rounded.Terminal, "Подключения", "SSH, файлы, удалённый экран, камеры", ToolActivity::class.java, "network", 2)
+            Entry(Icons.Rounded.Terminal, "Подключения", "SSH, файлы, удалённый экран, камеры", ToolActivity::class.java, "network", 2),
+            Entry(Icons.Rounded.Wifi, "Диагностика Wi-Fi", "Сети рядом, занятость каналов, своя сеть, сигнал по комнатам", ToolActivity::class.java, "wifi", 0)
         ), context)
         Group("Дополнительно", t.ip, t.ipSoft, listOf(
             Entry(Icons.Rounded.Storage, "База адресов", "Определение адресов без интернета, сети стран и провайдеров", ToolActivity::class.java, "ipdb", 0),
             Entry(Icons.Rounded.SettingsInputAntenna, "ТВ в локальной сети", "Шлюз на роутере и каналы от провайдера", ToolActivity::class.java, "tvlan", 0),
-            Entry(Icons.Rounded.QueryStats, "Метрики поиска", "Скорость по Google, показы и клики, ИКС Яндекса", ToolActivity::class.java, "metrics", 0)
+            Entry(Icons.Rounded.QueryStats, "Метрики поиска", "Скорость по Google, показы и клики, ИКС Яндекса", ToolActivity::class.java, "metrics", 0),
+            Entry(Icons.Rounded.PlaylistAddCheck, "Проверка списка сайтов", "Доступность, код ответа и сертификат сразу у нескольких доменов", ToolActivity::class.java, "batch", 0)
         ), context)
         Group("Мои данные", t.site, t.siteSoft, listOf(
             Entry(Icons.Rounded.Folder, "Проекты", "Сайты, сети и плейлисты, к которым вы возвращаетесь", ToolActivity::class.java, "data", 0),

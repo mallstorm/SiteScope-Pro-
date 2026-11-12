@@ -16,9 +16,11 @@ import androidx.compose.ui.Modifier
 import pro.sitescope.app.data.DataScreen
 import pro.sitescope.app.ip.IpDbScreen
 import pro.sitescope.app.net.NetworkScreen
+import pro.sitescope.app.site.BatchScreen
 import pro.sitescope.app.site.MetricsScreen
 import pro.sitescope.app.tv.TvLanScreen
 import pro.sitescope.app.vpn.VpnScreen
+import pro.sitescope.app.wifi.WifiScreen
 
 /** Экраны второго уровня из раздела «Ещё»: сеть, мои данные, настройки. */
 class ToolActivity : ComponentActivity() {
@@ -42,6 +44,8 @@ class ToolActivity : ComponentActivity() {
                         "ipdb" -> { BackHeader("База адресов", { finish() }); IpDbScreen(tab) }
                         "tvlan" -> { BackHeader("ТВ в локальной сети", { finish() }); TvLanScreen() }
                         "metrics" -> { BackHeader("Метрики поиска", { finish() }); MetricsScreen(targets) }
+                        "batch" -> { BackHeader("Проверка списка сайтов", { finish() }); BatchScreen() }
+                        "wifi" -> { BackHeader("Диагностика Wi-Fi", { finish() }); WifiScreen() }
                         else -> { BackHeader("Моя сеть", { finish() }); NetworkScreen(tab, targets) }
                     }
                 }

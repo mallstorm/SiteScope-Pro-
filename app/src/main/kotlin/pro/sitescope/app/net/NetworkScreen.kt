@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -41,15 +42,16 @@ fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewMo
     var tab by remember { mutableIntStateOf(startTab) }
     LaunchedEffect(startTargets) { if (!startTargets.isNullOrBlank()) vm.targets = startTargets }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Устройства", "Сканер", "Подключения").forEachIndexed { i, title ->
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Устройства", "Сканер", "Подключения", "Скорость").forEachIndexed { i, title ->
                 FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title) })
             }
         }
         when (tab) {
             0 -> DevicesTab(vm)
             1 -> ScannerTab(vm)
-            else -> ConnectionsTab(vm)
+            2 -> ConnectionsTab(vm)
+            else -> SpeedTab(vm)
         }
     }
 }
@@ -187,6 +189,7 @@ private fun WolSheet(vm: NetViewModel, onClose: () -> Unit) {
     val context = LocalContext.current
     var name by remember { mutableStateOf("") }
     var mac by remember { mutableStateOf("") }
+    var ip by remember { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = onClose) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp).verticalScroll(rememberScrollState())) {
             Text("Включить по сети", style = MaterialTheme.typography.titleLarge)
@@ -196,18 +199,59 @@ private fun WolSheet(vm: NetViewModel, onClose: () -> Unit) {
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(entry.name, style = MaterialTheme.typography.titleSmall)
-                        Text(entry.mac, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(entry.mac + (if (entry.ip.isNotEmpty()) " · " + entry.ip else ""), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     IconButton(onClick = { vm.removeWol(entry) }) { Icon(Icons.Rounded.DeleteOutline, "Удалить") }
-                    Button(onClick = { vm.wake(entry) { ok -> toast(context, if (ok) "Сигнал отправлен" else "Не удалось отправить: проверьте Wi-Fi") } }) { Text("Включить") }
+                    Button(onClick = { vm.wake(entry) { status -> toast(context, status) } }) { Text("Включить") }
                 }
             }
             if (vm.wol.isNotEmpty()) HorizontalDivider(Modifier.padding(vertical = 10.dp))
             BigField(name, { name = it }, "Название (например, домашний ПК)", leading = Icons.Rounded.Computer, keyboard = KeyboardType.Text)
             Spacer(Modifier.height(8.dp))
             BigField(mac, { mac = it }, "MAC-адрес: AA:BB:CC:DD:EE:FF", leading = Icons.Rounded.Memory, keyboard = KeyboardType.Ascii, mono = true)
+            Spacer(Modifier.height(8.dp))
+            BigField(ip, { ip = it }, "IP для проверки пробуждения (необязательно)", leading = Icons.Rounded.Dns, keyboard = KeyboardType.Ascii, mono = true)
             Spacer(Modifier.height(12.dp))
-            Button(onClick = { if (vm.addWol(name, mac)) { name = ""; mac = "" } else toast(context, "MAC-адрес — это 12 знаков: цифры и буквы A–F") }, modifier = Modifier.fillMaxWidth()) { Text("Сохранить устройство") }
+            Button(onClick = { if (vm.addWol(name, mac, ip)) { name = ""; mac = ""; ip = "" } else toast(context, "MAC-адрес — это 12 знаков: цифры и буквы A–F") }, modifier = Modifier.fillMaxWidth()) { Text("Сохранить устройство") }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ Скорость
+
+@Composable
+private fun SpeedTab(vm: NetViewModel) {
+    val t = tones
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+        SoftCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Скорость интернета", style = MaterialTheme.typography.titleMedium)
+                    Text("Скачивание и отдача через открытый сервис Cloudflare", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (!vm.speedRunning) Button(onClick = { vm.runSpeedTest() }) { Text("Измерить") }
+            }
+            if (vm.speedRunning) { Spacer(Modifier.height(10.dp)); LoadingCard(vm.speedStage) }
+            vm.speedDown?.let { d ->
+                Spacer(Modifier.height(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconBadge(Icons.Rounded.Download, t.good, t.goodSoft, 40.dp); Spacer(Modifier.width(12.dp))
+                    Column { Text("Скачивание", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (d.error.isEmpty()) SpeedTest.fmt(d.kbps) else d.error, style = MaterialTheme.typography.titleMedium) }
+                }
+            }
+            vm.speedUp?.let { u ->
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconBadge(Icons.Rounded.Upload, t.net, t.netSoft, 40.dp); Spacer(Modifier.width(12.dp))
+                    Column { Text("Отдача", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (u.error.isEmpty()) SpeedTest.fmt(u.kbps) else u.error, style = MaterialTheme.typography.titleMedium) }
+                }
+            }
+        }
+        if (vm.speedDown == null && !vm.speedRunning) {
+            Spacer(Modifier.height(8.dp))
+            EmptyState(Icons.Rounded.Speed, "Проверим скорость", "Загрузим и отправим немного тестовых данных, чтобы оценить реальную скорость вашего интернета.")
         }
     }
 }
@@ -358,6 +402,7 @@ private fun ConnectionsTab(vm: NetViewModel) {
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (p.pinned) { Icon(Icons.Rounded.PushPin, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(4.dp)) }
+                            if (p.monitored) { Icon(Icons.Rounded.NotificationsActive, null, Modifier.size(14.dp), tint = t.good); Spacer(Modifier.width(4.dp)) }
                             Text(p.name.ifEmpty { p.host }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Text(p.host + ":" + p.port, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -414,6 +459,7 @@ private fun EditConnectionSheet(vm: NetViewModel, p: ConnectionProfileStore.Prof
     var notes by remember { mutableStateOf(p.notes) }
     var tags by remember { mutableStateOf(p.tags) }
     var pinned by remember { mutableStateOf(p.pinned) }
+    var monitored by remember { mutableStateOf(p.monitored) }
     ModalBottomSheet(onDismissRequest = onClose) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp).verticalScroll(rememberScrollState())) {
             Text(p.protocol + " · " + p.host + ":" + p.port, style = MaterialTheme.typography.titleMedium)
@@ -426,6 +472,13 @@ private fun EditConnectionSheet(vm: NetViewModel, p: ConnectionProfileStore.Prof
             BigField(tags, { tags = it }, "Метки через запятую", leading = Icons.Rounded.Sell, keyboard = KeyboardType.Text)
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Закрепить вверху", Modifier.weight(1f)); Switch(checked = pinned, onCheckedChange = { pinned = it })
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Следить", style = MaterialTheme.typography.bodyMedium)
+                    Text("Проверять каждые 15 минут и сообщить, если пропадёт или оживёт", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = monitored, onCheckedChange = { monitored = it; vm.toggleMonitored(p) })
             }
             Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { vm.check(p); onClose() }, modifier = Modifier.weight(1f)) { Text("Проверить") }

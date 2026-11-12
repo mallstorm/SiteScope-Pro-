@@ -535,6 +535,8 @@ public final class HostsVpnService extends VpnService {
         }
         config.json = pro.sitescope.app.vpn.VpnSettings.applyDns(this, config.json);
         config.json = pro.sitescope.app.vpn.Mitm.apply(this, config.json);
+        if (!direct) config.json = pro.sitescope.app.vpn.SplitRules.apply(this, config.json);
+        config.json = pro.sitescope.app.vpn.BlockRules.apply(this, config.json);
         return config;
     }
 

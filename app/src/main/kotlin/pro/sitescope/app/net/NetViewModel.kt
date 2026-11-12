@@ -24,6 +24,7 @@ import pro.sitescope.app.ScanService
 import pro.sitescope.app.ScannerEngine
 import pro.sitescope.app.ServiceEndpoint
 import pro.sitescope.app.SettingsStore
+import pro.sitescope.app.ip.IpTools
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
@@ -50,7 +51,7 @@ val PROTOCOLS = listOf(
     Proto("SNMP", "SNMP — оборудование", 161), Proto("MQTT", "MQTT — умный дом", 1883)
 )
 
-class WolEntry(val name: String, val mac: String)
+class WolEntry(val name: String, val mac: String, val ip: String = "")
 
 class NetViewModel(app: Application) : AndroidViewModel(app) {
     private val context: Context get() = getApplication()
@@ -171,7 +172,13 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
         ConnectionProfileStore.updateMetadata(context, p.id, name.trim(), notes.trim(), tags.trim(), pinned); loadProfiles()
     }
 
-    fun removeProfile(p: ConnectionProfileStore.Profile) { ConnectionProfileStore.remove(context, p.id); loadProfiles() }
+    fun removeProfile(p: ConnectionProfileStore.Profile) { ConnectionProfileStore.remove(context, p.id); NetMonitor.reschedule(context); loadProfiles() }
+
+    fun toggleMonitored(p: ConnectionProfileStore.Profile) {
+        ConnectionProfileStore.setMonitored(context, p.id, !p.monitored)
+        NetMonitor.reschedule(context)
+        loadProfiles()
+    }
 
     fun check(p: ConnectionProfileStore.Profile) {
         if (checking.contains(p.id)) return
@@ -185,6 +192,26 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun checkAll() { profiles.forEach { check(it) } }
+
+    // ---------- Скорость интернета ----------
+    var speedRunning by mutableStateOf(false)
+    var speedStage by mutableStateOf("")
+    var speedDown by mutableStateOf<SpeedTest.Result?>(null)
+    var speedUp by mutableStateOf<SpeedTest.Result?>(null)
+
+    fun runSpeedTest() {
+        if (speedRunning) return
+        speedRunning = true; speedDown = null; speedUp = null
+        viewModelScope.launch(Dispatchers.IO) {
+            speedStage = "Скачиваем тестовые данные…"
+            val down = SpeedTest.download()
+            speedDown = down
+            speedStage = "Отправляем тестовые данные…"
+            val up = SpeedTest.upload()
+            speedUp = up
+            speedStage = ""; speedRunning = false
+        }
+    }
 
     // ---------- Включение по сети (Wake-on-LAN) ----------
     var wol by mutableStateOf<List<WolEntry>>(emptyList()); private set
@@ -201,25 +228,38 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun loadWol() {
         wol = (wolPrefs.getString("items", "") ?: "").split('\n').mapNotNull {
-            val parts = it.split('\t'); if (parts.size == 2 && parts[1].isNotEmpty()) WolEntry(parts[0], parts[1]) else null
+            val parts = it.split('\t'); if (parts.size >= 2 && parts[1].isNotEmpty()) WolEntry(parts[0], parts[1], parts.getOrElse(2) { "" }) else null
         }
     }
 
     private fun saveWol(list: List<WolEntry>) {
-        wolPrefs.edit().putString("items", list.joinToString("\n") { it.name.replace('\t', ' ').replace('\n', ' ') + "\t" + it.mac }).apply(); wol = list
+        wolPrefs.edit().putString("items", list.joinToString("\n") { it.name.replace('\t', ' ').replace('\n', ' ') + "\t" + it.mac + "\t" + it.ip }).apply(); wol = list
     }
 
-    fun addWol(name: String, mac: String): Boolean {
+    fun addWol(name: String, mac: String, ip: String = ""): Boolean {
         val clean = normalizeMac(mac) ?: return false
-        saveWol(wol.filter { it.mac != clean } + WolEntry(name.trim().ifEmpty { clean }, clean)); return true
+        saveWol(wol.filter { it.mac != clean } + WolEntry(name.trim().ifEmpty { clean }, clean, ip.trim())); return true
     }
 
     fun removeWol(entry: WolEntry) = saveWol(wol.filter { it.mac != entry.mac })
 
-    fun wake(entry: WolEntry, done: (Boolean) -> Unit) {
+    /** Отправляет magic-пакет и, если указан IP, ждёт до 25 с ответа устройства, чтобы подтвердить пробуждение. */
+    fun wake(entry: WolEntry, onStatus: (String) -> Unit) {
         viewModelScope.launch {
-            val ok = withContext(Dispatchers.IO) { sendMagic(entry.mac, localSubnet()) }
-            done(ok)
+            val sent = withContext(Dispatchers.IO) { sendMagic(entry.mac, localSubnet()) }
+            if (!sent) { onStatus("Не удалось отправить сигнал: проверьте Wi-Fi"); return@launch }
+            if (entry.ip.isBlank()) { onStatus("Сигнал отправлен"); return@launch }
+            onStatus("Сигнал отправлен, ждём, когда устройство поднимется…")
+            val woke = withContext(Dispatchers.IO) {
+                val deadline = System.currentTimeMillis() + 25_000
+                var ok = false
+                while (System.currentTimeMillis() < deadline && !ok) {
+                    ok = IpTools.tcpPing(entry.ip, 1, 1200).ok
+                    if (!ok) Thread.sleep(1500)
+                }
+                ok
+            }
+            onStatus(if (woke) "Устройство ответило — проснулось" else "Сигнал отправлен, но устройство пока не отвечает")
         }
     }
 

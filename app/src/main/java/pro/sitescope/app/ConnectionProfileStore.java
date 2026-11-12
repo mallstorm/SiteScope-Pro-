@@ -28,6 +28,7 @@ public final class ConnectionProfileStore {
         public String notes = "";
         public String tags = "";
         public boolean pinned;
+        public boolean monitored;
         public long savedAt;
         public long lastOpenedAt;
         public int launchCount;
@@ -61,6 +62,7 @@ public final class ConnectionProfileStore {
                 object.put("notes", notes);
                 object.put("tags", tags);
                 object.put("pinned", pinned);
+                object.put("monitored", monitored);
                 object.put("savedAt", savedAt);
                 object.put("lastOpenedAt", lastOpenedAt);
                 object.put("launchCount", launchCount);
@@ -84,6 +86,7 @@ public final class ConnectionProfileStore {
             profile.notes = object.optString("notes");
             profile.tags = object.optString("tags");
             profile.pinned = object.optBoolean("pinned");
+            profile.monitored = object.optBoolean("monitored");
             profile.savedAt = object.optLong("savedAt");
             profile.lastOpenedAt = object.optLong("lastOpenedAt");
             profile.launchCount = object.optInt("launchCount");
@@ -126,6 +129,20 @@ public final class ConnectionProfileStore {
         target.tags = tags == null ? "" : tags.trim();
         target.pinned = pinned;
         write(context, profiles);
+    }
+
+    public static synchronized void setMonitored(Context context, String id, boolean monitored) {
+        List<Profile> profiles = list(context);
+        Profile target = findIn(profiles, id);
+        if (target == null) return;
+        target.monitored = monitored;
+        write(context, profiles);
+    }
+
+    public static synchronized List<Profile> monitored(Context context) {
+        List<Profile> result = new ArrayList<Profile>();
+        for (Profile p : list(context)) if (p.monitored) result.add(p);
+        return result;
     }
 
     public static synchronized void recordOpened(Context context, ServiceEndpoint endpoint) {

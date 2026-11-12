@@ -34,6 +34,16 @@ object SiteMonitor {
         return set
     }
 
+    fun watchesChanges(context: Context, target: String): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getStringSet("watch_changes", emptySet())?.contains(target) == true
+
+    fun setWatchesChanges(context: Context, target: String, watch: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val set = HashSet(prefs.getStringSet("watch_changes", emptySet()) ?: emptySet())
+        if (watch) set.add(target) else set.remove(target)
+        prefs.edit().putStringSet("watch_changes", set).apply()
+    }
+
     private fun schedule(context: Context, enabled: Boolean) {
         val manager = WorkManager.getInstance(context)
         if (!enabled) { manager.cancelUniqueWork(WORK); return }
@@ -80,7 +90,28 @@ class SiteMonitorWorker(context: Context, params: WorkerParameters) : Worker(con
                     SiteMonitor.notify(context, target.hashCode() + 1, "Сертификат $host скоро истечёт", "Осталось дней: $days. Продлите сертификат, чтобы сайт не пометили небезопасным.", "site")
                 }
             }
+            if (!down && SiteMonitor.watchesChanges(context, target)) checkContentChange(context, prefs, target, host, data.html)
         }
         return Result.success()
+    }
+
+    /** Хэш видимого текста страницы (без тегов и лишних пробелов) — мало ложных срабатываний от дат и рекламы. */
+    private fun contentHash(html: String): String {
+        val text = html.replace(Regex("<script[^>]*>[\\s\\S]*?</script>", RegexOption.IGNORE_CASE), " ")
+            .replace(Regex("<style[^>]*>[\\s\\S]*?</style>", RegexOption.IGNORE_CASE), " ")
+            .replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun checkContentChange(context: Context, prefs: android.content.SharedPreferences, target: String, host: String, html: String) {
+        if (html.isBlank()) return
+        val hash = contentHash(html)
+        val key = "hash:$target"
+        val previous = prefs.getString(key, null)
+        prefs.edit().putString(key, hash).apply()
+        if (previous != null && previous != hash) {
+            SiteMonitor.notify(context, target.hashCode() + 2, "$host изменился", "Содержимое страницы поменялось с прошлой проверки.", "site")
+        }
     }
 }

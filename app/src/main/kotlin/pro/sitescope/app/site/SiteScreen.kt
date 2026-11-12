@@ -108,6 +108,7 @@ private fun ReportView(vm: SiteViewModel, r: Report, state: AppState) {
         } catch (e: Exception) { toast(context, "Не удалось сохранить") }
     }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(r.target) { vm.loadWatchChanges(r.target) }
 
     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = { vm.clear() }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }
@@ -186,7 +187,11 @@ private fun ReportView(vm: SiteViewModel, r: Report, state: AppState) {
                 if (!monitored && Build.VERSION.SDK_INT >= 33) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                 vm.toggleMonitor(r.target)
             }
+            if (monitored) ActionRow(Icons.Rounded.Rule,
+                if (vm.watchChanges) "Следим за изменениями страницы" else "Сообщать об изменениях страницы",
+                "Сравниваем текст страницы при каждой плановой проверке и сообщаем, если он поменялся") { vm.toggleWatchChanges(r.target) }
             ActionRow(Icons.Rounded.Download, "Сохранить отчёт", "Файл HTML — можно отправить клиенту или коллеге") { saveHtml.launch("sitescope-${r.host}.html") }
+            ActionRow(Icons.Rounded.Dns, "Проверить список сайтов", "Пакетная проверка нескольких доменов сразу") { open(context, ToolActivity::class.java) { putExtra("screen", "batch") } }
             if (r.host.isNotEmpty()) ActionRow(Icons.Rounded.Public, "Где размещён сайт", "Провайдер, страна и сеть сервера") { state.ipRequest = r.host; state.tab = Tab.IP }
             ActionRow(Icons.Rounded.QueryStats, "Метрики поиска", "Скорость по Google, показы и клики, ИКС Яндекса") { open(context, ToolActivity::class.java) { putExtra("screen", "metrics"); putExtra("targets", r.target) } }
             ActionRow(Icons.Rounded.OpenInNew, "Открыть сайт", r.target) {

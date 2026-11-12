@@ -258,6 +258,88 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
         val ok = withContext(Dispatchers.IO) { try { context.contentResolver.openOutputStream(target)?.use { out -> file.inputStream().use { it.copyTo(out) } }; true } catch (e: Exception) { false } }
         done(ok)
     }
+
+    // ---------- доменная маршрутизация (напрямую / через тоннель) ----------
+    var splitRules by mutableStateOf<List<Pair<String, Boolean>>>(emptyList()); private set
+
+    fun loadSplitRules() { splitRules = VpnSettings.splitRules(context) }
+    fun addSplitRule(domain: String, direct: Boolean) {
+        val clean = domain.trim().removePrefix("http://").removePrefix("https://").substringBefore('/')
+        if (clean.isEmpty()) return
+        val next = splitRules.filter { !it.first.equals(clean, true) } + (clean to direct)
+        VpnSettings.setSplitRules(context, next); splitRules = next; applyLive()
+    }
+    fun removeSplitRule(domain: String) {
+        val next = splitRules.filter { !it.first.equals(domain, true) }
+        VpnSettings.setSplitRules(context, next); splitRules = next; applyLive()
+    }
+
+    // ---------- блокировка и подсветка по хосту ----------
+    var blockedHosts by mutableStateOf<List<String>>(emptyList()); private set
+    var highlightedHosts by mutableStateOf<List<String>>(emptyList()); private set
+
+    fun loadHostRules() { blockedHosts = VpnSettings.blockedHosts(context); highlightedHosts = VpnSettings.highlightedHosts(context) }
+    private fun cleanHost(host: String) = host.trim().removePrefix("http://").removePrefix("https://").substringBefore('/').lowercase()
+
+    fun addBlockedHost(host: String) {
+        val clean = cleanHost(host); if (clean.isEmpty()) return
+        val next = (blockedHosts.filter { !it.equals(clean, true) } + clean)
+        VpnSettings.setBlockedHosts(context, next); blockedHosts = next; applyLive()
+    }
+    fun removeBlockedHost(host: String) {
+        val next = blockedHosts.filter { !it.equals(host, true) }
+        VpnSettings.setBlockedHosts(context, next); blockedHosts = next; applyLive()
+    }
+    fun addHighlightedHost(host: String) {
+        val clean = cleanHost(host); if (clean.isEmpty()) return
+        val next = (highlightedHosts.filter { !it.equals(clean, true) } + clean)
+        VpnSettings.setHighlightedHosts(context, next); highlightedHosts = next
+    }
+    fun removeHighlightedHost(host: String) {
+        val next = highlightedHosts.filter { !it.equals(host, true) }
+        VpnSettings.setHighlightedHosts(context, next); highlightedHosts = next
+    }
+
+    // ---------- экспорт соединений журнала ----------
+    fun exportFlowsJson(): String {
+        val array = org.json.JSONArray()
+        for (f in flows) array.put(org.json.JSONObject()
+            .put("host", f.host).put("remote", f.remote).put("port", f.port).put("protocol", f.protocol)
+            .put("packets", f.packets).put("sentBytes", f.sent).put("receivedBytes", f.received).put("lastAt", f.lastAt)
+            .put("highlighted", highlightedHosts.any { h -> f.host.equals(h, true) || f.host.endsWith(".$h", true) || f.remote == h }))
+        return org.json.JSONObject().put("capturedAt", System.currentTimeMillis()).put("flows", array).toString(2)
+    }
+
+    // ---------- скорость серверов ----------
+    var serverPings by mutableStateOf<Map<String, Long>>(emptyMap()); private set
+    var pingingServers by mutableStateOf(false); private set
+
+    fun pingServers() {
+        if (pingingServers) return
+        pingingServers = true
+        viewModelScope.launch(Dispatchers.IO) {
+            val results = HashMap<String, Long>()
+            for (info in serverList) {
+                val target = info.endpoint
+                val host = target.substringBeforeLast(':', target)
+                val port = target.substringAfterLast(':', "").toIntOrNull() ?: 443
+                if (host.isEmpty()) { results[info.id] = -1; continue }
+                results[info.id] = try {
+                    val t0 = System.nanoTime()
+                    java.net.Socket().use { it.connect(java.net.InetSocketAddress(host, port), 3500) }
+                    (System.nanoTime() - t0) / 1_000_000
+                } catch (e: Exception) { -1 }
+            }
+            serverPings = results; pingingServers = false
+        }
+    }
+
+    /** Выбирает и, если VPN уже работает через сервер, переключается на самый быстрый из опрошенных. */
+    fun switchToFastest() {
+        val best = serverPings.filterValues { it >= 0 }.minByOrNull { it.value } ?: return
+        if (best.key == selectedServer && serverActive) return
+        selectServer(best.key)
+    }
 }
 
 @Composable
@@ -274,7 +356,7 @@ fun VpnScreen(vm: VpnViewModel = viewModel()) {
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
-        StatusCard(vm, onConnect = { connect() }, onReason = { tab = 4 })
+        StatusCard(vm, onConnect = { connect() }, onReason = { tab = 5 })
         if (vm.appliedNote.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { vm.appliedNote = "" }.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -283,13 +365,14 @@ fun VpnScreen(vm: VpnViewModel = viewModel()) {
             }
         }
         FlowRow(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Адреса", "Серверы", "DNS", "Запись", "Журнал").forEachIndexed { i, title -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title) }) }
+            listOf("Адреса", "Серверы", "DNS", "Маршруты", "Запись", "Журнал").forEachIndexed { i, title -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title) }) }
         }
         when (tab) {
             0 -> HostsTab(vm)
             1 -> ServersTab(vm)
             2 -> DnsTab(vm)
-            3 -> CaptureTab(vm)
+            3 -> RoutesTab(vm)
+            4 -> CaptureTab(vm)
             else -> LogTab(vm)
         }
     }
@@ -430,10 +513,20 @@ private fun ServersTab(vm: VpnViewModel) {
     SectionTitle("Серверы")
     Text("Ваши серверы Xray (VLESS, VMess, Trojan, Shadowsocks). Ключи хранятся в защищённом хранилище телефона.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(8.dp))
+    if (vm.serverList.size > 1) {
+        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { vm.pingServers() }, enabled = !vm.pingingServers, modifier = Modifier.weight(1f)) {
+                if (vm.pingingServers) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.NetworkPing, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp)); Text("Проверить скорость")
+            }
+            if (vm.serverPings.isNotEmpty()) OutlinedButton(onClick = { vm.switchToFastest() }) { Text("На быстрый") }
+        }
+    }
     if (vm.serverList.isEmpty()) SoftCard { Text("Серверов пока нет. Добавьте ссылку вида vless://… или готовую конфигурацию.", style = MaterialTheme.typography.bodyMedium) }
     vm.serverList.forEach { s ->
         val selected = s.id == vm.selectedServer
         val running = vm.serverActive && vm.runningProfileId == s.id
+        val ping = vm.serverPings[s.id]
         SoftCard(padding = 14.dp, onClick = { if (!selected) vm.selectServer(s.id) }, modifier = Modifier.padding(bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(selected = selected, onClick = { if (!selected) vm.selectServer(s.id) })
@@ -441,6 +534,7 @@ private fun ServersTab(vm: VpnViewModel) {
                     Text(s.name.ifEmpty { s.endpoint }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(s.type.uppercase() + " · " + s.endpoint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+                if (ping != null) Pill(if (ping >= 0) "$ping мс" else "нет ответа", if (ping in 0..150) t.good else if (ping < 0) t.bad else t.warn, if (ping in 0..150) t.goodSoft else if (ping < 0) t.badSoft else t.warnSoft)
                 if (running) Pill("Работает", t.good, t.goodSoft)
                 IconButton(onClick = { menu = s }) { Icon(Icons.Rounded.MoreVert, "Ещё") }
             }
@@ -472,6 +566,97 @@ private fun ServersTab(vm: VpnViewModel) {
             dismissButton = { TextButton(onClick = { vm.deleteServer(s.id); menu = null }, colors = ButtonDefaults.textButtonColors(contentColor = t.bad)) { Text("Удалить") } })
     }
     rename?.let { s -> TextDialog("Название сервера", s.name, "Например: Амстердам", onClose = { rename = null }) { vm.renameServer(s.id, it); rename = null } }
+}
+
+// ------------------------------------------------------------------ Маршруты (доменная разводка)
+
+@Composable
+private fun RoutesTab(vm: VpnViewModel) {
+    val context = LocalContext.current
+    var domain by remember { mutableStateOf("") }
+    var direct by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) { vm.loadSplitRules(); vm.loadHostRules() }
+    SectionTitle("Домены напрямую и через тоннель")
+    Text("Работает в режиме «Через сервер». Можно пустить отдельный сайт мимо VPN (например, если он не работает из-за сервера или через него медленнее) или, наоборот, обязательно завернуть в тоннель.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Spacer(Modifier.height(10.dp))
+    SoftCard {
+        BigField(domain, { domain = it }, "Домен: example.com", leading = Icons.Rounded.Public, keyboard = KeyboardType.Ascii, mono = true)
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = direct, onClick = { direct = true }, label = { Text("Напрямую") }, leadingIcon = { Icon(Icons.Rounded.OpenInNew, null, Modifier.size(18.dp)) })
+            FilterChip(selected = !direct, onClick = { direct = false }, label = { Text("Через тоннель") }, leadingIcon = { Icon(Icons.Rounded.Shield, null, Modifier.size(18.dp)) })
+        }
+        Button(onClick = { if (domain.isNotBlank()) { vm.addSplitRule(domain, direct); domain = "" } }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+            Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(6.dp)); Text("Добавить правило")
+        }
+    }
+    if (vm.splitRules.isEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        EmptyState(Icons.Rounded.Rule, "Правил пока нет", "Весь трафик идёт через выбранный сервер.")
+    } else {
+        Spacer(Modifier.height(10.dp))
+        vm.splitRules.forEach { (host, isDirect) ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Pill(if (isDirect) "Напрямую" else "Тоннель", if (isDirect) tones.warn else tones.good, if (isDirect) tones.warnSoft else tones.goodSoft)
+                Spacer(Modifier.width(10.dp))
+                Text(host, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClick = { vm.removeSplitRule(host) }) { Icon(Icons.Rounded.DeleteOutline, "Удалить") }
+            }
+        }
+    }
+
+    Spacer(Modifier.height(24.dp))
+    SectionTitle("Блокировка по хосту")
+    Text("Домены и адреса из списка обрываются на самом туннеле — ответа от них не будет, независимо от того, напрямую они идут или через сервер.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Spacer(Modifier.height(10.dp))
+    var blockHost by remember { mutableStateOf("") }
+    SoftCard {
+        BigField(blockHost, { blockHost = it }, "Домен или адрес: ads.example.com", leading = Icons.Rounded.Block, keyboard = KeyboardType.Ascii, mono = true,
+            onGo = { if (blockHost.isNotBlank()) { vm.addBlockedHost(blockHost); blockHost = "" } })
+        Button(onClick = { if (blockHost.isNotBlank()) { vm.addBlockedHost(blockHost); blockHost = "" } }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = tones.bad)) { Icon(Icons.Rounded.Block, null); Spacer(Modifier.width(6.dp)); Text("Заблокировать") }
+    }
+    if (vm.blockedHosts.isEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        EmptyState(Icons.Rounded.Block, "Список пуст", "Ничего не блокируется.")
+    } else {
+        Spacer(Modifier.height(10.dp))
+        vm.blockedHosts.forEach { host ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Pill("Блок", tones.bad, tones.badSoft)
+                Spacer(Modifier.width(10.dp))
+                Text(host, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClick = { vm.removeBlockedHost(host) }) { Icon(Icons.Rounded.DeleteOutline, "Удалить") }
+            }
+        }
+    }
+
+    Spacer(Modifier.height(24.dp))
+    SectionTitle("Подсветка в журнале")
+    Text("Эти домены и адреса не блокируются — они просто отмечаются в записи трафика и попадают в экспорт, чтобы их легко найти.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Spacer(Modifier.height(10.dp))
+    var highlightHost by remember { mutableStateOf("") }
+    SoftCard {
+        BigField(highlightHost, { highlightHost = it }, "Домен или адрес", leading = Icons.Rounded.Highlight, keyboard = KeyboardType.Ascii, mono = true,
+            onGo = { if (highlightHost.isNotBlank()) { vm.addHighlightedHost(highlightHost); highlightHost = "" } })
+        Button(onClick = { if (highlightHost.isNotBlank()) { vm.addHighlightedHost(highlightHost); highlightHost = "" } }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+            Icon(Icons.Rounded.Highlight, null); Spacer(Modifier.width(6.dp)); Text("Отмечать")
+        }
+    }
+    if (vm.highlightedHosts.isNotEmpty()) {
+        Spacer(Modifier.height(10.dp))
+        vm.highlightedHosts.forEach { host ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Pill("Отметка", tones.info, tones.infoSoft)
+                Spacer(Modifier.width(10.dp))
+                Text(host, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClick = { vm.removeHighlightedHost(host) }) { Icon(Icons.Rounded.DeleteOutline, "Удалить") }
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------------ DNS
@@ -558,7 +743,7 @@ private fun CaptureTab(vm: VpnViewModel) {
     val saveCa = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-x509-ca-cert")) { uri: Uri? ->
         if (uri != null) vm.exportCa(uri) { ok -> toast(context, if (ok) "Сертификат сохранён. Теперь установите его в настройках." else "Не удалось сохранить") }
     }
-    LaunchedEffect(Unit) { vm.loadApps(); vm.refreshCa() }
+    LaunchedEffect(Unit) { vm.loadApps(); vm.refreshCa(); vm.loadHostRules() }
     val full = vm.mode != VpnMode.HOSTS || vm.runningMode == HostsVpnService.MODE_XRAY
 
     SectionTitle("Что записывать")
@@ -636,12 +821,22 @@ private fun CaptureTab(vm: VpnViewModel) {
         }
     }
     if (vm.capturing && vm.flows.isNotEmpty()) {
-        SectionTitle("С кем идёт обмен")
+        val exportJson = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
+            if (uri != null) {
+                val text = vm.exportFlowsJson()
+                try { context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }; toast(context, "Соединения сохранены") }
+                catch (e: Exception) { toast(context, "Не удалось сохранить файл") }
+            }
+        }
+        SectionTitle("С кем идёт обмен", action = "Экспорт JSON", onAction = { exportJson.launch("flows-" + System.currentTimeMillis() + ".json") })
         SoftCard(padding = 12.dp) {
             vm.flows.forEach { f ->
+                val marked = vm.highlightedHosts.any { h -> f.host.equals(h, true) || f.host.endsWith(".$h", true) || f.remote == h }
                 Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (marked) { Icon(Icons.Rounded.Highlight, null, tint = tones.info, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)) }
                     Column(Modifier.weight(1f)) {
-                        Text(f.host.ifEmpty { f.remote }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(f.host.ifEmpty { f.remote }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            color = if (marked) tones.info else MaterialTheme.colorScheme.onSurface)
                         Text(f.protocol + " " + f.remote + ":" + f.port, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Text("↑" + bytesText(f.sent) + "  ↓" + bytesText(f.received), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

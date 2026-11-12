@@ -197,11 +197,14 @@ private fun InfoView(vm: IpViewModel, info: IpInfo) {
                 } else Text(p.error.ifEmpty { "Узел не отвечает" }, style = MaterialTheme.typography.titleSmall, color = tones.bad)
             }
         }
-        ToolCard(Icons.Rounded.Route, "Маршрут", "Через какие узлы идёт соединение", false, vm.hops.isNotEmpty() || vm.traceRunning, { vm.runTrace() }, actionTitle = if (vm.traceRunning) "Стоп" else "Запустить") {
-            for (h in vm.hops) Row(Modifier.padding(vertical = 2.dp)) {
-                Text("${h.ttl}".padStart(2), fontFamily = FontFamily.Monospace, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(28.dp))
-                Text(h.address.ifEmpty { "· · ·" }, fontFamily = FontFamily.Monospace, fontSize = 13.sp, modifier = Modifier.weight(1f), color = if (h.reached) tones.good else MaterialTheme.colorScheme.onSurface)
-                if (h.address.isNotEmpty()) Text("%.0f мс".format(h.ms), fontFamily = FontFamily.Monospace, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ToolCard(Icons.Rounded.Route, "Маршрут", "Через какие узлы идёт соединение, с геопривязкой", false, vm.hops.isNotEmpty() || vm.traceRunning, { vm.runTrace() }, actionTitle = if (vm.traceRunning) "Стоп" else "Запустить") {
+            for (h in vm.hops) Column(Modifier.padding(vertical = 2.dp)) {
+                Row {
+                    Text("${h.ttl}".padStart(2), fontFamily = FontFamily.Monospace, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(28.dp))
+                    Text(h.address.ifEmpty { "· · ·" }, fontFamily = FontFamily.Monospace, fontSize = 13.sp, modifier = Modifier.weight(1f), color = if (h.reached) tones.good else MaterialTheme.colorScheme.onSurface)
+                    if (h.address.isNotEmpty()) Text("%.0f мс".format(h.ms), fontFamily = FontFamily.Monospace, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                vm.hopPlaces[h.address]?.let { place -> Text(place, fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(start = 28.dp)) }
             }
             if (vm.traceRunning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
         }

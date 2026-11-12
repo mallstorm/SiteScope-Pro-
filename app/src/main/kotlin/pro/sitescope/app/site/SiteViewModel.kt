@@ -27,6 +27,7 @@ class SiteViewModel(app: Application) : AndroidViewModel(app) {
     var report by mutableStateOf<Report?>(null)
     var history by mutableStateOf(listOf<SiteHistoryItem>())
     var monitored by mutableStateOf(setOf<String>())
+    var watchChanges by mutableStateOf(false)
 
     @Volatile private var cancelled = false
     private var job: Job? = null
@@ -90,5 +91,13 @@ class SiteViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleMonitor(target: String) {
         monitored = SiteMonitor.toggle(getApplication<Application>(), target)
+        watchChanges = SiteMonitor.watchesChanges(getApplication<Application>(), target)
+    }
+
+    fun loadWatchChanges(target: String) { watchChanges = SiteMonitor.watchesChanges(getApplication<Application>(), target) }
+
+    fun toggleWatchChanges(target: String) {
+        watchChanges = !watchChanges
+        SiteMonitor.setWatchesChanges(getApplication<Application>(), target, watchChanges)
     }
 }

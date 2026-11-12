@@ -251,10 +251,47 @@ private fun DetailsSheet(vm: TvViewModel, channel: Channel, tick: Int, onPlay: (
                 TextButton(onClick = { copyText(context, channel.url, "Ссылка скопирована") }) { Text("Ссылка") }
                 TextButton(onClick = { vm.remove(channel); onClose() }) { Text("Удалить", color = MaterialTheme.colorScheme.error) }
             }
+            RecordAndArchiveRow(vm, channel)
             TechDetails(listOf(channel.url, if (channel.userAgent.isNotEmpty()) "User-Agent: ${channel.userAgent}" else "", if (channel.referrer.isNotEmpty()) "Referer: ${channel.referrer}" else "",
                 if (channel.tvgId.isNotEmpty()) "tvg-id: ${channel.tvgId}" else "", if (channel.httpCode > 0) "HTTP ${channel.httpCode}" else "").filter { it.isNotEmpty() }.joinToString("\n"))
         }
     }
+}
+
+@Composable
+private fun RecordAndArchiveRow(vm: TvViewModel, channel: Channel) {
+    val context = LocalContext.current
+    var archiveBusy by remember { mutableStateOf(false) }
+    val isThis = TvRecorder.recording && TvRecorder.channelId == channel.id
+    val busyOther = TvRecorder.recording && TvRecorder.channelId != channel.id
+    Column {
+        if (isThis) {
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.FiberManualRecord, null, tint = tones.bad, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Идёт запись · ${fmtBytes(TvRecorder.bytesWritten)}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = { TvRecorder.stop(context) }) { Text("Остановить", color = MaterialTheme.colorScheme.error) }
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { TvRecorder.start(context, channel, vm.udpxy, 60); toast(context, "Запись начата: ${channel.name}") }, enabled = !busyOther) {
+                    Icon(Icons.Rounded.FiberManualRecord, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Записать (1 ч)")
+                }
+                if (Playlist.catchupUrl(channel, 0, 1) != null) TextButton(onClick = {
+                    archiveBusy = true
+                    Thread({ val r = ArchiveChecker.check(channel); archiveBusy = false; toast(context, r.detail) }, "SiteScope-ArchiveOne").start()
+                }, enabled = !archiveBusy) { Text(if (archiveBusy) "Проверяем…" else "Проверить архив") }
+            }
+        }
+        if (TvRecorder.error.isNotEmpty() && TvRecorder.channelId == channel.id) Text(TvRecorder.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun fmtBytes(bytes: Long): String = when {
+    bytes >= 1024 * 1024 * 1024 -> "%.2f ГБ".format(bytes / (1024.0 * 1024 * 1024))
+    bytes >= 1024 * 1024 -> "%.1f МБ".format(bytes / (1024.0 * 1024))
+    bytes >= 1024 -> "%.0f КБ".format(bytes / 1024.0)
+    else -> "$bytes Б"
 }
 
 @Composable
@@ -298,6 +335,13 @@ private fun ManageSheet(vm: TvViewModel, onClose: () -> Unit) {
     var exportText by remember { mutableStateOf("") }
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/x-mpegurl")) { uri -> if (uri != null) vm.write(uri, exportText) }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    var archiveChecking by remember { mutableStateOf(false) }
+    var archiveDone by remember { mutableIntStateOf(0) }
+    var archiveTotal by remember { mutableIntStateOf(0) }
+    var archiveSummary by remember { mutableStateOf("") }
+    var recordingsTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(TvRecorder.finished) { recordingsTick++ }
+    val recordings = remember(recordingsTick) { TvRecorder.recordings(context) }
     ModalBottomSheet(onDismissRequest = { vm.saveSettings(); onClose() }) {
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp).verticalScroll(rememberScrollState())) {
             Text("Источники", style = MaterialTheme.typography.titleLarge)
@@ -336,6 +380,53 @@ private fun ManageSheet(vm: TvViewModel, onClose: () -> Unit) {
                     vm.autoCheck = it
                     if (it && Build.VERSION.SDK_INT >= 33) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                 })
+            }
+
+            SectionTitle("Архив передач (catch-up)")
+            val withArchive = remember(vm.channels) { vm.channels.count { ArchiveChecker.supportsArchive(it) } }
+            if (withArchive == 0) {
+                Text("В плейлисте нет каналов с архивом (catch-up/timeshift)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else if (archiveChecking) {
+                Text("Проверяем архив: $archiveDone из $archiveTotal", style = MaterialTheme.typography.bodyMedium)
+                LinearProgressIndicator(progress = { if (archiveTotal == 0) 0f else archiveDone.toFloat() / archiveTotal }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(6.dp).clip(RoundedCornerShape(3.dp)))
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Каналов с архивом: $withArchive", style = MaterialTheme.typography.bodyMedium)
+                        if (archiveSummary.isNotEmpty()) Text(archiveSummary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = {
+                        archiveChecking = true; archiveDone = 0; archiveTotal = withArchive; archiveSummary = ""
+                        ArchiveChecker.checkAll(vm.channels, vm.threads, object : ArchiveChecker.Listener {
+                            override fun onResult(result: ArchiveChecker.Result, done: Int, total: Int) { archiveDone = done; archiveTotal = total }
+                            override fun onFinished(results: List<ArchiveChecker.Result>) {
+                                archiveChecking = false
+                                val ok = results.count { it.ok }
+                                archiveSummary = "Открывается у $ok из ${results.size}"
+                            }
+                        })
+                    }) { Text("Проверить") }
+                }
+            }
+
+            SectionTitle("Мои записи")
+            if (recordings.isEmpty() && !TvRecorder.recording) {
+                Text("Пока нет записей. Откройте канал и нажмите «Записать» в его карточке.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                if (TvRecorder.recording) Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.FiberManualRecord, null, tint = tones.bad, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("${TvRecorder.channelName} · ${fmtBytes(TvRecorder.bytesWritten)}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { TvRecorder.stop(context) }) { Text("Стоп") }
+                }
+                for (file in recordings.take(20)) Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(file.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(fmtBytes(file.length()) + " · " + SimpleDateFormat("d MMM, HH:mm", Locale("ru")).format(Date(file.lastModified())), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = { TvRecorder.delete(file); recordingsTick++ }) { Icon(Icons.Rounded.DeleteOutline, "Удалить", tint = MaterialTheme.colorScheme.error) }
+                }
+                Text("Папка: ${TvRecorder.outputDir(context).absolutePath}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             SectionTitle("Для локальной сети")

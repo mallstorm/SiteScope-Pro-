@@ -55,6 +55,29 @@ object VpnSettings {
     @JvmStatic fun targetApps(context: Context): Set<String> = prefs(context).getStringSet("target_apps", emptySet())?.toSet() ?: emptySet()
     @JvmStatic fun setTargetApps(context: Context, value: Set<String>) = prefs(context).edit().putStringSet("target_apps", HashSet(value)).apply()
 
+    /** Правила «домен → напрямую / через тоннель», которые действуют в режиме «Через сервер». Пара: домен, isDirect. */
+    @JvmStatic fun splitRules(context: Context): List<Pair<String, Boolean>> =
+        (prefs(context).getString("split_rules", "") ?: "").lines().mapNotNull { line ->
+            val parts = line.split('\t'); if (parts.size == 2 && parts[0].isNotBlank()) parts[0].trim() to (parts[1] == "1") else null
+        }
+    @JvmStatic fun setSplitRules(context: Context, rules: List<Pair<String, Boolean>>) {
+        prefs(context).edit().putString("split_rules", rules.joinToString("\n") { it.first.trim() + "\t" + (if (it.second) "1" else "0") }).apply()
+    }
+
+    /** Домены и адреса, которые блокируются целиком (чёрный список), независимо от режима туннеля. */
+    @JvmStatic fun blockedHosts(context: Context): List<String> =
+        (prefs(context).getString("blocked_hosts", "") ?: "").lines().map { it.trim() }.filter { it.isNotEmpty() }
+    @JvmStatic fun setBlockedHosts(context: Context, hosts: List<String>) {
+        prefs(context).edit().putString("blocked_hosts", hosts.joinToString("\n")).apply()
+    }
+
+    /** Домены, которые только помечаются в журнале (подсветка), без блокировки. */
+    @JvmStatic fun highlightedHosts(context: Context): List<String> =
+        (prefs(context).getString("highlight_hosts", "") ?: "").lines().map { it.trim() }.filter { it.isNotEmpty() }
+    @JvmStatic fun setHighlightedHosts(context: Context, hosts: List<String>) {
+        prefs(context).edit().putString("highlight_hosts", hosts.joinToString("\n")).apply()
+    }
+
     /** Подставляет выбранные DNS-серверы в готовую конфигурацию Xray. */
     @JvmStatic fun applyDns(context: Context, json: String): String {
         val servers = dnsServers(context)

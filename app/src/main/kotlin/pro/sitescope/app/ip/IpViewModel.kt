@@ -53,6 +53,7 @@ class IpViewModel(app: Application) : AndroidViewModel(app) {
     var ping by mutableStateOf<IpTools.PingResult?>(null)
     var pingRunning by mutableStateOf(false)
     var hops by mutableStateOf(listOf<IpTools.Hop>())
+    var hopPlaces by mutableStateOf(mapOf<String, String>())
     var traceRunning by mutableStateOf(false)
     var services by mutableStateOf<List<Pair<Int, String>>?>(null)
     var servicesRunning by mutableStateOf(false)
@@ -159,9 +160,22 @@ class IpViewModel(app: Application) : AndroidViewModel(app) {
     fun runTrace() {
         val ip = info?.ip ?: return
         if (traceRunning) { traceCancelled = true; return }
-        traceRunning = true; traceCancelled = false; hops = emptyList()
+        traceRunning = true; traceCancelled = false; hops = emptyList(); hopPlaces = emptyMap()
         traceJob = viewModelScope.launch(Dispatchers.IO) {
-            IpTools.traceroute(ip, onHop = { hop -> if (!traceCancelled) hops = hops + hop }, cancelled = { traceCancelled })
+            val db = try { IpDataStore(getApplication<Application>()) } catch (e: Throwable) { null }
+            try {
+                IpTools.traceroute(ip, onHop = { hop ->
+                    if (!traceCancelled) {
+                        hops = hops + hop
+                        if (hop.address.isNotEmpty() && db != null) try {
+                            db.lookupGeo(hop.address)?.let { g ->
+                                val place = listOf(g.city, g.country).filter { it.isNotBlank() }.joinToString(", ")
+                                if (place.isNotEmpty()) hopPlaces = hopPlaces + (hop.address to place)
+                            }
+                        } catch (e: Exception) { }
+                    }
+                }, cancelled = { traceCancelled })
+            } finally { try { db?.close() } catch (e: Exception) { } }
             traceRunning = false
         }
     }
