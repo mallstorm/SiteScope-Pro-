@@ -67,7 +67,7 @@ object TvRecorder {
                 FileOutputStream(file).use { out ->
                     val probe = fetchBody(target, ua, ref, 8000, 8192)
                     val text = String(probe.second, Charsets.ISO_8859_1)
-                    val looksHls = text.trimStart('﻿', ' ', '\n', '\r').startsWith("#EXTM3U")
+                    val looksHls = text.trimStart('\uFEFF', ' ', '\n', '\r').startsWith("#EXTM3U")
                     if (looksHls) recordHls(target, String(probe.second, Charsets.UTF_8), ua, ref, out, deadline, stopFlag)
                     else recordDirect(target, ua, ref, out, deadline, stopFlag, probe.second)
                 }
