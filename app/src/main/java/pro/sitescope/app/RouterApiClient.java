@@ -10,7 +10,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLException;
 
-/** Fixed, read-only API operations. Response bodies and credentials never enter diagnostics. */
+/** Fixed API operations; hostname writes are package-private and require RouterSettings orchestration. */
 public final class RouterApiClient implements AutoCloseable {
     public static final class Failure extends IOException {
         public final int status;
@@ -37,6 +37,40 @@ public final class RouterApiClient implements AutoCloseable {
             check();return new JSONObject().put("id",UUID.randomUUID().toString()).put("time",System.currentTimeMillis()).put("adapter",config.kind).put("source",safe(source)).put("name",safe(config.name)).put("host",new URI(base).getHost()).put("partial",warnings.length()>0).put("warnings",warnings).put("rows",rows).put("dhcpSource",dhcpSource);
         } catch(Failure e){throw e;}catch(SSLException e){throw new Failure("Не удалось проверить TLS-сертификат роутера. Установите доверенный сертификат",0);}catch(SocketTimeoutException e){throw new Failure("Роутер не ответил вовремя",0);}catch(JSONException e){throw new Failure("Некорректный ответ API роутера",0);}catch(IOException e){throw new Failure(cancelled.get()?"Запрос отменён":"Нет связи с API роутера",0);}
         finally{user="";password="";token="";basic="";}
+    }
+    // Package-private transport for the fixed hostname transaction; never a generic command API.
+    void startSettings(RouterStore.Config config,String username,String secret)throws Exception{
+        base=RouterStore.address(config.base,config.allowHttp).toASCIIString();user=username;password=secret;
+        if(!Arrays.asList("routeros","openwrt").contains(config.kind)||user.isEmpty()||user.contains(":")||user.length()>512||password.length()>4096)throw new Failure("Проверьте подключение и данные владельца",0);
+        deadline=System.nanoTime()+45_000_000_000L;
+        basic=Base64.encodeToString((user+":"+password).getBytes(StandardCharsets.UTF_8),Base64.NO_WRAP);
+        if(config.kind.equals("openwrt")){token=rpc("session","login",new JSONObject().put("username",user).put("password",password).put("timeout",120)).optString("ubus_rpc_session");if(!token.matches("[a-fA-F0-9]{32}"))throw new Failure("API отклонил вход",401);}
+    }
+    void finishSettings(){
+        if(token.matches("[a-fA-F0-9]{32}")&&!cancelled.get())try{rpc("session","destroy",new JSONObject().put("ubus_rpc_session",token));}catch(Exception ignored){}
+        user="";password="";token="";basic="";
+    }
+    String[] settingsName(String kind)throws Exception{
+        if(kind.equals("routeros"))return new String[]{"",singleton(request("/rest/system/identity",null,true)).getString("name")};
+        JSONObject values=rpc("uci","get",new JSONObject().put("config","system").put("type","system")).getJSONObject("values");
+        if(values.length()!=1)throw new Failure("Нужна единственная секция system с именем роутера",0);
+        String section=values.keys().next();if(!section.matches("[A-Za-z0-9_]+"))throw new Failure("Неподдерживаемое имя секции system",0);
+        return new String[]{section,values.getJSONObject(section).getString("hostname")};
+    }
+    void settingsSet(String kind,String section,String value,RouterSettings.Guard guard)throws Exception{
+        guard.check();
+        if(kind.equals("routeros")){request("/rest/system/identity/set",new JSONObject().put("name",value),true);return;}
+        JSONObject changes=rpc("uci","changes",new JSONObject()).getJSONObject("changes");
+        if(changes.length()!=0)throw new Failure("В этой сессии уже есть изменения UCI: применение остановлено",0);
+        guard.check();rpc("uci","set",new JSONObject().put("config","system").put("section",section).put("values",new JSONObject().put("hostname",value)));
+        changes=rpc("uci","changes",new JSONObject()).getJSONObject("changes");
+        JSONArray delta=changes.getJSONArray("system");
+        if(changes.length()!=1||delta.length()!=1)throw new Failure("Обнаружены посторонние изменения UCI",0);
+        JSONArray change=delta.getJSONArray(0);
+        if(change.length()!=4||!change.getString(0).equals("set")||!change.getString(1).equals(section)||!change.getString(2).equals("hostname")||!change.getString(3).equals(value))throw new Failure("Обнаружены посторонние изменения UCI",0);
+        guard.check();rpc("uci","apply",new JSONObject().put("rollback",true).put("timeout",60));
+        String[] actual=settingsName(kind);if(!actual[0].equals(section)||!actual[1].equals(value))throw new Failure("Новое имя не подтверждено; ожидайте автоматического отката rpcd",0);
+        guard.check();rpc("uci","confirm",new JSONObject());
     }
     private String safe(String s){String v=ReportText.known(s,password,token,basic);return v.length()>512?v.substring(0,512)+"…":v;}
     private JSONObject row(String kind)throws Exception{return new JSONObject().put("kind",kind);}

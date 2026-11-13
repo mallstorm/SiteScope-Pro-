@@ -15,8 +15,8 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28, 35], application = Application::class)
 class RouterApiTest {
-    private data class Request(val method: String, val path: String, val headers: Map<String, String>, val body: String)
-    private class Server(val handler: (Request) -> Pair<Int, String>) : AutoCloseable {
+    internal data class Request(val method: String, val path: String, val headers: Map<String, String>, val body: String)
+    internal class Server(val handler: (Request) -> Pair<Int, String>) : AutoCloseable {
         val requests = CopyOnWriteArrayList<Request>()
         val failures = CopyOnWriteArrayList<Throwable>()
         private val pool = Executors.newCachedThreadPool { r -> Thread(r).apply { isDaemon = true } }

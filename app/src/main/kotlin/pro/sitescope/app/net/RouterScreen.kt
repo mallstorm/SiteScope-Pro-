@@ -52,6 +52,7 @@ internal fun RouterScreen() {
     var job by remember { mutableStateOf<Job?>(null) }
     var generation by remember { mutableLongStateOf(0) }
     var clear by remember { mutableStateOf(false) }
+    var settings by remember { mutableStateOf<RouterStore.Config?>(null) }
     var linking by remember { mutableStateOf<Pair<JSONObject, String>?>(null) }
     fun cancel() { generation++; job?.cancel(); job = null; busy = false; status = "Опрос отменён" }
     DisposableEffect(lifecycle) {
@@ -116,6 +117,7 @@ internal fun RouterScreen() {
             Row { Checkbox(keep, { keep = it }, enabled = !busy); Text("Запомнить данные входа на этом устройстве") }
             Row { Checkbox(owner, { owner = it }, enabled = !busy); Text("Это мой роутер или у меня есть разрешение владельца") }
             Row { TextButton(enabled = !busy && owner, onClick = ::save) { Text("Сохранить") }; Button(enabled = !busy && owner, onClick = ::read) { Text("Прочитать") } }
+            TextButton(enabled = !busy && owner, onClick = { try { settings = config() } catch (e: Exception) { error = "Проверьте адрес роутера" } }) { Text("Настройки: имя роутера…") }
             if (busy) { LinearProgressIndicator(Modifier.fillMaxWidth()); OutlinedButton(onClick = ::cancel) { Text("Отменить") } }
             if (status.isNotEmpty()) Text(status, style = MaterialTheme.typography.bodySmall)
             if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
@@ -132,6 +134,7 @@ internal fun RouterScreen() {
         if (snapshots.isNotEmpty()) item { TextButton(enabled = !busy, onClick = { clear = true }) { Text("Очистить снимки") } }
         items(snapshots, key = { it.optString("id") }) { RouterSnapshot(it) { mac -> linking = it to mac } }
     }
+    settings?.let { RouterSettingsDialog(it, user, password) { settings = null } }
     linking?.let { (snapshot, mac) -> RouterLeaseLinkDialog(snapshot, mac, close = { linking = null }, saved = { version++; status = "Связь DHCP подтверждена" }) }
     if (clear) AlertDialog(onDismissRequest = { clear = false }, title = { Text("Удалить снимки API?") }, text = { Text("Сохранённые подключения останутся.") }, confirmButton = { TextButton(onClick = { RouterStore.clearSnapshots(context); version++; clear = false }) { Text("Удалить") } }, dismissButton = { TextButton(onClick = { clear = false }) { Text("Отмена") } })
 }
