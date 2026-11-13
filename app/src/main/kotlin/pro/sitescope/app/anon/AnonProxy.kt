@@ -200,8 +200,9 @@ class ProxyRequest private constructor(
             val target = parts[1]
             val headers = lines.drop(1)
             if (method.equals("CONNECT", true)) {
+                if (!target.contains(':')) return null
                 val host = target.substringBeforeLast(':').removePrefix("[").removeSuffix("]").lowercase()
-                val port = target.substringAfterLast(':', "443").toIntOrNull() ?: return null
+                val port = target.substringAfterLast(':').toIntOrNull() ?: return null
                 if (host.isEmpty() || port !in 1..65535) return null
                 return ProxyRequest(method, host, port, true, target, target, parts[2], headers)
             }
