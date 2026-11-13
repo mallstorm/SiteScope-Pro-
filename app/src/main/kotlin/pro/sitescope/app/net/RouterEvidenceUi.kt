@@ -1,6 +1,8 @@
 package pro.sitescope.app.net
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -100,7 +102,7 @@ internal fun RouterLeaseLinkDialog(snapshot: JSONObject, mac: String, close: () 
         catch (e: Exception) { error = "Не удалось загрузить карточки" }
     }
     AlertDialog(onDismissRequest = { if (!busy) close() }, title = { Text("Связать DHCP-клиента с карточкой") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("${lease?.optString("name") ?: ""} · ${lease?.optString("address") ?: ""}\n${RouterComparison.mac(mac)}")
             Text("${snapshot.optString("source")} · ${routerTime(snapshot.optLong("time"))}", style = MaterialTheme.typography.labelSmall)
             if (existing != null) Text("Текущая карточка: ${existingTitle.ifBlank { existing!!.optString("cardId") }}")
