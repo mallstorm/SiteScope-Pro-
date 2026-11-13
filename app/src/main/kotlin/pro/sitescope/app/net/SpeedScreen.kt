@@ -155,6 +155,7 @@ private fun Gauge(vm: SpeedViewModel) {
     val accent = when (vm.phase) { SpeedEngine.Phase.UP -> tones.net; SpeedEngine.Phase.PING -> tones.info; else -> MaterialTheme.colorScheme.primary }
     val track = MaterialTheme.colorScheme.surfaceVariant
     val tickColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val heroA = tones.heroStart; val heroB = tones.heroEnd
     Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
         Canvas(Modifier.size(280.dp)) {
             val stroke = 22.dp.toPx()
@@ -182,7 +183,7 @@ private fun Gauge(vm: SpeedViewModel) {
                     Box(Modifier.size(150.dp).clip(CircleShape).clickable { vm.start() }
                         .then(Modifier), contentAlignment = Alignment.Center) {
                         Canvas(Modifier.fillMaxSize()) {
-                            drawCircle(Brush.verticalGradient(listOf(tones.heroStart, tones.heroEnd)))
+                            drawCircle(Brush.verticalGradient(listOf(heroA, heroB)))
                         }
                         Text(if (done == null) "НАЧАТЬ" else "ЕЩЁ РАЗ", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
                     }
