@@ -24,6 +24,32 @@ class WebDavTlsTest {
     @Test fun rejectsTrustedCertificateForDifferentHostnameBeforeSendingCredentials() = exchange("127.0.0.1", false)
     @Test fun acceptsTrustedCertificateForMatchingHostname() = exchange("localhost", true)
 
+    @Test fun scannerRecordsExactDerCertificateFingerprintWithoutClaimingTrust() {
+        val keys = KeyStore.getInstance("PKCS12").apply { keyFile.inputStream().use { load(it, password) } }
+        val km = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(keys, password) }
+        val ctx = SSLContext.getInstance("TLS").apply { init(km.keyManagers, null, null) }
+        val server = ctx.serverSocketFactory.createServerSocket(0, 1, InetAddress.getByName("127.0.0.1")) as SSLServerSocket
+        val pool = Executors.newSingleThreadExecutor()
+        val received = pool.submit {
+            (server.accept() as SSLSocket).use { socket ->
+                socket.soTimeout = 5000; socket.startHandshake()
+                val input = socket.inputStream.bufferedReader()
+                while (!input.readLine().isNullOrEmpty()) { }
+                socket.outputStream.write("HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n".toByteArray()); socket.outputStream.flush()
+            }
+        }
+        try {
+            val method = pro.sitescope.app.ScannerEngine::class.java.getDeclaredMethod("probeTls", String::class.java, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType).apply { isAccessible = true }
+            val result = method.invoke(null, "127.0.0.1", server.localPort, 3000)
+            assertNotNull(result)
+            val fingerprint = result.javaClass.getDeclaredField("tlsFingerprint").apply { isAccessible = true }.get(result)
+            val expected = java.security.MessageDigest.getInstance("SHA-256").digest(keys.getCertificate("test").encoded).joinToString("") { "%02x".format(it.toInt() and 255) }
+            assertEquals(expected, fingerprint)
+            assertEquals("not_checked", result.javaClass.getDeclaredField("tlsTrust").apply { isAccessible = true }.get(result))
+            received.get(8, TimeUnit.SECONDS)
+        } finally { server.close(); pool.shutdownNow() }
+    }
+
     private fun exchange(host: String, expectedAccepted: Boolean) {
         val keys = KeyStore.getInstance("PKCS12").apply { keyFile.inputStream().use { load(it, password) } }
         val km = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(keys, password) }

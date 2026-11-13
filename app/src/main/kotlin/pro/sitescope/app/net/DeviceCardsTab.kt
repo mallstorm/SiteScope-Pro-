@@ -30,6 +30,7 @@ private fun cardTime(time: Long) = if (time > 0) SimpleDateFormat("d MMM yyyy, H
 @Composable
 internal fun DevicesTab(vm: NetViewModel) {
     var wol by remember { mutableStateOf(false) }
+    var history by remember { mutableStateOf(false) }
     val t = tones
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -45,6 +46,7 @@ internal fun DevicesTab(vm: NetViewModel) {
                 if (vm.discovering || vm.cardsLoading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
             }
         }
+        item { OutlinedButton(onClick = { history = true }) { Text("История изменений") } }
         if (vm.discoveryError.isNotBlank()) item { ErrorCard(vm.discoveryError) }
         if (vm.cardsError.isNotBlank()) item { ErrorCard(vm.cardsError) }
         item {
@@ -78,12 +80,14 @@ internal fun DevicesTab(vm: NetViewModel) {
     }
     vm.selectedCard?.let { DeviceCardSheet(vm, it) }
     if (wol) WolSheet(vm) { wol = false }
+    if (history) DeviceHistorySheet("") { history = false }
 }
 
 @Composable
 private fun DeviceCardSheet(vm: NetViewModel, card: DeviceRegistryStore.Card) {
     val activity = LocalActivity.current
     val context = LocalContext.current
+    var history by remember(card.id) { mutableStateOf(false) }
     var rename by remember(card.id) { mutableStateOf(false) }
     var merging by remember(card.id) { mutableStateOf(false) }
     var splitting by remember(card.id) { mutableStateOf(false) }
@@ -101,6 +105,7 @@ private fun DeviceCardSheet(vm: NetViewModel, card: DeviceRegistryStore.Card) {
                 Text("Создана: ${cardTime(card.createdAt)}\nОбновлена: ${cardTime(card.updatedAt)}", style = MaterialTheme.typography.bodySmall)
                 if (card.priorNames.isNotEmpty()) Text("Сохранённые имена: ${card.priorNames.joinToString()}", style = MaterialTheme.typography.bodySmall)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { history = true }) { Text("История") }
                     OutlinedButton(onClick = { merging = true }) { Text("Объединить") }
                     OutlinedButton(onClick = { splitting = !splitting; selected.clear() }, enabled = card.memberCount > 1) { Text(if (splitting) "Отмена" else "Разделить") }
                 }
@@ -139,6 +144,7 @@ private fun DeviceCardSheet(vm: NetViewModel, card: DeviceRegistryStore.Card) {
             if (card.observations.size < card.memberCount) item { TextButton(onClick = vm::moreObservations) { Text("Ещё записи") } }
         }
     }
+    if (history) DeviceHistorySheet(card.id) { history = false }
     if (rename) TextDialog("Название устройства", card.alias, "Например: камера у входа", onClose = { rename = false }) { vm.renameCard(card.id, it); rename = false }
     if (splitName) TextDialog("Новая карточка", "", "Название (необязательно)", onClose = { splitName = false }) { vm.splitCard(card.id, selected.toList(), it); selected.clear(); splitting = false; splitName = false }
     if (merging) MergeCardsDialog(vm, card) { merging = false }

@@ -16,7 +16,7 @@ import org.json.JSONObject;
  */
 public final class AppDatabase extends SQLiteOpenHelper {
     private static final String NAME = "sitescope_app.db";
-    private static final int VERSION = 3;
+    private static final int VERSION = 4;
     private static volatile AppDatabase INSTANCE;
     private final Context context;
 
@@ -63,11 +63,13 @@ public final class AppDatabase extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE inventory_aliases (ip TEXT PRIMARY KEY, alias TEXT NOT NULL)");
         createHostsTables(db);
         DeviceRegistryStore.createTables(db);
+        DeviceHistoryStore.createTables(db);
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion < 2) createHostsTables(db);
         if (oldVersion < 3) DeviceRegistryStore.createTables(db);
+        if (oldVersion < 4) DeviceHistoryStore.createTables(db);
     }
 
     private void createHostsTables(SQLiteDatabase db) {

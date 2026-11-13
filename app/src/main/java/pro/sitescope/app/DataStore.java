@@ -157,8 +157,9 @@ public final class DataStore {
             database.insertScanJson(db, session.toJson());
             List<DeviceRegistryStore.Observation> observations = new ArrayList<DeviceRegistryStore.Observation>();
             NetworkScope scope = session.scope != null ? session.scope : NetworkScope.fromJson(null, "scan:" + session.timestamp + ":" + NetworkScope.digest(session.targetExpression));
-            for (Models.PortResult r : session.openResults) if (r.open) observations.add(DeviceRegistryStore.scan(r, scope, session.timestamp));
+            for (Models.PortResult r : session.openResults) if (r.open) observations.add(DeviceRegistryStore.scan(r, scope, session.timestamp+Math.max(0,session.durationMs)));
             DeviceRegistryStore.recordBatch(db, observations);
+            DeviceHistoryStore.scanFinished(db, session, scope, observations);
             trimTable(db, "scan_sessions", 30, "timestamp DESC");
             db.setTransactionSuccessful();
         } catch (Exception ignored) { }

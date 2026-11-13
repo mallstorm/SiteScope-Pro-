@@ -145,7 +145,7 @@ class DeviceRegistryTest {
         db.execSQL("DROP TABLE device_observations"); db.execSQL("DROP TABLE device_cards"); db.version = 2
         TestStores.reset()
         DeviceRegistryStore.sync(app)
-        assertEquals(3, AppDatabase.get(app).read().version)
+        assertEquals(4, AppDatabase.get(app).read().version)
         assertEquals(1, all().size); assertEquals(e.host, ConnectionProfileStore.list(app).single().host)
     }
 

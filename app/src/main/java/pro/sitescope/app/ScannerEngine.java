@@ -356,6 +356,7 @@ public final class ScannerEngine {
         result.service = fingerprint.service;
         result.banner = fingerprint.banner;
         result.tlsSubject = fingerprint.tlsSubject;
+        result.tlsFingerprint = fingerprint.tlsFingerprint;
         result.evidence = fingerprint.evidence;
         result.confidence = fingerprint.confidence;
         result.identity = fingerprint.identity;
@@ -618,11 +619,13 @@ public final class ScannerEngine {
             }
             socket.startHandshake();
             SSLSession session = socket.getSession();
-            String subject = "";
+            String subject = "", certificateFingerprint = "";
             try {
                 Certificate[] certificates = session.getPeerCertificates();
                 if (certificates.length > 0 && certificates[0] instanceof X509Certificate) {
                     subject = ((X509Certificate) certificates[0]).getSubjectX500Principal().getName();
+                    byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(certificates[0].getEncoded());
+                    StringBuilder hex = new StringBuilder();for(byte v:digest)hex.append(String.format(Locale.ROOT,"%02x",v&255));certificateFingerprint=hex.toString();
                 }
             } catch (Exception ignored) { }
             HttpFingerprintResponse response;
@@ -630,6 +633,7 @@ public final class ScannerEngine {
             catch (Exception httpFailure) { response = HttpFingerprintResponse.parse(new byte[0]); }
             Fingerprint result = new Fingerprint();
             result.tlsSubject = subject;
+            result.tlsFingerprint = certificateFingerprint;
             result.tlsTrust = "not_checked";
             result.identity = DeviceFingerprintEngine.fromHttp(response.server, response.realm, response.title, subject);
             result.confidence = "high";
@@ -1021,6 +1025,7 @@ public final class ScannerEngine {
     }
 
     private static final class Fingerprint {
+        String tlsFingerprint = "";
         DeviceIdentity identity = new DeviceIdentity();
         String tlsTrust = "not_applicable";
         String service = "Unknown TCP";

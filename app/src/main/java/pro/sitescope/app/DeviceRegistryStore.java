@@ -109,7 +109,7 @@ public final class DeviceRegistryStore {
                     List<Observation> batch=new ArrayList<Observation>();
                     for(Models.DiscoveredDevice d:s.devices)batch.add(discovery(d,d.scope==null?new NetworkScope("legacy:discovery:"+s.id,"Сеть прежнего поиска не определена",false):d.scope,s.timestamp));
                     markAmbiguous(batch);
-                    for(Observation o:batch)observe(db,o);
+                    for(Observation o:batch)observe(db,o,true);DeviceHistoryStore.prune(db,System.currentTimeMillis());
                 }
                 Cursor scans=db.rawQuery("SELECT s.json,r.json FROM scan_results r JOIN scan_sessions s ON s.row_id=r.session_id ORDER BY s.timestamp ASC",null);
                 try { while(scans.moveToNext()) {
@@ -138,13 +138,14 @@ public final class DeviceRegistryStore {
     }
     static void recordBatch(SQLiteDatabase db,List<Observation> batch) {
         db.beginTransaction();
-        try{markAmbiguous(batch);for(Observation o:batch)observe(db,o);db.setTransactionSuccessful();}finally{db.endTransaction();}
+        try{markAmbiguous(batch);int count=0;for(Observation o:batch){observe(db,o,true);if(++count%500==0)DeviceHistoryStore.prune(db,System.currentTimeMillis());}DeviceHistoryStore.prune(db,System.currentTimeMillis());db.setTransactionSuccessful();}finally{db.endTransaction();}
     }
-    private static String observe(SQLiteDatabase db,Observation o) {
+    private static String observe(SQLiteDatabase db,Observation o) { return observe(db,o,false); }
+    private static String observe(SQLiteDatabase db,Observation o,boolean history) {
         if(o.host.isEmpty()||o.id.isEmpty())return "";
-        String card="";boolean manual=false;
-        Cursor old=db.query("device_observations",new String[]{"card_id","seen_at","manual"},"id=?",new String[]{o.id},null,null,null);
-        try{if(old.moveToFirst()){card=old.getString(0);manual=old.getInt(2)!=0;if(old.getLong(1)>o.seenAt)return card;}}finally{old.close();}
+        String card="";boolean manual=false;Observation previous=null;
+        Cursor old=db.query("device_observations",new String[]{"card_id","seen_at","manual","json"},"id=?",new String[]{o.id},null,null,null);
+        try{if(old.moveToFirst()){try{previous=Observation.fromJson(new JSONObject(old.getString(3)));}catch(Exception e){throw new IllegalStateException(e);}card=old.getString(0);manual=old.getInt(2)!=0;if(old.getLong(1)>o.seenAt)return card;}}finally{old.close();}
         if(card.isEmpty()&&!o.stableId.isEmpty()&&o.scope.reliable&&!o.ambiguous) {
             Set<String> owners=owners(db,"scope=? AND stable_id=?",new String[]{o.scope.id,o.stableId});
             if(owners.size()==1)card=owners.iterator().next();else if(owners.size()>1)o.ambiguous=true;
@@ -159,7 +160,9 @@ public final class DeviceRegistryStore {
         if(card.isEmpty()) {
             card=UUID.randomUUID().toString();ContentValues c=new ContentValues();c.put("id",card);String alias=legacyAlias(db,o);c.put("alias",alias);c.put("search",alias.toLowerCase(Locale.ROOT));c.put("created_at",o.seenAt);c.put("updated_at",o.seenAt);db.insertOrThrow("device_cards",null,c);
         }
-        o.manual=manual;writeObservation(db,card,o);
+        o.manual=manual;
+        writeObservation(db,card,o);
+        if(history)DeviceHistoryStore.observed(db,o,previous);
         db.execSQL("UPDATE device_cards SET updated_at=MAX(updated_at,?) WHERE id=?",new Object[]{o.seenAt,card});return card;
     }
     private static String legacyAlias(SQLiteDatabase db,Observation o) {
@@ -176,7 +179,7 @@ public final class DeviceRegistryStore {
     }
     private static void writeObservation(SQLiteDatabase db,String card,Observation o) {
         ContentValues v=new ContentValues();v.put("id",o.id);v.put("card_id",card);v.put("kind",o.kind);v.put("source_id",o.sourceId);v.put("scope",o.scope.id);v.put("stable_id",o.stableId);
-        v.put("host",o.host);v.put("protocol",o.protocol);v.put("endpoint_key",o.endpointKey);v.put("seen_at",o.seenAt);v.put("manual",o.manual?1:0);v.put("json",o.toJson().toString());v.put("search",o.toJson().toString().toLowerCase(Locale.ROOT));if(db.insertWithOnConflict("device_observations",null,v,SQLiteDatabase.CONFLICT_REPLACE)<0)throw new IllegalStateException("Не удалось сохранить запись устройства");
+        v.put("host",o.host);v.put("protocol",o.protocol);v.put("endpoint_key",o.endpointKey);v.put("seen_at",o.seenAt);v.put("manual",o.manual?1:0);v.put("json",o.toJson().toString());v.put("search",o.toJson().toString().toLowerCase(Locale.ROOT));if(db.update("device_observations",v,"id=?",new String[]{o.id})==0&&db.insert("device_observations",null,v)<0)throw new IllegalStateException("Не удалось сохранить запись устройства");
     }
     public static synchronized List<Card> list(Context context,String query,int limit) {
         SQLiteDatabase db=AppDatabase.get(context).read();String q=query==null?"":query.trim().toLowerCase(Locale.ROOT);
@@ -235,18 +238,20 @@ public final class DeviceRegistryStore {
         try {
             Cursor c=db.query("device_cards",null,null,null,null,null,"id");try{while(c.moveToNext()){JSONObject o=new JSONObject();o.put("id",c.getString(c.getColumnIndexOrThrow("id")));o.put("alias",c.getString(c.getColumnIndexOrThrow("alias")));o.put("createdAt",c.getLong(c.getColumnIndexOrThrow("created_at")));o.put("updatedAt",c.getLong(c.getColumnIndexOrThrow("updated_at")));o.put("names",new JSONArray(c.getString(c.getColumnIndexOrThrow("names"))));cards.put(o);}}finally{c.close();}
             c=db.query("device_observations",new String[]{"card_id","json"},null,null,null,null,"id");try{while(c.moveToNext()){JSONObject o=new JSONObject(c.getString(1));o.put("cardId",c.getString(0));observations.put(o);}}finally{c.close();}
-            root.put("cards",cards);root.put("observations",observations);db.setTransactionSuccessful();return root;
+            root.put("history",DeviceHistoryStore.exportState(db));root.put("cards",cards);root.put("observations",observations);db.setTransactionSuccessful();return root;
         }finally{db.endTransaction();}
     }
     static void validateGraph(JSONObject graph) throws Exception {
         Set<String> cards=new HashSet<String>(),ids=new HashSet<String>();JSONArray a=graph.getJSONArray("cards"),b=graph.getJSONArray("observations");
         for(int i=0;i<a.length();i++){String id=a.getJSONObject(i).getString("id");if(id.isEmpty()||!cards.add(id))throw new IllegalArgumentException("Повтор ID карточки");}
         for(int i=0;i<b.length();i++){JSONObject o=b.getJSONObject(i);if(!cards.contains(o.getString("cardId"))||o.getString("id").isEmpty()||!ids.add(o.getString("id")))throw new IllegalArgumentException("Некорректная связь карточки");if(o.getString("host").isEmpty()||o.getJSONObject("scope").getString("id").isEmpty()||!Arrays.asList("scan","discovery","profile").contains(o.getString("kind")))throw new IllegalArgumentException("Некорректная запись устройства");o.getJSONObject("data");}
+        DeviceHistoryStore.validate(graph.optJSONObject("history"),ids);
     }
     static void restoreGraph(SQLiteDatabase db,JSONObject graph) throws Exception {
-        if(graph!=null)validateGraph(graph);db.delete("device_observations",null,null);db.delete("device_cards",null,null);if(graph==null)return;
+        if(graph!=null)validateGraph(graph);db.delete("device_observations",null,null);db.delete("device_cards",null,null);if(graph==null){DeviceHistoryStore.restore(db,null);return;}
         JSONArray cards=graph.getJSONArray("cards"),rows=graph.getJSONArray("observations");
         for(int i=0;i<cards.length();i++){JSONObject o=cards.getJSONObject(i);ContentValues v=new ContentValues();v.put("id",o.getString("id"));v.put("alias",o.optString("alias"));v.put("names",o.optJSONArray("names")==null?"[]":o.optJSONArray("names").toString());v.put("created_at",o.optLong("createdAt"));v.put("updated_at",o.optLong("updatedAt"));db.insertOrThrow("device_cards",null,v);refreshSearch(db,o.getString("id"));}
         for(int i=0;i<rows.length();i++){JSONObject o=rows.getJSONObject(i);writeObservation(db,o.getString("cardId"),Observation.fromJson(o));}
+        DeviceHistoryStore.restore(db,graph.optJSONObject("history"));
     }
 }

@@ -373,6 +373,8 @@ public final class ScanService extends Service {
         session.totalProbes = state.totalProbes;
         session.completedProbes = state.completedProbes;
         session.cancelled = state.cancelled;
+        session.recovered = state.recovered;
+        session.error = state.error;
         session.openResults.addAll(state.results);
         store.saveScan(session);
     }

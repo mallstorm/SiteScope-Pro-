@@ -481,6 +481,7 @@ public final class Models {
     public static final class PortResult {
         public NetworkScope scope;
         public DeviceIdentity identity = new DeviceIdentity();
+        public String tlsFingerprint = "";
         public String tlsTrust = "not_applicable";
         public String target = "";
         public String host = "";
@@ -514,6 +515,7 @@ public final class Models {
                 object.put("tlsSubject", tlsSubject);
                 object.put("identity", identity.toJson());
                 object.put("tlsTrust", tlsTrust);
+                object.put("tlsFingerprint", tlsFingerprint);
                 object.put("evidence", evidence);
                 object.put("confidence", confidence);
                 object.put("description", description);
@@ -536,6 +538,7 @@ public final class Models {
             result.banner = object.optString("banner");
             result.tlsSubject = object.optString("tlsSubject");
             result.identity = DeviceIdentity.fromJson(object.optJSONObject("identity"));
+            result.tlsFingerprint = object.optString("tlsFingerprint");
             result.tlsTrust = object.optString("tlsTrust", result.tlsSubject.isEmpty() ? "not_applicable" : "not_checked");
             result.evidence = object.optString("evidence");
             result.confidence = object.optString("confidence", "low");
@@ -558,6 +561,8 @@ public final class Models {
         public int totalProbes;
         public int completedProbes;
         public boolean cancelled;
+        public boolean recovered;
+        public String error = "";
         public final List<PortResult> openResults = new ArrayList<PortResult>();
 
         public JSONObject toJson() {
@@ -571,6 +576,8 @@ public final class Models {
                 object.put("totalProbes", totalProbes);
                 object.put("completedProbes", completedProbes);
                 object.put("cancelled", cancelled);
+                object.put("recovered", recovered);
+                object.put("error", error);
                 JSONArray rows = new JSONArray();
                 for (PortResult result : openResults) rows.put(result.toJson());
                 object.put("openResults", rows);
@@ -588,6 +595,8 @@ public final class Models {
             session.totalProbes = object.optInt("totalProbes");
             session.completedProbes = object.optInt("completedProbes");
             session.cancelled = object.optBoolean("cancelled");
+            session.recovered = object.optBoolean("recovered");
+            session.error = object.optString("error");
             JSONArray rows = object.optJSONArray("openResults");
             if (rows != null) {
                 for (int i = 0; i < rows.length(); i++) {
