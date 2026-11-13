@@ -309,6 +309,8 @@ private fun AddSheet(vm: TvViewModel, prefill: String, onClose: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = mode == 0, onClick = { mode = 0 }, label = { Text("Ссылка") })
                 FilterChip(selected = mode == 1, onClick = { mode = 1 }, label = { Text("Xtream") })
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                FilterChip(selected = false, onClick = { ctx.startActivity(android.content.Intent(ctx, pro.sitescope.app.ui.ToolActivity::class.java).putExtra("screen", "tvmask")); onClose() }, label = { Text("Поиск по маске") }, leadingIcon = { Icon(Icons.Rounded.ManageSearch, null, Modifier.size(18.dp)) })
                 FilterChip(selected = false, onClick = { pickFile.launch(arrayOf("*/*")) }, label = { Text("Файл M3U") }, leadingIcon = { Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp)) })
             }
             Spacer(Modifier.height(12.dp))

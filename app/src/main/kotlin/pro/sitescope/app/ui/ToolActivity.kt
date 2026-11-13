@@ -18,6 +18,7 @@ import pro.sitescope.app.ip.IpDbScreen
 import pro.sitescope.app.net.NetworkScreen
 import pro.sitescope.app.site.BatchScreen
 import pro.sitescope.app.site.MetricsScreen
+import pro.sitescope.app.tv.MaskSearchScreen
 import pro.sitescope.app.tv.TvLanScreen
 import pro.sitescope.app.vpn.VpnScreen
 import pro.sitescope.app.wifi.WifiScreen
@@ -42,6 +43,7 @@ class ToolActivity : ComponentActivity() {
                         "vpn" -> { BackHeader("VPN и свои адреса", { finish() }); VpnScreen() }
                         "settings" -> { BackHeader("Настройки", { finish() }); SettingsScreen() }
                         "ipdb" -> { BackHeader("База адресов", { finish() }); IpDbScreen(tab) }
+                        "tvmask" -> { BackHeader("Поиск ТВ по маске ссылки", { finish() }); MaskSearchScreen() }
                         "tvlan" -> { BackHeader("ТВ в локальной сети", { finish() }); TvLanScreen() }
                         "metrics" -> { BackHeader("Метрики поиска", { finish() }); MetricsScreen(targets) }
                         "batch" -> { BackHeader("Проверка списка сайтов", { finish() }); BatchScreen() }

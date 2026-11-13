@@ -37,12 +37,25 @@ class WifiViewModel(app: Application) : AndroidViewModel(app) {
         override fun onReceive(c: Context?, intent: Intent?) { readResults() }
     }
 
+    private var registered = false
+
+    /** Безопасно вызывать повторно (из init и из ON_RESUME): приёмник регистрируется один раз. */
     fun start() {
-        try { context.registerReceiver(receiver, IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)) } catch (e: Exception) { }
+        if (!registered) {
+            registered = try { context.registerReceiver(receiver, IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)); true } catch (e: Exception) { false }
+        }
         readResults()
     }
 
-    fun stop() { try { context.unregisterReceiver(receiver) } catch (e: Exception) { } }
+    fun stop() {
+        if (registered) { try { context.unregisterReceiver(receiver) } catch (e: Exception) { }; registered = false }
+    }
+
+    override fun onCleared() { stop() }
+
+    private fun permissionGranted(): Boolean =
+        context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+        context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
     fun scan() {
         if (scanning) return
@@ -64,7 +77,8 @@ class WifiViewModel(app: Application) : AndroidViewModel(app) {
             manager.connectionInfo?.bssid ?: ""
         } catch (e: Exception) { "" }
         val results: List<ScanResult> = try { manager.scanResults ?: emptyList() } catch (e: SecurityException) { hasPermission = false; emptyList() }
-        if (results.isNotEmpty() || connectedSsid.isNotEmpty()) hasPermission = true
+        hasPermission = permissionGranted()
+        if (!hasPermission) connectedSsid = ""
         networks = results.map { r ->
             val ssid = try { r.SSID ?: "" } catch (e: Exception) { "" }
             val cap = r.capabilities ?: ""

@@ -62,7 +62,7 @@ class TvRecordService : Service() {
         private const val CHANNEL = "sitescope_tv_record"
         private const val NOTIFICATION_ID = 7601
 
-        fun start(context: Context) { context.startForegroundService(Intent(context, TvRecordService::class.java)) }
+        fun start(context: Context) { try { context.startForegroundService(Intent(context, TvRecordService::class.java)) } catch (e: Exception) { TvRecorder.error = "Не удалось запустить фоновую запись: " + (e.message ?: e.javaClass.simpleName) } }
         fun stop(context: Context) { context.startService(Intent(context, TvRecordService::class.java).setAction(ACTION_STOP)) }
     }
 }

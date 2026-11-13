@@ -253,26 +253,6 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
 
     fun checkAll() { profiles.forEach { check(it) } }
 
-    // ---------- Скорость интернета ----------
-    var speedRunning by mutableStateOf(false)
-    var speedStage by mutableStateOf("")
-    var speedDown by mutableStateOf<SpeedTest.Result?>(null)
-    var speedUp by mutableStateOf<SpeedTest.Result?>(null)
-
-    fun runSpeedTest() {
-        if (speedRunning) return
-        speedRunning = true; speedDown = null; speedUp = null
-        viewModelScope.launch(Dispatchers.IO) {
-            speedStage = "Скачиваем тестовые данные…"
-            val down = SpeedTest.download()
-            speedDown = down
-            speedStage = "Отправляем тестовые данные…"
-            val up = SpeedTest.upload()
-            speedUp = up
-            speedStage = ""; speedRunning = false
-        }
-    }
-
     // ---------- Включение по сети (Wake-on-LAN) ----------
     var wol by mutableStateOf<List<WolEntry>>(emptyList()); private set
     private val wolPrefs get() = context.getSharedPreferences("wake_on_lan", Context.MODE_PRIVATE)

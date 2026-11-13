@@ -39,7 +39,11 @@ public final class BackupManager {
         SettingsStore.PREFS,
         "site_monitor",
         "ip_recent",
-        "wake_on_lan"
+        "wake_on_lan",
+        "speed_test",
+        "tv_mask",
+        "net_monitor",
+        "vpn_settings"
     );
 
     private BackupManager() { }
@@ -68,6 +72,7 @@ public final class BackupManager {
                 if ("sitescope_data_v1".equals(file) && ("active_scan_v2".equals(entry.getKey()) || "audits".equals(entry.getKey()) || "projects".equals(entry.getKey()) || "scan_sessions".equals(entry.getKey()) || "iptv_history".equals(entry.getKey()))) continue;
                 if (ConnectionProfileStore.PREFS.equals(file) && "profiles_json".equals(entry.getKey())) continue;
                 if (ConnectionSessionStore.PREFS.equals(file) && "events_json".equals(entry.getKey())) continue;
+                if ("vpn_settings".equals(file) && "basic_upstream".equals(entry.getKey())) continue;   // может содержать адрес с логином
                 if (DeviceInventoryStore.PREFS.equals(file) && ("snapshots_json".equals(entry.getKey()) || "aliases_json".equals(entry.getKey()))) continue;
                 values.put(entry.getKey(), encodeValue(entry.getValue()));
             }

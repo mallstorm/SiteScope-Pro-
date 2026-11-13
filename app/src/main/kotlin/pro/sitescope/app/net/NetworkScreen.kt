@@ -53,7 +53,7 @@ fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewMo
             0 -> DevicesTab(vm)
             1 -> ScannerTab(vm)
             2 -> ConnectionsTab(vm)
-            3 -> SpeedTab(vm)
+            3 -> SpeedScreen()
             4 -> ExposureScreen()
             else -> RouterScreen()
         }
@@ -91,45 +91,6 @@ internal fun WolSheet(vm: NetViewModel, onClose: () -> Unit) {
             BigField(ip, { ip = it }, "IP для проверки пробуждения (необязательно)", leading = Icons.Rounded.Dns, keyboard = KeyboardType.Ascii, mono = true)
             Spacer(Modifier.height(12.dp))
             Button(onClick = { if (vm.addWol(name, mac, ip)) { name = ""; mac = ""; ip = "" } else toast(context, "MAC-адрес — это 12 знаков: цифры и буквы A–F") }, modifier = Modifier.fillMaxWidth()) { Text("Сохранить устройство") }
-        }
-    }
-}
-
-// ------------------------------------------------------------------ Скорость
-
-@Composable
-private fun SpeedTab(vm: NetViewModel) {
-    val t = tones
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SoftCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Скорость интернета", style = MaterialTheme.typography.titleMedium)
-                    Text("Скачивание и отдача через открытый сервис Cloudflare", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (!vm.speedRunning) Button(onClick = { vm.runSpeedTest() }) { Text("Измерить") }
-            }
-            if (vm.speedRunning) { Spacer(Modifier.height(10.dp)); LoadingCard(vm.speedStage) }
-            vm.speedDown?.let { d ->
-                Spacer(Modifier.height(14.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconBadge(Icons.Rounded.Download, t.good, t.goodSoft, 40.dp); Spacer(Modifier.width(12.dp))
-                    Column { Text("Скачивание", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(if (d.error.isEmpty()) SpeedTest.fmt(d.kbps) else d.error, style = MaterialTheme.typography.titleMedium) }
-                }
-            }
-            vm.speedUp?.let { u ->
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconBadge(Icons.Rounded.Upload, t.net, t.netSoft, 40.dp); Spacer(Modifier.width(12.dp))
-                    Column { Text("Отдача", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(if (u.error.isEmpty()) SpeedTest.fmt(u.kbps) else u.error, style = MaterialTheme.typography.titleMedium) }
-                }
-            }
-        }
-        if (vm.speedDown == null && !vm.speedRunning) {
-            Spacer(Modifier.height(8.dp))
-            EmptyState(Icons.Rounded.Speed, "Проверим скорость", "Загрузим и отправим немного тестовых данных, чтобы оценить реальную скорость вашего интернета.")
         }
     }
 }

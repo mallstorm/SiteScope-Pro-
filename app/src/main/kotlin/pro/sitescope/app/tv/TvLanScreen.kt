@@ -105,6 +105,10 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
         Text("Для телевидения, которое провайдер раздаёт внутри своей сети. Работает только по Wi-Fi этой сети.", style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
 
+        Button(onClick = { context.startActivity(android.content.Intent(context, pro.sitescope.app.ui.ToolActivity::class.java).putExtra("screen", "tvmask")) }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+            Icon(Icons.Rounded.ManageSearch, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Поиск потока по маске ссылки")
+        }
+
         SectionTitle("Шлюз udpxy")
         SoftCard {
             Text("Шлюз на роутере превращает «сырой» поток провайдера в обычную ссылку, которую может открыть плеер.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
