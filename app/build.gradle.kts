@@ -17,8 +17,8 @@ android {
         applicationId = "pro.sitescope.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1_000_028
-        versionName = "1.0.0-beta28"
+        versionCode = 1_000_029
+        versionName = "1.0.0-beta29"
         ndk { abiFilters += "arm64-v8a" }
     }
 
@@ -88,6 +88,10 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("cz.adaptech.tesseract4android:tesseract4android:4.9.0")   // OCR эмблемы канала (данные rus.traineddata в assets)
+
+    implementation("androidx.webkit:webkit:1.12.1")                           // ProxyController: WebView через локальный прокси Onion/I2P
+    implementation("info.guardianproject:tor-android:0.4.8.17.2")             // встроенный Tor (libtor.so)
+    implementation("info.guardianproject:jtorctl:0.4.5.7")
 
     val media3 = "1.6.1"
     implementation("androidx.media3:media3-exoplayer:$media3")

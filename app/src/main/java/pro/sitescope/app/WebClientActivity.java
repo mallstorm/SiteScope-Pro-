@@ -1,7 +1,9 @@
 package pro.sitescope.app;
 
 import android.app.Activity;
+import android.app.DownloadManager;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.graphics.Color;
@@ -11,22 +13,41 @@ import android.net.Uri;
 import android.net.http.SslCertificate;
 import android.net.http.SslError;
 import android.os.Bundle;
+import android.os.Environment;
+import android.text.InputType;
+import android.text.TextUtils;
+import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.CookieManager;
+import android.webkit.HttpAuthHandler;
+import android.webkit.JsPromptResult;
+import android.webkit.JsResult;
 import android.webkit.SslErrorHandler;
+import android.webkit.URLUtil;
+import android.webkit.ValueCallback;
+import android.webkit.WebResourceError;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import pro.sitescope.app.anon.AnonNet;
+import pro.sitescope.app.anon.AnonRouting;
+
 import java.text.DateFormat;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 /** Compact built-in browser for discovered HTTP/HTTPS services. */
 public final class WebClientActivity extends Activity {
@@ -41,17 +62,98 @@ public final class WebClientActivity extends Activity {
     private EditText address;
     private ProgressBar progress;
     private AlertDialog tlsDialog;
+    private AlertDialog authDialog;
+    private int navToken;
+    private boolean desktopMode;
+    private boolean javaScript = true;
+    private String mobileAgent = "";
+    private ValueCallback<Uri[]> fileCallback;
+    private static final int FILE_REQUEST = 4711;
+    private final Set<String> authTried = new HashSet<String>();
+    private final Map<String, String> authHeaders = new HashMap<String, String>();
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().setStatusBarColor(Color.WHITE);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        AnonNet.init(this);
         endpoint = ServiceEndpoint.from(getIntent());
         buildUi();
-        String initial = endpoint.uri.length() > 0 ? endpoint.uri : ServiceEndpoint.buildUri(endpoint.protocol, endpoint.host, endpoint.port, endpoint.location);
-        if (!initial.startsWith("http://") && !initial.startsWith("https://")) initial = "http://" + initial;
+        String direct = getIntent().getStringExtra("open_url");
+        String initial;
+        if (direct != null && direct.length() > 0) {
+            initial = AnonRouting.INSTANCE.normalize(direct);
+            try {
+                Uri parsed = Uri.parse(initial);
+                endpoint.protocol = "https".equalsIgnoreCase(parsed.getScheme()) ? "HTTPS" : "HTTP";
+                endpoint.host = parsed.getHost() == null ? "" : parsed.getHost();
+                endpoint.port = parsed.getPort() > 0 ? parsed.getPort() : ("HTTPS".equals(endpoint.protocol) ? 443 : 80);
+                endpoint.displayName = endpoint.host;
+                endpoint.uri = initial;
+            } catch (Exception ignored) { }
+        } else {
+            initial = endpoint.uri.length() > 0 ? endpoint.uri : ServiceEndpoint.buildUri(endpoint.protocol, endpoint.host, endpoint.port, endpoint.location);
+            if (!initial.startsWith("http://") && !initial.startsWith("https://")) initial = "http://" + initial;
+        }
         address.setText(initial);
-        webView.loadUrl(initial);
+        navigate(initial);
+    }
+
+    /** Единая точка загрузки: для .onion/.i2p сначала поднимает Tor/I2P и прокси WebView, затем открывает адрес. */
+    private void navigate(String raw) {
+        final String url = AnonRouting.INSTANCE.normalize(raw);
+        if (url.length() == 0) return;
+        final int token = ++navToken;
+        AnonNet.prepare(this, url, new AnonNet.Listener() {
+            @Override public void status(String text) {
+                if (token == navToken && !isFinishing()) showStatusPage(url, text);
+            }
+            @Override public void ready() {
+                if (token == navToken && !isFinishing()) webView.loadUrl(url);
+            }
+            @Override public void failed(String text) {
+                if (token == navToken && !isFinishing()) showErrorPage(url, text);
+            }
+        });
+    }
+
+    private boolean needsPrepare(String url) {
+        String host = AnonRouting.INSTANCE.hostOf(url);
+        AnonRouting.Route route = AnonRouting.INSTANCE.routeOf(host, AnonNet.INSTANCE.settings().getTorForAll());
+        return route != AnonRouting.Route.DIRECT && !AnonNet.INSTANCE.getState().getValue().getWebViewProxyOn();
+    }
+
+    private String page(String title, String body) {
+        return "<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>"
+            + "<body style=\"font-family:sans-serif;margin:0;padding:28px 22px;color:#2b2622;background:#fff\"><h3 style=\"margin-top:0\">"
+            + TextUtils.htmlEncode(title) + "</h3>" + body + "</body></html>";
+    }
+
+    private void showStatusPage(String url, String text) {
+        webView.loadDataWithBaseURL(null, page("Подготовка", "<p style=\"color:#857a70\">" + TextUtils.htmlEncode(url) + "</p><p>" + TextUtils.htmlEncode(text) + "</p>"),
+            "text/html", "utf-8", null);
+    }
+
+    private void showErrorPage(String url, String text) {
+        String retry = "<p><a href=\"" + TextUtils.htmlEncode(url) + "\" style=\"color:#d9532b;font-weight:bold\">Повторить</a></p>";
+        webView.loadDataWithBaseURL(url, page("Не удалось открыть страницу",
+            "<p style=\"color:#857a70;word-break:break-all\">" + TextUtils.htmlEncode(url) + "</p><p style=\"white-space:pre-wrap\">" + TextUtils.htmlEncode(text) + "</p>" + retry),
+            "text/html", "utf-8", url);
+    }
+
+    private String errorText(int code, String description) {
+        String reason;
+        switch (code) {
+            case WebViewClient.ERROR_HOST_LOOKUP: reason = "Адрес не найден (DNS). Проверьте имя узла и подключение."; break;
+            case WebViewClient.ERROR_CONNECT: reason = "Узел не принимает подключение. Проверьте адрес, порт и что вы в той же сети."; break;
+            case WebViewClient.ERROR_TIMEOUT: reason = "Узел не отвечает (тайм-аут)."; break;
+            case WebViewClient.ERROR_FAILED_SSL_HANDSHAKE: reason = "Не удалось установить защищённое соединение. Возможно, узел отвечает по http, а не https."; break;
+            case WebViewClient.ERROR_UNSUPPORTED_SCHEME: reason = "Схема адреса не поддерживается."; break;
+            case WebViewClient.ERROR_TOO_MANY_REQUESTS: reason = "Слишком много запросов."; break;
+            case WebViewClient.ERROR_REDIRECT_LOOP: reason = "Бесконечная переадресация."; break;
+            default: reason = "Ошибка загрузки."; break;
+        }
+        return reason + (description == null || description.length() == 0 ? "" : "\n\n" + description);
     }
 
     private void buildUi() {
@@ -85,7 +187,7 @@ public final class WebClientActivity extends Activity {
         top.addView(address, margin(0, dp(42), 5, 0, 5, 0, 1f));
 
         TextView reload = button("↻");
-        reload.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { webView.reload(); } });
+        reload.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { String current = webView.getUrl(); if (current == null || current.startsWith("data:") || current.equals("about:blank")) navigate(address.getText().toString()); else webView.reload(); } });
         top.addView(reload, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
         TextView menu = button("⋮");
@@ -110,8 +212,39 @@ public final class WebClientActivity extends Activity {
         settings.setSupportZoom(true);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        settings.setJavaScriptCanOpenWindowsAutomatically(true);
+        settings.setDatabaseEnabled(true);
+        mobileAgent = settings.getUserAgentString().replace("; wv", "");
+        settings.setUserAgentString(mobileAgent);
+        CookieManager cookies = CookieManager.getInstance();
+        cookies.setAcceptCookie(true);
+        cookies.setAcceptThirdPartyCookies(webView, false);
+        webView.setDownloadListener(new android.webkit.DownloadListener() {
+            @Override public void onDownloadStart(String url, String agent, String disposition, String mime, long length) { startDownload(url, agent, disposition, mime); }
+        });
         webView.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onJsAlert(WebView view, String url, String message, final JsResult result) {
+                return showJsDialog(url, message, null, result, null);
+            }
+            @Override public boolean onJsConfirm(WebView view, String url, String message, final JsResult result) {
+                return showJsDialog(url, message, null, result, null);
+            }
+            @Override public boolean onJsPrompt(WebView view, String url, String message, String defaultValue, final JsPromptResult result) {
+                return showJsDialog(url, message, defaultValue == null ? "" : defaultValue, result, result);
+            }
+            @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (fileCallback != null) fileCallback.onReceiveValue(null);
+                fileCallback = callback;
+                try {
+                    startActivityForResult(params.createIntent(), FILE_REQUEST);
+                } catch (Exception error) {
+                    fileCallback = null;
+                    Toast.makeText(WebClientActivity.this, "Не удалось открыть выбор файла", Toast.LENGTH_LONG).show();
+                    return false;
+                }
+                return true;
+            }
             @Override public void onProgressChanged(WebView view, int newProgress) {
                 progress.setProgress(newProgress);
                 progress.setVisibility(newProgress >= 100 ? View.GONE : View.VISIBLE);
@@ -124,8 +257,17 @@ public final class WebClientActivity extends Activity {
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 return handleNavigation(Uri.parse(url));
             }
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
+                if (url != null && !url.startsWith("data:") && !url.equals("about:blank")) address.setText(url);
+            }
             @Override public void onPageFinished(WebView view, String url) {
-                address.setText(url);
+                if (url != null && !url.startsWith("data:") && !url.equals("about:blank")) address.setText(url);
+            }
+            @Override public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler handler, String host, String realm) {
+                showAuthDialog(handler, host, realm);
+            }
+            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (request.isForMainFrame() && !String.valueOf(error.getDescription()).contains("ERR_ABORTED")) showErrorPage(request.getUrl().toString(), errorText(error.getErrorCode(), String.valueOf(error.getDescription())));
             }
             @Override public void onReceivedSslError(WebView view, final SslErrorHandler handler, SslError error) {
                 handleSslError(handler, error);
@@ -144,7 +286,7 @@ public final class WebClientActivity extends Activity {
         TextView external = navButton("↗", "Внешний");
         back.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { if (webView.canGoBack()) webView.goBack(); else finish(); } });
         forward.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { if (webView.canGoForward()) webView.goForward(); } });
-        home.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { webView.loadUrl(endpoint.uri); } });
+        home.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { navigate(endpoint.uri); } });
         external.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { openExternal(webView.getUrl()); } });
         bottom.addView(back, new LinearLayout.LayoutParams(0, dp(48), 1f));
         bottom.addView(forward, new LinearLayout.LayoutParams(0, dp(48), 1f));
@@ -156,7 +298,11 @@ public final class WebClientActivity extends Activity {
 
     private boolean handleNavigation(Uri uri) {
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
-        if ("http".equals(scheme) || "https".equals(scheme)) return false;
+        if ("http".equals(scheme) || "https".equals(scheme)) {
+            if (needsPrepare(uri.toString())) { navigate(uri.toString()); return true; }
+            return false;
+        }
+        if ("about".equals(scheme) || "data".equals(scheme) || "blob".equals(scheme) || "javascript".equals(scheme)) return false;
         try {
             startActivity(new Intent(Intent.ACTION_VIEW, uri));
         } catch (Exception error) {
@@ -166,9 +312,7 @@ public final class WebClientActivity extends Activity {
     }
 
     private void loadTypedAddress() {
-        String value = address.getText().toString().trim();
-        if (!value.startsWith("http://") && !value.startsWith("https://")) value = "http://" + value;
-        webView.loadUrl(value);
+        navigate(address.getText().toString().trim());
     }
 
     private void handleSslError(final SslErrorHandler handler, final SslError error) {
@@ -302,18 +446,196 @@ public final class WebClientActivity extends Activity {
     }
 
     private void showMenu() {
+        final String[] items = {"Сведения о странице и TLS", "TLS-доверие для узла", "Скопировать URL", "Сохранить подключение", "Открыть внешним приложением",
+            "Выбор обработчика протокола", "JavaScript: " + (javaScript ? "включён (выключить)" : "выключен (включить)"),
+            "Версия для ПК: " + (desktopMode ? "включена (выключить)" : "выключена (включить)"), "Забыть сохранённые пароли узла", "Onion и I2P — настройки"};
         new AlertDialog.Builder(this)
             .setTitle(endpoint.displayName.length() > 0 ? endpoint.displayName : endpoint.endpointText())
-            .setItems(new String[]{"Сведения о странице и TLS", "TLS-доверие для узла", "Скопировать URL", "Сохранить подключение", "Открыть внешним приложением", "Выбор обработчика протокола"}, new DialogInterface.OnClickListener() {
+            .setItems(items, new DialogInterface.OnClickListener() {
                 @Override public void onClick(DialogInterface dialog, int which) {
                     if (which == 0) showPageInfo();
                     else if (which == 1) showTlsTrust();
                     else if (which == 2) { ProtocolRouter.copy(WebClientActivity.this, webView.getUrl()); Toast.makeText(WebClientActivity.this, "URL скопирован", Toast.LENGTH_SHORT).show(); }
                     else if (which == 3) { endpoint.uri = webView.getUrl(); ConnectionProfileStore.save(WebClientActivity.this, endpoint); Toast.makeText(WebClientActivity.this, "Подключение сохранено", Toast.LENGTH_SHORT).show(); }
                     else if (which == 4) openExternal(webView.getUrl());
-                    else showHandlerChoice();
+                    else if (which == 5) showHandlerChoice();
+                    else if (which == 6) {
+                        javaScript = !javaScript;
+                        webView.getSettings().setJavaScriptEnabled(javaScript);
+                        Toast.makeText(WebClientActivity.this, javaScript ? "JavaScript включён" : "JavaScript выключен", Toast.LENGTH_SHORT).show();
+                        webView.reload();
+                    } else if (which == 7) {
+                        desktopMode = !desktopMode;
+                        WebSettings st = webView.getSettings();
+                        st.setUserAgentString(desktopMode ? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" : mobileAgent);
+                        st.setUseWideViewPort(true);
+                        webView.reload();
+                    } else if (which == 8) {
+                        String host = AnonRouting.INSTANCE.hostOf(webView.getUrl() == null ? "" : webView.getUrl());
+                        forgetAuth(host);
+                    } else startActivity(new Intent(WebClientActivity.this, pro.sitescope.app.ui.ToolActivity.class).putExtra("screen", "anon"));
                 }
             }).show();
+    }
+
+    // ───── HTTP-авторизация (логин/пароль роутера), JS-диалоги, загрузки ─────
+
+    private String authKey(String host, String realm) {
+        return "web_auth_" + Integer.toHexString((host + "\n" + realm).hashCode()) + "_" + host.replaceAll("[^A-Za-z0-9]", "_");
+    }
+
+    private void showAuthDialog(final HttpAuthHandler handler, final String host, final String realm) {
+        if (isFinishing()) { handler.cancel(); return; }
+        if (authDialog != null && authDialog.isShowing()) { handler.cancel(); return; }
+        final String key = authKey(host, realm);
+        String savedUser = "";
+        String savedPassword = "";
+        try {
+            String raw = new SecureStore(this).get(key);
+            if (raw != null && raw.length() > 0) {
+                org.json.JSONObject o = new org.json.JSONObject(raw);
+                savedUser = o.optString("user");
+                savedPassword = o.optString("password");
+            }
+        } catch (Exception ignored) { }
+        final boolean again = authTried.contains(key);
+        if (!again && savedUser.length() > 0) {
+            authTried.add(key);
+            rememberAuthHeader(host, savedUser, savedPassword);
+            handler.proceed(savedUser, savedPassword);
+            return;
+        }
+        authTried.add(key);
+
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(20), dp(8), dp(20), 0);
+        TextView info = text((again ? "Логин или пароль не подошли. " : "") + "Узел: " + host + (realm == null || realm.length() == 0 ? "" : "\nОбласть: " + realm), 13, MUTED, false);
+        form.addView(info);
+        final EditText user = new EditText(this);
+        user.setHint("Логин");
+        user.setSingleLine(true);
+        user.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        user.setText(savedUser);
+        form.addView(user, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        final EditText password = new EditText(this);
+        password.setHint("Пароль");
+        password.setSingleLine(true);
+        password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        form.addView(password, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        final CheckBox remember = new CheckBox(this);
+        remember.setText("Запомнить на этом устройстве (в защищённом хранилище)");
+        remember.setTextSize(13);
+        remember.setChecked(savedUser.length() > 0);
+        form.addView(remember);
+
+        final boolean[] done = {false};
+        authDialog = new AlertDialog.Builder(this)
+            .setTitle("Вход на узел")
+            .setView(form)
+            .setPositiveButton("Войти", new DialogInterface.OnClickListener() {
+                @Override public void onClick(DialogInterface dialog, int which) {
+                    done[0] = true;
+                    String u = user.getText().toString();
+                    String p = password.getText().toString();
+                    try {
+                        if (remember.isChecked()) {
+                            new SecureStore(WebClientActivity.this).put(key, new org.json.JSONObject().put("user", u).put("password", p).toString());
+                        } else new SecureStore(WebClientActivity.this).clear(key);
+                    } catch (Exception failure) {
+                        Toast.makeText(WebClientActivity.this, "Не удалось сохранить пароль", Toast.LENGTH_SHORT).show();
+                    }
+                    rememberAuthHeader(host, u, p);
+                    handler.proceed(u, p);
+                }
+            })
+            .setNegativeButton("Отмена", new DialogInterface.OnClickListener() {
+                @Override public void onClick(DialogInterface dialog, int which) { done[0] = true; handler.cancel(); }
+            })
+            .create();
+        authDialog.setCanceledOnTouchOutside(false);
+        authDialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
+            @Override public void onDismiss(DialogInterface dialog) {
+                if (!done[0]) { done[0] = true; handler.cancel(); }
+                authDialog = null;
+            }
+        });
+        authDialog.show();
+    }
+
+    private void rememberAuthHeader(String host, String user, String password) {
+        authHeaders.put(host, "Basic " + Base64.encodeToString((user + ":" + password).getBytes(java.nio.charset.StandardCharsets.UTF_8), Base64.NO_WRAP));
+    }
+
+    private void forgetAuth(String host) {
+        if (host == null || host.length() == 0) { Toast.makeText(this, "Нет открытого узла", Toast.LENGTH_SHORT).show(); return; }
+        SecureStore store = new SecureStore(this);
+        java.util.Iterator<String> it = authTried.iterator();
+        while (it.hasNext()) {
+            String key = it.next();
+            if (key.endsWith("_" + host.replaceAll("[^A-Za-z0-9]", "_"))) { store.clear(key); it.remove(); }
+        }
+        authHeaders.remove(host);
+        Toast.makeText(this, "Сохранённые пароли узла удалены", Toast.LENGTH_SHORT).show();
+    }
+
+    private boolean showJsDialog(String url, String message, String promptDefault, final JsResult result, final JsPromptResult prompt) {
+        if (isFinishing()) { result.cancel(); return true; }
+        String origin = AnonRouting.INSTANCE.hostOf(url == null ? "" : url);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(origin.length() == 0 ? "Страница" : origin).setMessage(message);
+        final EditText input;
+        if (prompt != null) {
+            input = new EditText(this);
+            input.setText(promptDefault);
+            input.setSingleLine(true);
+            builder.setView(input);
+        } else input = null;
+        final boolean[] done = {false};
+        builder.setPositiveButton("OK", new DialogInterface.OnClickListener() {
+            @Override public void onClick(DialogInterface dialog, int which) {
+                done[0] = true;
+                if (prompt != null) prompt.confirm(input.getText().toString()); else result.confirm();
+            }
+        });
+        builder.setNegativeButton("Отмена", new DialogInterface.OnClickListener() {
+            @Override public void onClick(DialogInterface dialog, int which) { done[0] = true; result.cancel(); }
+        });
+        builder.setOnDismissListener(new DialogInterface.OnDismissListener() {
+            @Override public void onDismiss(DialogInterface dialog) { if (!done[0]) { done[0] = true; result.cancel(); } }
+        });
+        builder.show();
+        return true;
+    }
+
+    private void startDownload(String url, String agent, String disposition, String mime) {
+        try {
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            String name = URLUtil.guessFileName(url, disposition, mime);
+            request.setTitle(name);
+            request.setMimeType(mime);
+            request.addRequestHeader("User-Agent", agent);
+            String cookie = CookieManager.getInstance().getCookie(url);
+            if (cookie != null) request.addRequestHeader("Cookie", cookie);
+            String auth = authHeaders.get(Uri.parse(url).getHost());
+            if (auth != null) request.addRequestHeader("Authorization", auth);
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
+            ((DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE)).enqueue(request);
+            Toast.makeText(this, "Загрузка: " + name, Toast.LENGTH_LONG).show();
+        } catch (Exception error) {
+            openExternal(url);
+        }
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == FILE_REQUEST) {
+            if (fileCallback != null) {
+                fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+                fileCallback = null;
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     private void showPageInfo() {
@@ -381,7 +703,10 @@ public final class WebClientActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        navToken++;
         if (tlsDialog != null && tlsDialog.isShowing()) tlsDialog.dismiss();
+        if (authDialog != null && authDialog.isShowing()) authDialog.dismiss();
+        if (fileCallback != null) { fileCallback.onReceiveValue(null); fileCallback = null; }
         if (webView != null) {
             webView.stopLoading();
             webView.loadUrl("about:blank");
@@ -389,6 +714,7 @@ public final class WebClientActivity extends Activity {
             webView.removeAllViews();
             webView.destroy();
         }
+        AnonNet.releaseWebView();
         super.onDestroy();
     }
 

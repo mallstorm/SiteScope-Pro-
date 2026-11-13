@@ -38,6 +38,7 @@ fun MoreScreen() {
         Group("Дополнительно", t.ip, t.ipSoft, listOf(
             Entry(Icons.Rounded.Storage, "База адресов", "Определение адресов без интернета, сети стран и провайдеров", ToolActivity::class.java, "ipdb", 0),
             Entry(Icons.Rounded.ManageSearch, "Поиск ТВ по маске ссылки", "Перебор адресов и портов: %d, (.*), channel_name, с кадром и названием канала", ToolActivity::class.java, "tvmask", 0),
+            Entry(Icons.Rounded.Language, "Onion и I2P", "Открытие .onion через Tor и .i2p через I2P во встроенном браузере", ToolActivity::class.java, "anon", 0),
             Entry(Icons.Rounded.SettingsInputAntenna, "ТВ в локальной сети", "Шлюз на роутере и каналы от провайдера", ToolActivity::class.java, "tvlan", 0),
             Entry(Icons.Rounded.QueryStats, "Метрики поиска", "Скорость по Google, показы и клики, ИКС Яндекса", ToolActivity::class.java, "metrics", 0),
             Entry(Icons.Rounded.PlaylistAddCheck, "Проверка списка сайтов", "Доступность, код ответа и сертификат сразу у нескольких доменов", ToolActivity::class.java, "batch", 0)

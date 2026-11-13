@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import pro.sitescope.app.anon.AnonScreen
 import pro.sitescope.app.data.DataScreen
 import pro.sitescope.app.ip.IpDbScreen
 import pro.sitescope.app.net.NetworkScreen
@@ -44,6 +45,7 @@ class ToolActivity : ComponentActivity() {
                         "settings" -> { BackHeader("Настройки", { finish() }); SettingsScreen() }
                         "ipdb" -> { BackHeader("База адресов", { finish() }); IpDbScreen(tab) }
                         "tvmask" -> { BackHeader("Поиск ТВ по маске ссылки", { finish() }); MaskSearchScreen() }
+                        "anon" -> { BackHeader("Onion и I2P", { finish() }); AnonScreen() }
                         "tvlan" -> { BackHeader("ТВ в локальной сети", { finish() }); TvLanScreen() }
                         "metrics" -> { BackHeader("Метрики поиска", { finish() }); MetricsScreen(targets) }
                         "batch" -> { BackHeader("Проверка списка сайтов", { finish() }); BatchScreen() }
