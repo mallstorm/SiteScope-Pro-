@@ -14,6 +14,14 @@ public final class MulticastProbe {
     private MulticastProbe() { }
 
     public static IptvEngine.ProbeResult probe(Context context, String playbackUrl, int timeoutMs) {
+        return probe(context, playbackUrl, timeoutMs, IptvEngine.MAX_PROBE_BYTES, Long.MAX_VALUE, 0L);
+    }
+
+    /**
+     * Расширенная проверка для поиска по маске: быстро сдаётся, если группа молчит (firstPacketWaitMs),
+     * и после первого пакета собирает до maxBytes байт не дольше collectMs (0 — прежнее поведение).
+     */
+    public static IptvEngine.ProbeResult probe(Context context, String playbackUrl, int timeoutMs, int maxBytes, long firstPacketWaitMs, long collectMs) {
         IptvEngine.ProbeResult result = new IptvEngine.ProbeResult();
         MulticastSocket socket = null;
         WifiManager.MulticastLock lock = null;
@@ -42,20 +50,24 @@ public final class MulticastProbe {
             long firstPacketAt = 0L;
             long until = started + Math.max(1800L, Math.min(6000L, timeoutMs * 2L));
             int packets = 0;
-            while (System.currentTimeMillis() < until && collected.size() < IptvEngine.MAX_PROBE_BYTES) {
+            while (System.currentTimeMillis() < until && collected.size() < maxBytes) {
+                long now = System.currentTimeMillis();
+                if (firstPacketAt == 0L && now - started > firstPacketWaitMs) break;
+                if (firstPacketAt != 0L && collectMs > 0 && now - firstPacketAt > collectMs) break;
                 try {
                     DatagramPacket packet = new DatagramPacket(packetBuffer, packetBuffer.length);
                     socket.receive(packet);
                     if (firstPacketAt == 0L) firstPacketAt = System.currentTimeMillis();
                     MulticastSupport.Segment media = MulticastSupport.mediaPayload(packet.getData(), packet.getOffset(), packet.getLength(), source.rtp);
                     if (!media.valid || media.length == 0) continue;
-                    int available = Math.min(media.length, IptvEngine.MAX_PROBE_BYTES - collected.size());
+                    int available = Math.min(media.length, maxBytes - collected.size());
                     collected.write(packet.getData(), media.offset, available);
                     packets++;
                 } catch (java.net.SocketTimeoutException ignored) { }
             }
             try { socket.leaveGroup(new InetSocketAddress(source.host, source.port), networkInterface); } catch (Exception ignored) { }
             byte[] data = collected.toByteArray();
+            result.sample = data;
             if (data.length == 0) throw new Exception("Multicast-пакеты не получены. Проверьте IGMP, Wi-Fi multicast и выбранную сеть");
             long elapsed = Math.max(1L, System.currentTimeMillis() - (firstPacketAt == 0L ? started : firstPacketAt));
             result.latencyMs = Math.max(1L, (firstPacketAt == 0L ? System.currentTimeMillis() : firstPacketAt) - started);

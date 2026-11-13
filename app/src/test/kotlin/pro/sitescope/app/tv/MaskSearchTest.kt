@@ -60,6 +60,26 @@ class MaskSearchTest {
     }
 }
 
+class MaskUdpProbeTest {
+    private fun probe(url: String, udp: ((String, Int) -> MaskSearch.UdpResult?)?) =
+        MaskSearch.probe(MaskSearch.Candidate(url, ""), MaskSearch.ScanConfig(udp = udp), HashSet(), HashSet(), HashSet())
+
+    @Test fun multicastGroupIsProbedThroughHook() {
+        val ok = { _: String, _: Int -> MaskSearch.UdpResult("1+1", "H.264", "AAC", 3500, 400, "UDP / MPEG-TS", byteArrayOf(1, 2, 3)) }
+        val hit = probe("udp://@239.255.1.1:1234", ok)
+        assertNotNull(hit); assertEquals(StreamStatus.OK, hit!!.status); assertEquals("1+1", hit.serviceName); assertNotNull(hit.sample)
+        assertNotNull(probe("udp://239.255.1.1:1234", ok))
+    }
+
+    @Test fun unicastOrUnconfiguredUdpIsSkipped() {
+        val ok = { _: String, _: Int -> MaskSearch.UdpResult("", "", "", 0, 0, "", null) }
+        assertNull(probe("udp://@10.0.0.1:1234", ok))
+        assertNull(probe("udp://@300.1.1.1:1234", ok))
+        assertNull(probe("udp://@239.255.1.1:1234", null))
+        assertNull(probe("udp://@239.255.1.1:1234") { _, _ -> null })
+    }
+}
+
 class LogoOcrPickTest {
     private fun r(text: String, conf: Int) = LogoNamePicker.Reading(text, conf, "угол")
 

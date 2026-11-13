@@ -52,6 +52,7 @@ public final class IptvEngine {
         public String error = "";
         public long latencyMs;
         public long bitrateKbps;
+        public byte[] sample;        // собранный MPEG-TS (для снятия кадра), заполняется MulticastProbe
         public int httpCode;
         public String contentType = "";
     }

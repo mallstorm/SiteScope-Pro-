@@ -37,6 +37,7 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import pro.sitescope.app.MulticastProbe
 import pro.sitescope.app.ScannerEngine
 import pro.sitescope.app.ui.*
 import java.util.concurrent.Executors
@@ -82,6 +83,7 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
     var error by mutableStateOf(""); private set
     var finished by mutableStateOf(false); private set
     private val cancel = AtomicBoolean(false)
+    private val udpGate = java.util.concurrent.Semaphore(3)   // не больше трёх одновременных подписок на группы
     private val frameExec = Executors.newFixedThreadPool(2) { r -> Thread(r).apply { isDaemon = true } }
 
     fun save() {
@@ -108,8 +110,19 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
 
     fun config() = MaskSearch.ScanConfig(
         concurrency = concurrency.toInt(), timeoutMs = (timeoutSec.toInt() * 1000).coerceIn(1000, 15000),
-        maxCandidates = maxCandidates.trim().toLongOrNull() ?: 2000L, stopAfter = stopAfter.trim().toIntOrNull() ?: 0
+        maxCandidates = maxCandidates.trim().toLongOrNull() ?: 2000L, stopAfter = stopAfter.trim().toIntOrNull() ?: 0,
+        udp = { url, timeout -> udpProbe(url, timeout) }
     )
+
+    /** Подписывается на группу, ждёт первый пакет не дольше таймаута, собирает до 2 МБ потока (хватает на ключевой кадр). */
+    private fun udpProbe(url: String, timeoutMs: Int): MaskSearch.UdpResult? {
+        udpGate.acquire()
+        try {
+            val p = MulticastProbe.probe(context, url, timeoutMs, 2 * 1024 * 1024, timeoutMs.toLong().coerceIn(1500, 4000), 3500)
+            if (!p.playable) return null
+            return MaskSearch.UdpResult(p.serviceName ?: "", p.videoCodec ?: "", p.audioCodec ?: "", p.bitrateKbps, p.latencyMs, p.container ?: "", p.sample)
+        } catch (e: Exception) { return null } finally { udpGate.release() }
+    }
 
     fun start() {
         if (running) return
@@ -133,10 +146,14 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
                         found.add(f)
                         if (f.alive || latest == null) latest = f
                     }
-                    if (grabFrames && f.alive && h.url.startsWith("http")) {
+                    if (!grabFrames) h.sample = null
+                    if (grabFrames && f.alive && (h.url.startsWith("http") || h.sample != null)) {
                         viewModelScope.launch(Dispatchers.Main) { f.ocr = "busy" }
                         frameExec.execute {
-                            val cap = captureFrames(h.url, cfg.userAgent)
+                            val sample = h.sample
+                            val tmp = if (sample != null) java.io.File(context.cacheDir, "mask_" + System.nanoTime() + ".ts").also { it.writeBytes(sample) } else null
+                            h.sample = null
+                            val cap = try { captureFrames(tmp?.absolutePath ?: h.url, cfg.userAgent, tmp != null) } finally { tmp?.delete() }
                             var ocrName = ""
                             if (cap != null) {
                                 val thumb = cap.thumb.asImageBitmap()
@@ -191,16 +208,16 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
      * Снимает до трёх кадров в случайные моменты (первые секунды потока): один показывается в окне (квадрат 192×192),
      * все идут на чтение эмблемы. Блокируется не дольше таймаута.
      */
-    private fun captureFrames(url: String, ua: String): Captured? {
+    private fun captureFrames(source: String, ua: String, local: Boolean): Captured? {
         val ex = Executors.newSingleThreadExecutor { r -> Thread(r).apply { isDaemon = true } }
         val task = ex.submit<Captured?> {
             val r = MediaMetadataRetriever()
             try {
-                r.setDataSource(url, mapOf("User-Agent" to ua))
+                if (local) r.setDataSource(source) else r.setDataSource(source, mapOf("User-Agent" to ua))
                 val frames = ArrayList<Bitmap>()
                 val rnd = java.util.Random()
                 repeat(3) {
-                    val at = (rnd.nextInt(4000) + it * 500L) * 1000L
+                    val at = (rnd.nextInt(if (local) 2500 else 4000) + it * 400L) * 1000L
                     val raw = try { r.getFrameAtTime(at, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) } catch (e: Throwable) { null } ?: return@repeat
                     val scale = if (raw.width > 1280) 1280f / raw.width else 1f
                     frames.add(if (scale < 1f) Bitmap.createScaledBitmap(raw, 1280, (raw.height * scale).toInt().coerceAtLeast(8), true).also { raw.recycle() } else raw)
@@ -245,6 +262,7 @@ fun MaskSearchScreen(vm: MaskViewModel = viewModel()) {
                 val base = TvStore.udpxyBase.ifEmpty { "http://192.168.1.1:4022" }.trimEnd('/')
                 AssistChip(onClick = { vm.template = "http://95.67.12.82:%d{9000-9100}" }, label = { Text("Порт в диапазоне") })
                 AssistChip(onClick = { vm.template = "$base/udp/239.255.%d{0-255}.%d{1-254}:1234" }, label = { Text("udpxy: группы") })
+                AssistChip(onClick = { vm.template = "udp://@239.255.%d{0-255}.%d{1-254}:1234" }, label = { Text("Мультикаст udp") })
                 AssistChip(onClick = { vm.template = "(http|https)://xxx.xxx.xxx.xxx:yyyyy/(.*)/channel_name/(.*).m3u8" }, label = { Text("Путь с названием") })
                 AssistChip(onClick = { vm.template = "http://192.168.1.1:8080/%d" }, label = { Text("Нумерация %d") })
             }
@@ -284,7 +302,7 @@ fun MaskSearchScreen(vm: MaskViewModel = viewModel()) {
                 Text("Снимать кадр и читать эмблему канала (OCR)", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                 Switch(vm.grabFrames, { vm.grabFrames = it })
             }
-            Text("Проверяйте только свою сеть и ресурсы, к которым у вас есть право доступа. Логины и пароли не подбираются. Ссылки udp:// и rtp:// без подписки на группу не проверяются.",
+            Text("Проверяйте только свою сеть и ресурсы, к которым у вас есть право доступа. Логины и пароли не подбираются. Ссылки udp://@группа:порт проверяются подпиской на мультикаст (только в сети провайдера по Wi-Fi/Ethernet, до трёх групп одновременно, молчащая группа занимает до нескольких секунд); rtp:// пока не проверяются.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
         }
 

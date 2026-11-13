@@ -244,11 +244,18 @@ object MaskSearch {
 
     class ScanConfig(
         val concurrency: Int = 16, val timeoutMs: Int = 3000, val maxCandidates: Long = 2000,
-        val stopAfter: Int = 0, val userAgent: String = StreamChecker.DEFAULT_UA
+        val stopAfter: Int = 0, val userAgent: String = StreamChecker.DEFAULT_UA,
+        /** Проверка udp://@группа:порт подпиской на мультикаст; предоставляет Android-слой. null — udp пропускается. */
+        val udp: ((url: String, timeoutMs: Int) -> UdpResult?)? = null
     )
 
+    class UdpResult(val serviceName: String, val video: String, val audio: String, val bitrateKbps: Long, val startMs: Long, val container: String, val sample: ByteArray?)
+
     class Hit(val url: String, val status: StreamStatus, val detail: String, val serviceName: String, val resolution: String,
-              val bitrateKbps: Long, val startMs: Long, val nameHint: String, val container: String)
+              val bitrateKbps: Long, val startMs: Long, val nameHint: String, val container: String) {
+        /** Собранный кусок MPEG-TS (только udp://) — из него снимаются кадры; после использования обнуляется. */
+        @Volatile var sample: ByteArray? = null
+    }
 
     interface Listener {
         fun progress(done: Long, total: Long)
@@ -290,7 +297,21 @@ object MaskSearch {
 
     private fun defaultPort(scheme: String) = when (scheme) { "http" -> 80; "https" -> 443; "rtsp" -> 554; "rtmp" -> 1935; "mms", "mmsh" -> 1755; else -> -1 }
 
+    private val UDP_URL = Regex("(?i)^udp://@?(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3}):(\\d{1,5})(?:[/?].*)?$")
+
+    /** udp://@239.x.x.x:порт — подписка на группу; принимаются только адреса мультикаста 224–239. */
+    private fun probeUdp(c: Candidate, cfg: ScanConfig): Hit? {
+        val run = cfg.udp ?: return null
+        val m = UDP_URL.matchEntire(c.url) ?: return null
+        val octets = (1..4).map { m.groupValues[it].toInt() }
+        val port = m.groupValues[5].toInt()
+        if (octets.any { it > 255 } || octets[0] !in 224..239 || port !in 1..65535) return null
+        val r = run(c.url, cfg.timeoutMs) ?: return null
+        return Hit(c.url, StreamStatus.OK, "Поток идёт в вашей сети", r.serviceName, "", r.bitrateKbps, r.startMs, c.nameHint, r.container.ifEmpty { "UDP / MPEG-TS" }).also { it.sample = r.sample }
+    }
+
     internal fun probe(c: Candidate, cfg: ScanConfig, dead: MutableSet<String>, alive: MutableSet<String>, reportedRaw: MutableSet<String>): Hit? {
+        if (c.url.startsWith("udp://", ignoreCase = true)) return probeUdp(c, cfg)
         val uri = try { URI(c.url.replace(" ", "%20")) } catch (e: Exception) { return null }
         val scheme = (uri.scheme ?: return null).lowercase()
         val host = uri.host ?: return null
