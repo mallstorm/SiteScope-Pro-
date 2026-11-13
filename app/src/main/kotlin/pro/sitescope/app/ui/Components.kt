@@ -244,3 +244,34 @@ fun BackHeader(title: String, onBack: () -> Unit, actions: @Composable RowScope.
         actions()
     }
 }
+
+/**
+ * Единый ползунок приложения: тонкая ровная дорожка (4 dp), маленький круглый бегунок (16 dp),
+ * без делений, вертикальных полос и точек-ограничителей. Шаги (steps) по-прежнему работают как привязка к значениям,
+ * но не рисуются. Зона нажатия остаётся стандартной (48 dp).
+ */
+@Composable
+fun AppSlider(
+    value: Float, onValueChange: (Float) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
+    valueRange: ClosedFloatingPointRange<Float> = 0f..1f, steps: Int = 0, onValueChangeFinished: (() -> Unit)? = null,
+    activeColor: Color = MaterialTheme.colorScheme.primary,
+    inactiveColor: Color = MaterialTheme.colorScheme.surfaceVariant
+) {
+    val active = if (enabled) activeColor else activeColor.copy(alpha = 0.38f)
+    val inactive = if (enabled) inactiveColor else inactiveColor.copy(alpha = 0.5f)
+    val range = if (valueRange.endInclusive > valueRange.start) valueRange else 0f..1f
+    Slider(
+        value = value.coerceIn(range.start, range.endInclusive), onValueChange = onValueChange, modifier = modifier, enabled = enabled,
+        valueRange = range, steps = steps.coerceAtLeast(0), onValueChangeFinished = onValueChangeFinished,
+        thumb = { Box(Modifier.size(16.dp).background(active, CircleShape)) },
+        track = { state ->
+            Canvas(Modifier.fillMaxWidth().height(4.dp)) {
+                val span = state.valueRange.endInclusive - state.valueRange.start
+                val fraction = if (span > 0f) ((state.value - state.valueRange.start) / span).coerceIn(0f, 1f) else 0f
+                val radius = androidx.compose.ui.geometry.CornerRadius(size.height / 2, size.height / 2)
+                drawRoundRect(inactive, size = size, cornerRadius = radius)
+                if (fraction > 0f) drawRoundRect(active, size = Size(size.width * fraction, size.height), cornerRadius = radius)
+            }
+        }
+    )
+}

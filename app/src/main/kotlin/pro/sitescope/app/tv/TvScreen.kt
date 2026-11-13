@@ -372,7 +372,7 @@ private fun ManageSheet(vm: TvViewModel, onClose: () -> Unit) {
 
             SectionTitle("Проверка")
             Text("Одновременных проверок: ${vm.threads}", style = MaterialTheme.typography.bodyMedium)
-            Slider(value = vm.threads.toFloat(), onValueChange = { vm.threads = it.toInt() }, valueRange = 1f..32f)
+            AppSlider(value = vm.threads.toFloat(), onValueChange = { vm.threads = it.toInt() }, valueRange = 1f..32f)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Проверять раз в сутки", style = MaterialTheme.typography.titleSmall)

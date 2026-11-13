@@ -82,7 +82,7 @@ fun SettingsScreen() {
         SoftCard {
             Text("Сколько ждать ответа: ${timeout.roundToInt()} мс", style = MaterialTheme.typography.bodyMedium)
             Text("Больше — надёжнее на медленных сетях, но дольше", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Slider(value = timeout, onValueChange = { timeout = it }, onValueChangeFinished = { saveScanner() },
+            AppSlider(value = timeout, onValueChange = { timeout = it }, onValueChangeFinished = { saveScanner() },
                 valueRange = ScannerEngine.MIN_TIMEOUT_MS.toFloat()..ScannerEngine.MAX_TIMEOUT_MS.toFloat())
             ScanTuningControls()
             SwitchRow("Определять, что за сервис", "По безопасным признакам в ответе", detect) { detect = it; saveScanner() }

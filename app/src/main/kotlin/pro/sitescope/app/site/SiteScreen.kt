@@ -64,7 +64,7 @@ private fun Start(vm: SiteViewModel) {
             AnimatedVisibility(vm.fullCrawl) {
                 Column {
                     Text("Обойти до ${vm.maxPages} страниц", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
-                    Slider(value = vm.maxPages.toFloat(), onValueChange = { vm.maxPages = it.toInt() }, valueRange = 5f..200f)
+                    AppSlider(value = vm.maxPages.toFloat(), onValueChange = { vm.maxPages = it.toInt() }, valueRange = 5f..200f)
                     Text("Ищем дубли, битые страницы и «сирот». Обход идёт бережно и учитывает robots.txt.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }

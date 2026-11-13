@@ -338,5 +338,5 @@ private fun SwitchRow(label: String, value: Boolean, onChange: (Boolean) -> Unit
 @Composable
 private fun SliderRow(label: String, value: Float, range: ClosedFloatingPointRange<Float>, steps: Int, onChange: (Float) -> Unit) {
     Text(label, style = MaterialTheme.typography.bodyMedium)
-    Slider(value, onChange, valueRange = range, steps = steps)
+    AppSlider(value, onChange, valueRange = range, steps = steps)
 }

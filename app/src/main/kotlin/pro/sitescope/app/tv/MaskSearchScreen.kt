@@ -291,9 +291,9 @@ fun MaskSearchScreen(vm: MaskViewModel = viewModel()) {
         SectionTitle("Параметры проверки")
         SoftCard {
             Text("Одновременных проверок: ${vm.concurrency.toInt()}", style = MaterialTheme.typography.bodyMedium)
-            Slider(vm.concurrency, { vm.concurrency = it }, valueRange = 1f..48f, steps = 46)
+            AppSlider(vm.concurrency, { vm.concurrency = it }, valueRange = 1f..48f, steps = 46)
             Text("Ожидание ответа: ${vm.timeoutSec.toInt()} с", style = MaterialTheme.typography.bodyMedium)
-            Slider(vm.timeoutSec, { vm.timeoutSec = it }, valueRange = 1f..15f, steps = 13)
+            AppSlider(vm.timeoutSec, { vm.timeoutSec = it }, valueRange = 1f..15f, steps = 13)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(vm.maxCandidates, { vm.maxCandidates = it.filter { c -> c.isDigit() }.take(6) }, Modifier.weight(1f), label = { Text("Проверить не более") }, singleLine = true, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number))
                 OutlinedTextField(vm.stopAfter, { vm.stopAfter = it.filter { c -> c.isDigit() }.take(4) }, Modifier.weight(1f), label = { Text("Стоп после найденных (0 — нет)") }, singleLine = true, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number))

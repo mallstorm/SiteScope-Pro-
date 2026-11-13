@@ -1,5 +1,6 @@
 package pro.sitescope.app.tv
 
+import pro.sitescope.app.ui.AppSlider
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -47,14 +48,14 @@ internal fun TvSeekControls(player: Player?, epoch: Long, forceLive: Boolean, cu
         while (true) { position = SeekSupport.read(player, forceLive); delay(400) }
     }
     Column(Modifier.fillMaxWidth()) {
-        key(epoch) { Slider(value = preview ?: position.fraction, onValueChange = { value ->
+        key(epoch) { AppSlider(value = preview ?: position.fraction, onValueChange = { value ->
             if (preview == null) { item = player?.currentMediaItem; onTouch() }
             preview = value; onDragging(true)
         }, onValueChangeFinished = {
             val value = preview; if (value != null && player != null) SeekSupport.seek(player, value, item, epoch, currentEpoch())
             preview = null; onDragging(false); onTouch()
         }, enabled = position.seekable, modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Перемотка видео" },
-            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.3f))) }
+            activeColor = Color.White, inactiveColor = Color.White.copy(alpha = 0.3f)) }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             val shown = preview?.let { (it.toDouble() * position.duration).toLong() } ?: position.position
             Text(if (position.duration > 0) SeekSupport.time(shown) else "—:—", color = Color.White, style = MaterialTheme.typography.labelMedium)

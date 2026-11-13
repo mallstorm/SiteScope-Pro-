@@ -382,7 +382,7 @@ private fun Calculator(vm: IpViewModel) {
             Text("Маска /${net.prefix}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             Text(net.mask, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Slider(value = net.prefix.toFloat(), onValueChange = { vm.subnetInput = Subnet.toIp(net.address) + "/" + it.toInt() }, valueRange = 0f..32f, steps = 31)
+        AppSlider(value = net.prefix.toFloat(), onValueChange = { vm.subnetInput = Subnet.toIp(net.address) + "/" + it.toInt() }, valueRange = 0f..32f, steps = 31)
         BitBar(net.prefix)
         Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
             Text("сеть", style = MaterialTheme.typography.labelSmall, color = tones.ip, modifier = Modifier.weight(1f))
@@ -462,7 +462,7 @@ private fun Splitter(vm: IpViewModel) {
     SoftCard {
         Text("Частей: ${grouped(count.toString())} по /$newPrefix", style = MaterialTheme.typography.titleMedium)
         Text("В каждой ${grouped(each.usable.toString())} адресов для устройств · маска ${each.mask}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (net.prefix < 31) Slider(value = newPrefix.toFloat(), onValueChange = { newPrefix = it.toInt() }, valueRange = (net.prefix + 1).toFloat()..32f, steps = maxOf(0, 32 - net.prefix - 2))
+        if (net.prefix < 31) AppSlider(value = newPrefix.toFloat(), onValueChange = { newPrefix = it.toInt() }, valueRange = (net.prefix + 1).toFloat()..32f, steps = maxOf(0, 32 - net.prefix - 2))
         Text("Или подберите по числу частей:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (parts in listOf(2, 4, 8, 16, 32, 64)) if (net.prefix + Integer.numberOfTrailingZeros(parts) <= 32)

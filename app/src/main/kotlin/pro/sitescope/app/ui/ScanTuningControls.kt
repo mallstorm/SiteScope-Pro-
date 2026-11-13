@@ -28,10 +28,10 @@ fun ScanTuningControls(enabled: Boolean = true) {
     }
     fun save() = SettingsStore.saveScanTuning(context, workers, delay)
     Text("Параллельных потоков: $workers", style = MaterialTheme.typography.bodyMedium)
-    Slider(value = workers.toFloat(), onValueChange = { workers = it.roundToInt() }, onValueChangeFinished = { save() },
+    AppSlider(value = workers.toFloat(), onValueChange = { workers = it.roundToInt() }, onValueChangeFinished = { save() },
         valueRange = ScannerEngine.MIN_CONCURRENCY.toFloat()..ScannerEngine.MAX_CONCURRENCY.toFloat(), steps = 247, enabled = enabled)
     Text("Задержка между стартами проверок: $delay мс", style = MaterialTheme.typography.bodyMedium)
-    Slider(value = delay.toFloat(), onValueChange = { delay = (it / 50).roundToInt() * 50 }, onValueChangeFinished = { save() },
+    AppSlider(value = delay.toFloat(), onValueChange = { delay = (it / 50).roundToInt() * 50 }, onValueChangeFinished = { save() },
         valueRange = 0f..ScannerEngine.MAX_DELAY_MS.toFloat(), steps = 99, enabled = enabled)
     Text("Общие настройки сетевых проверок. Изменения применяются к новым запускам.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
