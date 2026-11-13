@@ -27,6 +27,7 @@ public final class ScannerActivity extends Activity {
     private EditText ports;
     private EditText timeout;
     private EditText concurrency;
+    private EditText delay;
     private CheckBox detect;
     private CheckBox extended;
     private CheckBox authorization;
@@ -60,6 +61,9 @@ public final class ScannerActivity extends Activity {
         View gap = new View(this); numbers.addView(gap,new LinearLayout.LayoutParams(UiKit.dp(this,8),1));
         numbers.addView(concurrency,new LinearLayout.LayoutParams(0,UiKit.dp(this,48),1f));
         form.addView(numbers);
+        delay = UiKit.input(this,"Задержка между стартами, мс (0–5000)"); delay.setText(String.valueOf(SettingsStore.scannerDelayMs(this)));
+        delay.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        form.addView(delay);
         detect = new CheckBox(this); detect.setText("Определять сервисы и безопасные сигнатуры"); detect.setTextColor(UiKit.NAVY); detect.setChecked(SettingsStore.scannerDetectServices(this));
         extended = new CheckBox(this); extended.setText("Расширенный локальный режим"); extended.setTextColor(UiKit.NAVY);
         authorization = new CheckBox(this); authorization.setText("У меня есть разрешение на проверку этих узлов"); authorization.setTextColor(UiKit.NAVY);
@@ -117,9 +121,10 @@ public final class ScannerActivity extends Activity {
         int t=parseInt(timeout.getText().toString(),SettingsStore.scannerTimeoutMs(this));
         int c=parseInt(concurrency.getText().toString(),SettingsStore.scannerConcurrency(this));
         SettingsStore.saveScanner(this,t,c,detect.isChecked(),SettingsStore.confirmLargeTasks(this));
+        SettingsStore.saveScanTuning(this,c,parseInt(delay.getText().toString(),SettingsStore.scannerDelayMs(this)));
         Intent i=new Intent(this,ScanService.class); i.setAction(ScanService.ACTION_START);
         i.putExtra(ScanService.EXTRA_TARGETS,targets.getText().toString().trim()); i.putExtra(ScanService.EXTRA_PORTS,ports.getText().toString().trim());
-        i.putExtra(ScanService.EXTRA_TIMEOUT,t); i.putExtra(ScanService.EXTRA_CONCURRENCY,c); i.putExtra(ScanService.EXTRA_DETECT,detect.isChecked()); i.putExtra(ScanService.EXTRA_EXTENDED_PRIVATE,extended.isChecked());
+        i.putExtra(ScanService.EXTRA_DELAY_MS,SettingsStore.scannerDelayMs(this)); i.putExtra(ScanService.EXTRA_TIMEOUT,t); i.putExtra(ScanService.EXTRA_CONCURRENCY,c); i.putExtra(ScanService.EXTRA_DETECT,detect.isChecked()); i.putExtra(ScanService.EXTRA_EXTENDED_PRIVATE,extended.isChecked());
         if (android.os.Build.VERSION.SDK_INT>=26) startForegroundService(i); else startService(i);
     }
 

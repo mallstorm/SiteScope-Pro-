@@ -33,6 +33,7 @@ public final class ScanService extends Service {
     public static final String EXTRA_PORTS = "ports";
     public static final String EXTRA_TIMEOUT = "timeout";
     public static final String EXTRA_CONCURRENCY = "concurrency";
+    public static final String EXTRA_DELAY_MS = "delayMs";
     public static final String EXTRA_DETECT = "detect";
     public static final String EXTRA_EXTENDED_PRIVATE = "extendedPrivate";
 
@@ -64,6 +65,7 @@ public final class ScanService extends Service {
         public String error = "";
         public int timeoutMs = 650;
         public int concurrency = 32;
+        public int delayMs;
         public boolean detectServices = true;
         public boolean extendedPrivateMode;
         public int totalProbes;
@@ -86,6 +88,7 @@ public final class ScanService extends Service {
                 object.put("error", error);
                 object.put("timeoutMs", timeoutMs);
                 object.put("concurrency", concurrency);
+                object.put("delayMs", delayMs);
                 object.put("detectServices", detectServices);
                 object.put("extendedPrivateMode", extendedPrivateMode);
                 object.put("totalProbes", totalProbes);
@@ -121,6 +124,7 @@ public final class ScanService extends Service {
                 state.error = object.optString("error");
                 state.timeoutMs = object.optInt("timeoutMs", 650);
                 state.concurrency = object.optInt("concurrency", 32);
+                state.delayMs = Math.max(0, Math.min(ScannerEngine.MAX_DELAY_MS, object.optInt("delayMs", 0)));
                 state.detectServices = object.optBoolean("detectServices", true);
                 state.extendedPrivateMode = object.optBoolean("extendedPrivateMode", false);
                 state.totalProbes = object.optInt("totalProbes");
@@ -138,6 +142,7 @@ public final class ScanService extends Service {
     }
 
     private final Object lock = new Object();
+    private long taskGeneration;
     private DataStore store;
     private ScannerEngine.Task task;
     private Snapshot state;
@@ -162,16 +167,17 @@ public final class ScanService extends Service {
             String ports = intent.getStringExtra(EXTRA_PORTS);
             int timeout = intent.getIntExtra(EXTRA_TIMEOUT, 650);
             int concurrency = intent.getIntExtra(EXTRA_CONCURRENCY, 32);
+            int delayMs = intent.getIntExtra(EXTRA_DELAY_MS, SettingsStore.scannerDelayMs(this));
             boolean detect = intent.getBooleanExtra(EXTRA_DETECT, true);
             boolean extendedPrivate = intent.getBooleanExtra(EXTRA_EXTENDED_PRIVATE, false);
-            begin(targets, ports, timeout, concurrency, detect, extendedPrivate, 0, false, new ArrayList<Models.PortResult>());
+            begin(targets, ports, timeout, concurrency, delayMs, detect, extendedPrivate, 0, false, new ArrayList<Models.PortResult>());
             return START_STICKY;
         }
         // START_STICKY recovery path. Restart from a small overlap so no in-flight probe is lost.
         if (state != null && state.active && !state.completed && state.targetExpression.length() > 0) {
             int overlap = Math.max(12, state.concurrency * 3);
             int resumeIndex = Math.max(0, state.completedProbes - overlap);
-            begin(state.targetExpression, state.portExpression, state.timeoutMs, state.concurrency,
+            begin(state.targetExpression, state.portExpression, state.timeoutMs, state.concurrency, state.delayMs,
                 state.detectServices, state.extendedPrivateMode, resumeIndex, true, new ArrayList<Models.PortResult>(state.results));
             return START_STICKY;
         }
@@ -179,126 +185,152 @@ public final class ScanService extends Service {
         return START_NOT_STICKY;
     }
 
-    private void begin(final String targetsRaw, final String portsRaw, int timeout, int concurrency,
+    private void begin(final String targetsRaw, final String portsRaw, int timeout, int concurrency, int delayMs,
                        boolean detect, boolean extendedPrivate, int startIndex, boolean recovered, List<Models.PortResult> prior) {
-        stopTaskOnly();
-        if (!recovered) store.clearActiveResults();
-        try {
-            final int hostLimit = extendedPrivate ? ScannerEngine.EXTENDED_MAX_HOSTS : ScannerEngine.STANDARD_MAX_HOSTS;
-            final int portLimit = extendedPrivate ? ScannerEngine.EXTENDED_MAX_PORTS : ScannerEngine.STANDARD_MAX_PORTS;
-            final List<String> hosts = ScannerEngine.parseTargets(targetsRaw, hostLimit);
-            final List<Integer> ports = ScannerEngine.parsePorts(portsRaw, portLimit);
-            final ScannerEngine.Config config = new ScannerEngine.Config();
-            config.timeoutMs = timeout;
-            config.concurrency = concurrency;
-            config.detectServices = detect;
-            config.extendedPrivateMode = extendedPrivate;
-            config.startIndex = startIndex;
-            config.normalize();
+        synchronized (lock) {
+            stopTaskOnly();
+            final long runGeneration = taskGeneration;
+            if (!recovered) store.clearActiveResults();
+            try {
+                final int hostLimit = extendedPrivate ? ScannerEngine.EXTENDED_MAX_HOSTS : ScannerEngine.STANDARD_MAX_HOSTS;
+                final int portLimit = extendedPrivate ? ScannerEngine.EXTENDED_MAX_PORTS : ScannerEngine.STANDARD_MAX_PORTS;
+                final List<String> hosts = ScannerEngine.parseTargets(targetsRaw, hostLimit);
+                final List<Integer> ports = ScannerEngine.parsePorts(portsRaw, portLimit);
+                final ScannerEngine.Config config = new ScannerEngine.Config();
+                config.timeoutMs = timeout;
+                config.concurrency = concurrency;
+                config.delayMs = delayMs;
+                config.detectServices = detect;
+                config.extendedPrivateMode = extendedPrivate;
+                config.startIndex = startIndex;
+                config.normalize();
 
-            state = new Snapshot();
-            state.active = true;
-            state.paused = false;
-            state.completed = false;
-            state.recovered = recovered;
-            state.targetExpression = targetsRaw == null ? "" : targetsRaw;
-            state.portExpression = portsRaw == null ? "" : portsRaw;
-            state.timeoutMs = config.timeoutMs;
-            state.concurrency = config.concurrency;
-            state.detectServices = config.detectServices;
-            state.extendedPrivateMode = config.extendedPrivateMode;
-            state.totalProbes = hosts.size() * ports.size();
-            state.completedProbes = startIndex;
-            state.startedAt = recovered && LAST.startedAt > 0 ? LAST.startedAt : System.currentTimeMillis();
-            mergeResults(state.results, prior);
-            publish(true);
-            startForeground(NOTIFICATION_ID, notification("Подготовка задания", state.completedProbes, state.totalProbes, false));
+                state = new Snapshot();
+                state.active = true;
+                state.paused = false;
+                state.completed = false;
+                state.recovered = recovered;
+                state.targetExpression = targetsRaw == null ? "" : targetsRaw;
+                state.portExpression = portsRaw == null ? "" : portsRaw;
+                state.timeoutMs = config.timeoutMs;
+                state.concurrency = config.concurrency;
+                state.delayMs = config.delayMs;
+                state.detectServices = config.detectServices;
+                state.extendedPrivateMode = config.extendedPrivateMode;
+                state.totalProbes = hosts.size() * ports.size();
+                state.completedProbes = startIndex;
+                state.startedAt = recovered && LAST.startedAt > 0 ? LAST.startedAt : System.currentTimeMillis();
+                mergeResults(state.results, prior);
+                publish(true);
+                startForeground(NOTIFICATION_ID, notification("Подготовка задания", state.completedProbes, state.totalProbes, false));
 
-            task = ScannerEngine.start(hosts, ports, config, new ScannerEngine.Listener() {
-                @Override public void onStarted(int hostCount, int portCount, int total) {
-                    state.totalProbes = total;
-                    publish(true);
-                }
+                task = ScannerEngine.start(hosts, ports, config, new ScannerEngine.Listener() {
+                    @Override public void onStarted(int hostCount, int portCount, int total) {
+                        synchronized (lock) {
+                            if (runGeneration != taskGeneration) return;
+                            state.totalProbes = total;
+                            publish(true);
+                        }
+                    }
 
-                @Override public void onProgress(int completed, int total, int openCount, String currentTarget) {
-                    state.completedProbes = completed;
-                    state.totalProbes = total;
-                    state.currentTarget = currentTarget;
-                    publish(false);
-                }
+                    @Override public void onProgress(int completed, int total, int openCount, String currentTarget) {
+                        synchronized (lock) {
+                            if (runGeneration != taskGeneration) return;
+                            state.completedProbes = completed;
+                            state.totalProbes = total;
+                            state.currentTarget = currentTarget;
+                            publish(false);
+                        }
+                    }
 
-                @Override public void onOpen(Models.PortResult result) {
-                    synchronized (lock) { upsertResult(state.results, result); }
-                    store.saveActiveResult(result);
-                    publish(false);
-                }
+                    @Override public void onOpen(Models.PortResult result) {
+                        synchronized (lock) {
+                            if (runGeneration != taskGeneration) return;
+                            upsertResult(state.results, result);
+                            store.saveActiveResult(result);
+                            publish(false);
+                        }
+                    }
 
-                @Override public void onComplete(List<Models.PortResult> openResults, boolean cancelled, long durationMs, String error) {
-                    synchronized (lock) { mergeResults(state.results, openResults); }
-                    state.active = false;
-                    state.paused = false;
-                    state.completed = true;
-                    state.cancelled = cancelled;
-                    state.error = error == null ? "" : error;
-                    state.finishedAt = System.currentTimeMillis();
-                    if (!cancelled && state.error.length() == 0) state.completedProbes = state.totalProbes;
-                    saveCompletedSession();
-                    store.clearActiveResults();
-                    publish(true);
-                    stopForeground(false);
-                    NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-                    if (manager != null) manager.notify(NOTIFICATION_ID, notification(
-                        state.error.length() > 0 ? "Ошибка сканирования" : (cancelled ? "Сканирование остановлено" : "Сканирование завершено"),
-                        state.completedProbes, state.totalProbes, true));
-                    store.clearActiveScan();
-                    stopSelf();
-                }
-            });
-        } catch (Exception error) {
-            state = new Snapshot();
-            state.completed = true;
-            state.error = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
-            publish(true);
-            stopForeground(true);
-            store.clearActiveScan();
-            stopSelf();
+                    @Override public void onComplete(List<Models.PortResult> openResults, boolean cancelled, long durationMs, String error) {
+                        synchronized (lock) {
+                            if (runGeneration != taskGeneration) return;
+                            mergeResults(state.results, openResults);
+                            state.active = false;
+                            state.paused = false;
+                            state.completed = true;
+                            state.cancelled = cancelled;
+                            state.error = error == null ? "" : error;
+                            state.finishedAt = System.currentTimeMillis();
+                            if (!cancelled && state.error.length() == 0) state.completedProbes = state.totalProbes;
+                            saveCompletedSession();
+                            store.clearActiveResults();
+                            publish(true);
+                            stopForeground(false);
+                            NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                            if (manager != null) manager.notify(NOTIFICATION_ID, notification(
+                                state.error.length() > 0 ? "Ошибка сканирования" : (cancelled ? "Сканирование остановлено" : "Сканирование завершено"),
+                                state.completedProbes, state.totalProbes, true));
+                            store.clearActiveScan();
+                            stopSelf();
+                        }
+                    }
+                });
+            } catch (Exception error) {
+                state = new Snapshot();
+                state.completed = true;
+                state.error = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+                publish(true);
+                stopForeground(true);
+                store.clearActiveScan();
+                stopSelf();
+            }
         }
     }
 
     private void pauseCurrent() {
-        if (task == null || state == null || !state.active) return;
-        task.pause();
-        state.paused = true;
-        publish(true);
+        synchronized (lock) {
+            if (task == null || state == null || !state.active) return;
+            task.pause();
+            state.paused = true;
+            publish(true);
+        }
     }
 
     private void resumeCurrent() {
-        if (task == null || state == null || !state.active) return;
-        task.resume();
-        state.paused = false;
-        publish(true);
+        synchronized (lock) {
+            if (task == null || state == null || !state.active) return;
+            task.resume();
+            state.paused = false;
+            publish(true);
+        }
     }
 
     private void stopCurrent(boolean user) {
-        if (state != null) state.cancelled = user;
-        if (task != null) task.cancel();
-        else {
-            if (state != null) {
-                state.active = false;
-                state.completed = true;
-                state.finishedAt = System.currentTimeMillis();
-                publish(true);
+        synchronized (lock) {
+            if (state != null) state.cancelled = user;
+            if (task != null) task.cancel();
+            else {
+                if (state != null) {
+                    state.active = false;
+                    state.completed = true;
+                    state.finishedAt = System.currentTimeMillis();
+                    publish(true);
+                }
+                store.clearActiveScan();
+                store.clearActiveResults();
+                stopForeground(true);
+                stopSelf();
             }
-            store.clearActiveScan();
-            store.clearActiveResults();
-            stopForeground(true);
-            stopSelf();
         }
     }
 
     private void stopTaskOnly() {
-        if (task != null) task.cancel();
-        task = null;
+        synchronized (lock) {
+            taskGeneration++;
+            if (task != null) task.cancel();
+            task = null;
+        }
     }
 
     private void publish(boolean forcePersist) {

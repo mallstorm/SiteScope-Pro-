@@ -289,6 +289,8 @@ private fun ScannerTab(vm: NetViewModel) {
                     PORT_PRESETS.forEach { p -> FilterChip(selected = vm.ports == p.ports, onClick = { vm.ports = p.ports }, label = { Text(p.title) }) }
                 }
                 BigField(vm.ports, { vm.ports = it }, "22,80,443,8000-8100", leading = Icons.Rounded.Tag, keyboard = KeyboardType.Ascii, mono = true)
+                Spacer(Modifier.height(12.dp))
+                ScanTuningControls()
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Большая локальная сеть", style = MaterialTheme.typography.bodyMedium)
@@ -307,6 +309,7 @@ private fun ScannerTab(vm: NetViewModel) {
         }
         if (s.active || s.completed || s.cancelled || s.totalProbes > 0) item {
             SoftCard(color = if (s.active) t.netSoft else MaterialTheme.colorScheme.surfaceContainerLowest) {
+                Text("Потоков: ${s.concurrency} · задержка: ${s.delayMs} мс", style = MaterialTheme.typography.bodySmall)
                 val title = when { s.active && s.paused -> "Пауза"; s.active -> "Идёт проверка"; s.cancelled -> "Остановлено"; s.completed -> "Готово"; else -> "Последняя проверка" }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {

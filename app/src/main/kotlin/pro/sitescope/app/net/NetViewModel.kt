@@ -147,6 +147,7 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
             .putExtra(ScanService.EXTRA_TARGETS, targets.trim()).putExtra(ScanService.EXTRA_PORTS, ports.trim())
             .putExtra(ScanService.EXTRA_TIMEOUT, SettingsStore.scannerTimeoutMs(context))
             .putExtra(ScanService.EXTRA_CONCURRENCY, SettingsStore.scannerConcurrency(context))
+            .putExtra(ScanService.EXTRA_DELAY_MS, SettingsStore.scannerDelayMs(context))
             .putExtra(ScanService.EXTRA_DETECT, SettingsStore.scannerDetectServices(context))
             .putExtra(ScanService.EXTRA_EXTENDED_PRIVATE, extended)
         context.startForegroundService(i)

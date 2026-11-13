@@ -53,7 +53,10 @@ public final class ScannerEngine {
     public static final int MAX_HOSTS = STANDARD_MAX_HOSTS;
     public static final int MAX_PORTS = STANDARD_MAX_PORTS;
     public static final int MAX_PROBES = STANDARD_MAX_PROBES;
-    public static final int MAX_CONCURRENCY = 64;
+    public static final int MIN_CONCURRENCY = 2;
+    public static final int MAX_CONCURRENCY = 250;
+    public static final int MAX_DELAY_MS = 5000;
+    private static final ThreadLocal<Task> CURRENT_TASK = new ThreadLocal<Task>();
     public static final int MIN_TIMEOUT_MS = 250;
     public static final int MAX_TIMEOUT_MS = 3000;
 
@@ -66,6 +69,7 @@ public final class ScannerEngine {
     public static final class Config {
         public int timeoutMs = 650;
         public int concurrency = 32;
+        public int delayMs = 0;
         public boolean detectServices = true;
         /** Higher limits for explicitly authorized private/local numeric ranges. */
         public boolean extendedPrivateMode = false;
@@ -74,7 +78,8 @@ public final class ScannerEngine {
 
         public void normalize() {
             timeoutMs = Math.max(MIN_TIMEOUT_MS, Math.min(timeoutMs, MAX_TIMEOUT_MS));
-            concurrency = Math.max(1, Math.min(concurrency, MAX_CONCURRENCY));
+            concurrency = Math.max(MIN_CONCURRENCY, Math.min(concurrency, MAX_CONCURRENCY));
+            delayMs = Math.max(0, Math.min(delayMs, MAX_DELAY_MS));
             startIndex = Math.max(0, startIndex);
         }
     }
@@ -86,15 +91,18 @@ public final class ScannerEngine {
         void onComplete(List<Models.PortResult> openResults, boolean cancelled, long durationMs, String error);
     }
 
-    public static final class Task {
+    public static final class Task implements ProbeStartGate.Control {
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
         private final AtomicBoolean paused = new AtomicBoolean(false);
         private final Object pauseLock = new Object();
         private volatile ExecutorService executor;
         private volatile Thread coordinator;
+        private final Set<Socket> sockets = ConcurrentHashMap.newKeySet();
 
         public void cancel() {
             cancelled.set(true);
+            for (Socket socket : sockets) closeQuietly(socket);
+            sockets.clear();
             ExecutorService pool = executor;
             if (pool != null) pool.shutdownNow();
             Thread thread = coordinator;
@@ -239,10 +247,11 @@ public final class ScannerEngine {
                 ExecutorService pool = Executors.newFixedThreadPool(config.concurrency);
                 task.executor = pool;
                 CompletionService<Models.PortResult> completion = new ExecutorCompletionService<Models.PortResult>(pool);
+                final ProbeStartGate gate = new ProbeStartGate(config.delayMs);
                 ConcurrentHashMap<String, HostInfo> hostCache = new ConcurrentHashMap<String, HostInfo>();
                 int submitted = config.startIndex;
                 int completed = config.startIndex;
-                int window = Math.max(config.concurrency * 3, 12);
+                int window = config.concurrency;
                 long lastUiUpdate = 0L;
                 try {
                     if (listener != null) listener.onStarted(hosts.size(), ports.size(), total);
@@ -253,9 +262,11 @@ public final class ScannerEngine {
                             final String host = hosts.get(index / ports.size());
                             final int port = ports.get(index % ports.size());
                             completion.submit(new java.util.concurrent.Callable<Models.PortResult>() {
-                                @Override public Models.PortResult call() {
-                                    if (task.cancelled.get()) return null;
-                                    return probe(host, port, config, hostCache);
+                                @Override public Models.PortResult call() throws InterruptedException {
+                                    gate.awaitTurn(task);
+                                    CURRENT_TASK.set(task);
+                                    try { return probe(host, port, config, hostCache); }
+                                    finally { CURRENT_TASK.remove(); }
                                 }
                             });
                         }
@@ -596,6 +607,7 @@ public final class ScannerEngine {
             }}, new SecureRandom());
             SSLSocketFactory factory = context.getSocketFactory();
             socket = (SSLSocket) factory.createSocket();
+            trackSocket(socket);
             socket.connect(new InetSocketAddress(host, port), timeoutMs);
             socket.setSoTimeout(Math.min(timeoutMs, 1000));
             socket.startHandshake();
@@ -697,9 +709,26 @@ public final class ScannerEngine {
 
     private static Socket connect(String host, int port, int timeoutMs) throws Exception {
         Socket socket = new Socket();
-        socket.connect(new InetSocketAddress(host, port), timeoutMs);
-        socket.setSoTimeout(Math.min(timeoutMs, 1000));
-        return socket;
+        try {
+            trackSocket(socket);
+            socket.connect(new InetSocketAddress(host, port), timeoutMs);
+            socket.setSoTimeout(Math.min(timeoutMs, 1000));
+            return socket;
+        } catch (Exception failure) {
+            closeQuietly(socket);
+            throw failure;
+        }
+    }
+
+    private static void trackSocket(Socket socket) throws java.net.SocketException {
+        Task task = CURRENT_TASK.get();
+        if (task == null) return;
+        task.sockets.add(socket);
+        if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
+            task.sockets.remove(socket);
+            closeQuietly(socket);
+            throw new java.net.SocketException("Проверка остановлена");
+        }
     }
 
     private static byte[] readSome(Socket socket, int maxBytes, int timeoutMs) {
@@ -974,6 +1003,8 @@ public final class ScannerEngine {
 
     private static void closeQuietly(Socket socket) {
         if (socket == null) return;
+        Task task = CURRENT_TASK.get();
+        if (task != null) task.sockets.remove(socket);
         try { socket.close(); } catch (Exception ignored) { }
     }
 

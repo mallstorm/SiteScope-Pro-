@@ -279,13 +279,16 @@ public final class IptvEngine {
     private static List<Models.UdpxyEndpoint> discoverUdpxy(Iterable<String> hosts, long hostCount, List<Integer> ports, int timeoutMs, int threads, long delayMs, DiscoveryListener listener) throws Exception {
         if (ports == null || ports.isEmpty()) throw new IllegalArgumentException("Список портов пуст");
         if (ports.size() > MAX_DISCOVERY_PORTS) throw new IllegalArgumentException("IPTV-обнаружение ограничено " + MAX_DISCOVERY_PORTS + " портами");
-        if (threads < 1 || threads > 250 || delayMs < 0) throw new IllegalArgumentException("Проверьте число потоков и задержку");
+        if (threads < 1 || threads > ScannerEngine.MAX_CONCURRENCY || delayMs < 0) throw new IllegalArgumentException("Проверьте число потоков и задержку");
         List<Models.UdpxyEndpoint> results = new ArrayList<>();
         long total = Math.multiplyExact(hostCount, (long) ports.size());
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
         java.util.concurrent.CompletionService<DiscoveryResult> finished = new java.util.concurrent.ExecutorCompletionService<>(pool);
-        Object startLock = new Object();
-        long[] lastStart = {0};
+        final ProbeStartGate gate = new ProbeStartGate(delayMs);
+        final ProbeStartGate.Control control = new ProbeStartGate.Control() {
+            @Override public boolean isCancelled() { return cancelled(listener); }
+            @Override public boolean isPaused() { return false; }
+        };
         java.util.Iterator<String> iterator = hosts.iterator();
         long submitted = 0, completed = 0;
         int inFlight = 0, portIndex = 0;
@@ -302,15 +305,7 @@ public final class IptvEngine {
                     final int port = ports.get(portIndex);
                     portIndex = (portIndex + 1) % ports.size();
                     finished.submit(() -> {
-                        synchronized (startLock) {
-                            while (!cancelled(listener) && lastStart[0] != 0) {
-                                long remaining = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(delayMs) - (System.nanoTime() - lastStart[0]);
-                                if (remaining <= 0) break;
-                                java.util.concurrent.TimeUnit.NANOSECONDS.sleep(Math.min(remaining, 50_000_000L));
-                            }
-                            if (cancelled(listener)) return new DiscoveryResult(target, port, null);
-                            lastStart[0] = System.nanoTime();
-                        }
+                        gate.awaitTurn(control);
                         return new DiscoveryResult(target, port, probeUdpxy(target, port, timeoutMs, listener));
                     });
                     inFlight++; submitted++;

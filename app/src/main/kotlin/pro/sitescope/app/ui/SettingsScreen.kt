@@ -45,13 +45,12 @@ fun SettingsScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timeout by remember { mutableFloatStateOf(SettingsStore.scannerTimeoutMs(context).toFloat()) }
-    var concurrency by remember { mutableFloatStateOf(SettingsStore.scannerConcurrency(context).toFloat()) }
     var detect by remember { mutableStateOf(SettingsStore.scannerDetectServices(context)) }
     var confirmLarge by remember { mutableStateOf(SettingsStore.confirmLargeTasks(context)) }
     var summary by remember { mutableStateOf("") }
     var pending by remember { mutableStateOf<JSONObject?>(null) }
     var busy by remember { mutableStateOf(false) }
-    fun saveScanner() = SettingsStore.saveScanner(context, timeout.roundToInt(), concurrency.roundToInt(), detect, confirmLarge)
+    fun saveScanner() = SettingsStore.saveScanner(context, timeout.roundToInt(), SettingsStore.scannerConcurrency(context), detect, confirmLarge)
     fun refresh() = scope.launch { summary = withContext(Dispatchers.IO) { try { BackupManager.currentSummary(context) } catch (e: Exception) { "" } } }
     LaunchedEffect(Unit) { refresh() }
 
@@ -85,9 +84,7 @@ fun SettingsScreen() {
             Text("Больше — надёжнее на медленных сетях, но дольше", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Slider(value = timeout, onValueChange = { timeout = it }, onValueChangeFinished = { saveScanner() },
                 valueRange = ScannerEngine.MIN_TIMEOUT_MS.toFloat()..ScannerEngine.MAX_TIMEOUT_MS.toFloat())
-            Text("Одновременных проверок: ${concurrency.roundToInt()}", style = MaterialTheme.typography.bodyMedium)
-            Text("Больше — быстрее, но выше нагрузка на сеть", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Slider(value = concurrency, onValueChange = { concurrency = it }, onValueChangeFinished = { saveScanner() }, valueRange = 1f..ScannerEngine.MAX_CONCURRENCY.toFloat())
+            ScanTuningControls()
             SwitchRow("Определять, что за сервис", "По безопасным признакам в ответе", detect) { detect = it; saveScanner() }
             SwitchRow("Спрашивать перед большой проверкой", "Если адресов и портов очень много", confirmLarge) { confirmLarge = it; saveScanner() }
         }

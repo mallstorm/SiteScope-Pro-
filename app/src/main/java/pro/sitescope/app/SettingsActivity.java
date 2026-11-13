@@ -35,6 +35,7 @@ public final class SettingsActivity extends Activity {
 
     private EditText timeout;
     private EditText concurrency;
+    private EditText delay;
     private CheckBox detect;
     private CheckBox confirmLarge;
     private CheckBox compact;
@@ -93,6 +94,11 @@ public final class SettingsActivity extends Activity {
         values.addView(space(10));
         values.addView(concurrencyBox, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         scanner.addView(values);
+        LinearLayout delayBox = fieldBox("Задержка между стартами, мс (0–5000)");
+        delay = input(String.valueOf(SettingsStore.scannerDelayMs(this)));
+        delay.setInputType(InputType.TYPE_CLASS_NUMBER);
+        delayBox.addView(delay, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        scanner.addView(delayBox);
         detect = check("Определять сервисы по безопасным сигнатурам", SettingsStore.scannerDetectServices(this));
         confirmLarge = check("Подтверждать крупные задания перед запуском", SettingsStore.confirmLargeTasks(this));
         scanner.addView(detect, marginWrap(10));
@@ -157,6 +163,8 @@ public final class SettingsActivity extends Activity {
         int timeoutValue = parse(timeout.getText().toString(), 650);
         int concurrencyValue = parse(concurrency.getText().toString(), 32);
         SettingsStore.saveScanner(this, timeoutValue, concurrencyValue, detect.isChecked(), confirmLarge.isChecked());
+        SettingsStore.saveScanTuning(this, concurrencyValue, parse(delay.getText().toString(), 0));
+        delay.setText(String.valueOf(SettingsStore.scannerDelayMs(this)));
         timeout.setText(String.valueOf(SettingsStore.scannerTimeoutMs(this)));
         concurrency.setText(String.valueOf(SettingsStore.scannerConcurrency(this)));
         Toast.makeText(this, "Настройки сканера сохранены", Toast.LENGTH_SHORT).show();
