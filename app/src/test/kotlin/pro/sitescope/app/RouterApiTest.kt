@@ -89,14 +89,15 @@ class RouterApiTest {
                 "system.board" -> JSONObject("""{"hostname":"openwrt","model":"AP","system":"Qualcomm","release":{"distribution":"OpenWrt","version":"24.10"},"password":"RAW-SECRET"}""")
                 "system.info" -> JSONObject().put("uptime", 50)
                 "network.interface.dump" -> JSONObject("""{"interface":[{"interface":"lan","proto":"static","up":true,"ipv4-address":[{"address":"192.168.1.1"}]}]}""")
-                "dhcp.ipv4leases" -> JSONObject("""{"device":{"br-lan":{"leases":[{"hostname":"phone","ipaddr":"192.168.1.2","mac":"AA:BB:CC:DD:EE:FF"}]}}}""")
+                "dhcp.ipv4leases" -> JSONObject("""{"device":{"br-lan":{"leases":[{"hostname":"phone","address":"192.168.1.2","mac":"AA:BB:CC:DD:EE:FF"},{"hostname":"legacy","ipaddr":"192.168.1.3","mac":"AA:BB:CC:DD:EE:01"}]}}}""")
                 "session.destroy" -> { assertEquals(token, params.getJSONObject(3).getString("ubus_rpc_session")); JSONObject() }
                 else -> error("Unexpected RPC $obj.$method")
             }
             200 to JSONObject().put("jsonrpc", "2.0").put("id", 1).put("result", JSONArray().put(0).put(data)).toString()
         }.use { s ->
             val snapshot = RouterApiClient(null).use { it.read(config(s.base, "openwrt"), "owner", "owner-secret", "Дом") }
-            RouterStore.validateSnapshot(snapshot); assertEquals(6, s.requests.size); assertTrue(s.failures.toString(), s.failures.isEmpty()); assertEquals(4, snapshot.getJSONArray("rows").length())
+            RouterStore.validateSnapshot(snapshot); assertEquals(6, s.requests.size); assertTrue(s.failures.toString(), s.failures.isEmpty()); assertEquals(5, snapshot.getJSONArray("rows").length())
+            val rows = snapshot.getJSONArray("rows"); val addresses = (0 until rows.length()).map { rows.getJSONObject(it).optString("address") }; assertTrue("192.168.1.2" in addresses); assertTrue("192.168.1.3" in addresses)
             for (secret in listOf(token, "owner-secret", "RAW-SECRET")) assertFalse(snapshot.toString().contains(secret))
         }
     }
