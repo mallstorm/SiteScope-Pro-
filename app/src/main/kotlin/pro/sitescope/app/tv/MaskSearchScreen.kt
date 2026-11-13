@@ -49,8 +49,11 @@ class FoundChannel(val hit: MaskSearch.Hit, name: String, source: String, logo: 
     var nameSource by mutableStateOf(source)
     var logo by mutableStateOf(logo)
     var frame by mutableStateOf<ImageBitmap?>(null)
+    /** "" — кадр не запрашивали, "busy" — снимаем кадр и читаем эмблему, "done" — закончили. */
+    var ocr by mutableStateOf("")
     val alive get() = hit.status == StreamStatus.OK || hit.status == StreamStatus.SLOW
-    val title get() = name.ifEmpty { hit.url.substringAfter("://").substringBefore('/') }
+    val title get() = name.ifEmpty { if (ocr == "busy") "Читаем эмблему…" else "Нет названия" }
+    val hostPort get() = hit.url.substringAfter("://").substringBefore('/')
 }
 
 class MaskViewModel(app: Application) : AndroidViewModel(app) {
@@ -130,9 +133,23 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
                         found.add(f)
                         if (f.alive || latest == null) latest = f
                     }
-                    if (grabFrames && f.alive && h.url.startsWith("http")) frameExec.execute {
-                        val bmp = grabFrame(h.url, cfg.userAgent)
-                        if (bmp != null) viewModelScope.launch(Dispatchers.Main) { f.frame = bmp.asImageBitmap() }
+                    if (grabFrames && f.alive && h.url.startsWith("http")) {
+                        viewModelScope.launch(Dispatchers.Main) { f.ocr = "busy" }
+                        frameExec.execute {
+                            val cap = captureFrames(h.url, cfg.userAgent)
+                            var ocrName = ""
+                            if (cap != null) {
+                                val thumb = cap.thumb.asImageBitmap()
+                                viewModelScope.launch(Dispatchers.Main) { f.frame = thumb }
+                                // Название из данных потока надёжнее; эмблему читаем, если его нет (или оно только из маски).
+                                if (f.nameSource != "по данным потока") ocrName = try { LogoOcr.recognize(context, cap.frames) } catch (e: Throwable) { "" }
+                                cap.frames.forEach { it.recycle() }
+                            }
+                            viewModelScope.launch(Dispatchers.Main) {
+                                if (ocrName.isNotEmpty()) { f.name = ocrName; f.nameSource = "по эмблеме"; f.logo = logos[MaskSearch.normalize(ocrName)].orEmpty() }
+                                f.ocr = "done"
+                            }
+                        }
                     }
                 }
             })
@@ -150,7 +167,7 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
                 val prev = TvStore.snapshot().filter { it.sourceId == "mask" }
                 val fresh = list.map { f ->
                     Channel().apply {
-                        name = f.title; group = "Поиск по маске"; logo = f.logo; url = f.hit.url
+                        name = f.name.ifEmpty { "Канал " + f.hostPort }; group = "Поиск по маске"; logo = f.logo; url = f.hit.url
                         id = Playlist.channelId(url, name); status = f.hit.status; detail = f.hit.detail
                         startMs = f.hit.startMs; bitrateKbps = f.hit.bitrateKbps; resolution = f.hit.resolution; checkedAt = System.currentTimeMillis()
                     }
@@ -164,24 +181,38 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun m3u(): String = MaskSearch.toM3u(found.filter { it.alive }.map { Triple(it.title, "Поиск по маске", it.hit.url) })
+    fun m3u(): String = MaskSearch.toM3u(found.filter { it.alive }.map { Triple(it.name.ifEmpty { "Канал " + it.hostPort }, "Поиск по маске", it.hit.url) })
 
     override fun onCleared() { frameExec.shutdownNow() }
 
-    /** Кадр из потока для окна распознавания: квадрат 192×192. Блокируется не дольше таймаута. */
-    private fun grabFrame(url: String, ua: String): Bitmap? {
+    class Captured(val thumb: Bitmap, val frames: List<Bitmap>)
+
+    /**
+     * Снимает до трёх кадров в случайные моменты (первые секунды потока): один показывается в окне (квадрат 192×192),
+     * все идут на чтение эмблемы. Блокируется не дольше таймаута.
+     */
+    private fun captureFrames(url: String, ua: String): Captured? {
         val ex = Executors.newSingleThreadExecutor { r -> Thread(r).apply { isDaemon = true } }
-        val task = ex.submit<Bitmap?> {
+        val task = ex.submit<Captured?> {
             val r = MediaMetadataRetriever()
             try {
                 r.setDataSource(url, mapOf("User-Agent" to ua))
-                val raw = r.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return@submit null
-                val side = minOf(raw.width, raw.height)
-                val square = Bitmap.createBitmap(raw, (raw.width - side) / 2, (raw.height - side) / 2, side, side)
-                Bitmap.createScaledBitmap(square, 192, 192, true)
+                val frames = ArrayList<Bitmap>()
+                val rnd = java.util.Random()
+                repeat(3) {
+                    val at = (rnd.nextInt(4000) + it * 500L) * 1000L
+                    val raw = try { r.getFrameAtTime(at, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) } catch (e: Throwable) { null } ?: return@repeat
+                    val scale = if (raw.width > 1280) 1280f / raw.width else 1f
+                    frames.add(if (scale < 1f) Bitmap.createScaledBitmap(raw, 1280, (raw.height * scale).toInt().coerceAtLeast(8), true).also { raw.recycle() } else raw)
+                }
+                if (frames.isEmpty()) return@submit null
+                val shown = frames[rnd.nextInt(frames.size)]
+                val side = minOf(shown.width, shown.height)
+                val square = Bitmap.createBitmap(shown, (shown.width - side) / 2, (shown.height - side) / 2, side, side)
+                Captured(Bitmap.createScaledBitmap(square, 192, 192, true), frames)
             } catch (e: Throwable) { null } finally { try { r.release() } catch (_: Throwable) { } }
         }
-        return try { task.get(10, TimeUnit.SECONDS) } catch (e: Exception) { task.cancel(true); null } finally { ex.shutdownNow() }
+        return try { task.get(25, TimeUnit.SECONDS) } catch (e: Exception) { task.cancel(true); null } finally { ex.shutdownNow() }
     }
 }
 
@@ -250,7 +281,7 @@ fun MaskSearchScreen(vm: MaskViewModel = viewModel()) {
                 OutlinedTextField(vm.stopAfter, { vm.stopAfter = it.filter { c -> c.isDigit() }.take(4) }, Modifier.weight(1f), label = { Text("Стоп после найденных (0 — нет)") }, singleLine = true, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number))
             }
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Брать кадр из потока для окна распознавания", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                Text("Снимать кадр и читать эмблему канала (OCR)", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                 Switch(vm.grabFrames, { vm.grabFrames = it })
             }
             Text("Проверяйте только свою сеть и ресурсы, к которым у вас есть право доступа. Логины и пароли не подбираются. Ссылки udp:// и rtp:// без подписки на группу не проверяются.",
@@ -313,10 +344,10 @@ private fun RecognitionWindow(f: FoundChannel?, running: Boolean) {
             Column(Modifier.weight(1f)) {
                 if (f == null) {
                     Text(if (running) "Ищем поток…" else "Здесь появится канал", style = MaterialTheme.typography.titleMedium)
-                    Text("Кадр из потока и распознанное название: 1+1, Интер, НТВ, РЕН ТВ…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Кадр из потока в случайный момент и название, прочитанное с эмблемы: 1+1, Интер, НТВ, РЕН ТВ…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     Text(f.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(if (f.name.isEmpty()) "Название не определено" else "Название ${f.nameSource}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (f.name.isEmpty()) (if (f.ocr == "busy") "Снимаем кадр и читаем эмблему…" else "Эмблема не видна — названия нет") else "Название ${f.nameSource}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(f.hit.url, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.outline)
                     Pill(f.hit.status.title, statusColor(f.hit.status, t), t.infoSoft)
                 }

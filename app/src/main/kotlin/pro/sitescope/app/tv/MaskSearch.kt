@@ -198,6 +198,29 @@ object MaskSearch {
         return known.firstOrNull { k in it.keys }?.title
     }
 
+    private fun distance(a: String, b: String): Int {
+        val d = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            var prev = d[0]; d[0] = i
+            for (j in 1..b.length) { val tmp = d[j]; d[j] = minOf(d[j] + 1, d[j - 1] + 1, prev + if (a[i - 1] == b[j - 1]) 0 else 1); prev = tmp }
+        }
+        return d[b.length]
+    }
+
+    /** Как [canonicalName], но прощает опечатку OCR: одну ошибку в ключах от 5 знаков, две — от 8. Короткие ключи — только точно. */
+    fun canonicalFuzzy(raw: String): String? {
+        canonicalName(raw)?.let { return it }
+        val k = normalize(raw); if (k.length < 4) return null
+        var best: String? = null; var bestD = Int.MAX_VALUE
+        for (c in known) for (key in c.keys) {
+            if (key.length < 5) continue
+            val allowed = if (key.length >= 8) 2 else 1
+            val dist = distance(k, key)
+            if (dist <= allowed && dist < bestD) { best = c.title; bestD = dist }
+        }
+        return best
+    }
+
     private val GENERIC_NAME = Regex("(?i)^(service|сервис|unknown|provider|noname|no name|mpeg-?ts|stream|channel)?[\\s_-]*\\d*$")
 
     /** Название из служебных таблиц потока (SDT): убирает мусор вроде «Service01». */

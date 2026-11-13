@@ -59,3 +59,29 @@ class MaskSearchTest {
         assertEquals("", MaskSearch.recognize("Service01", "").name)
     }
 }
+
+class LogoOcrPickTest {
+    private fun r(text: String, conf: Int) = LogoNamePicker.Reading(text, conf, "угол")
+
+    @Test fun knownChannelAcceptedWithOneLetterError() {
+        assertEquals("1+1", LogoNamePicker.pickName(listOf(r("1+1", 70), r("XYZ", 20))))
+        assertEquals("Новый канал", LogoNamePicker.pickName(listOf(r("НОВЫЙ КАНАЛ", 60))))
+        assertEquals("Новый канал", LogoNamePicker.pickName(listOf(r("НОВЫИ КАНАЛ", 60))))
+    }
+
+    @Test fun shortKnownKeysRequireExactMatch() {
+        assertEquals("НТВ", LogoNamePicker.pickName(listOf(r("НТВ", 80))))
+        assertEquals("", LogoNamePicker.pickName(listOf(r("НТБ", 80))))
+    }
+
+    @Test fun unknownTextNeedsTwoConfidentReadings() {
+        assertEquals("", LogoNamePicker.pickName(listOf(r("ПОГОДА", 90))))
+        assertEquals("ПОГОДА", LogoNamePicker.pickName(listOf(r("Погода", 85), r("ПОГОДА", 80))))
+        assertEquals("", LogoNamePicker.pickName(listOf(r("12:34", 90), r("12:34", 90))))
+    }
+
+    @Test fun emptyAndNoiseGiveNoName() {
+        assertEquals("", LogoNamePicker.pickName(emptyList()))
+        assertEquals("", LogoNamePicker.pickName(listOf(r("  ", 90), r("~ ^ `", 90))))
+    }
+}

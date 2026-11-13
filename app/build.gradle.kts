@@ -17,8 +17,8 @@ android {
         applicationId = "pro.sitescope.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1_000_024
-        versionName = "1.0.0-beta24"
+        versionCode = 1_000_025
+        versionName = "1.0.0-beta25"
         ndk { abiFilters += "arm64-v8a" }
     }
 
@@ -87,6 +87,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("cz.adaptech.tesseract4android:tesseract4android:4.9.0")   // OCR эмблемы канала (данные rus.traineddata в assets)
 
     val media3 = "1.6.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
