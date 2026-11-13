@@ -68,6 +68,7 @@ public final class ScannerEngine {
 
     public static final class Config {
         public android.net.Network boundNetwork;
+        public boolean tcpOnly;
         public int timeoutMs = 650;
         public int concurrency = 32;
         public int delayMs = 0;
@@ -86,6 +87,7 @@ public final class ScannerEngine {
     }
 
     public interface Listener {
+        default void onChecked(Models.PortResult result) { }
         void onStarted(int hosts, int ports, int totalProbes);
         void onProgress(int completed, int total, int openCount, String currentTarget);
         void onOpen(Models.PortResult result);
@@ -278,6 +280,7 @@ public final class ScannerEngine {
                         Models.PortResult result = null;
                         try { result = future.get(); } catch (Exception ignored) { }
                         completed++;
+                        if (result != null && listener != null) listener.onChecked(result);
                         if (result != null && result.open) {
                             openResults.add(result);
                             openCount.incrementAndGet();
@@ -326,17 +329,21 @@ public final class ScannerEngine {
         try {
             socket = connect(target, port, config.timeoutMs);
             result.open = true;
+            result.probeStatus = "open";
             result.latencyMs = Math.max(1, System.currentTimeMillis() - started);
             result.ip = socket.getInetAddress().getHostAddress();
-            passive = readSome(socket, 512, 220);
+            if (!config.tcpOnly) passive = readSome(socket, 512, 220);
         } catch (Exception closed) {
             result.open = false;
+            String message=closed.getMessage()==null?"":closed.getMessage().toLowerCase(Locale.ROOT);
+            result.probeStatus=closed instanceof java.net.UnknownHostException?"unresolved":closed instanceof java.net.SocketTimeoutException?"timeout":closed instanceof java.net.ConnectException&&message.contains("refused")?"refused":"network_error";
             result.latencyMs = Math.max(1, System.currentTimeMillis() - started);
             return result;
         } finally {
             closeQuietly(socket);
         }
 
+        if (config.tcpOnly) { result.service="TCP";result.confidence="high";result.evidence="TCP connect";return result; }
         HostInfo info = hostCache.get(result.ip);
         if (info == null) {
             info = resolveHostInfo(result.ip);

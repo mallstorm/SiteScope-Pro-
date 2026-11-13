@@ -33,6 +33,6 @@ fun ScanTuningControls(enabled: Boolean = true) {
     Text("Задержка между стартами проверок: $delay мс", style = MaterialTheme.typography.bodyMedium)
     Slider(value = delay.toFloat(), onValueChange = { delay = (it / 50).roundToInt() * 50 }, onValueChangeFinished = { save() },
         valueRange = 0f..ScannerEngine.MAX_DELAY_MS.toFloat(), steps = 99, enabled = enabled)
-    Text("Общие настройки сканера и IPTV. Изменения применяются к новым запускам.",
+    Text("Общие настройки сетевых проверок. Изменения применяются к новым запускам.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }

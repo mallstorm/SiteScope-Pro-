@@ -112,6 +112,8 @@ class TvPlayerActivity : ComponentActivity() {
     private var sleepAt by mutableStateOf(0L)
     private var landscape by mutableStateOf(false)
     private var interaction by mutableIntStateOf(0)
+    private var seekEpoch by mutableLongStateOf(0)
+    private var seekDragging by mutableStateOf(false)
 
     enum class Panel { NONE, CHANNELS, QUALITY, AUDIO, SUBTITLES, MORE, ARCHIVE }
 
@@ -138,6 +140,7 @@ class TvPlayerActivity : ComponentActivity() {
                 if (state == Player.STATE_READY) { cameraTimeout?.let { handler.removeCallbacks(it) }; error = ""; status = ""; triedAlternate = true; current?.let { markWorking(it) } }
                 if (state == Player.STATE_ENDED && archiveTitle.isNotEmpty()) { archiveTitle = ""; start() }
             }
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { seekEpoch++; seekDragging = false }
             override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
             override fun onTracksChanged(tracks: Tracks) { tracksVersion++ }
             override fun onVideoSizeChanged(videoSize: VideoSize) { updateStats() }
@@ -179,6 +182,7 @@ class TvPlayerActivity : ComponentActivity() {
     private fun start(overrideUrl: String? = null) {
         val channel = current ?: run { error = if (cameraMode) "Сеанс камеры истёк. Вернитесь к её профилям и откройте поток снова." else "Нет потока для воспроизведения"; buffering = false; return }
         val exo = player ?: return
+        seekEpoch++; seekDragging = false
         stopRelay()
         cameraTimeout?.let { handler.removeCallbacks(it) }
         error = ""; buffering = true; droppedFrames = 0; stats = ""
@@ -373,8 +377,8 @@ class TvPlayerActivity : ComponentActivity() {
     private fun PlayerScreen() {
         val channel = current
         BackHandler(enabled = panel != Panel.NONE) { panel = Panel.NONE }
-        LaunchedEffect(interaction, controls, playing, panel) {
-            if (controls && playing && panel == Panel.NONE) { kotlinx.coroutines.delay(4500); controls = false }
+        LaunchedEffect(interaction, controls, playing, panel, seekDragging) {
+            if (controls && playing && panel == Panel.NONE && !seekDragging) { kotlinx.coroutines.delay(4500); controls = false }
         }
         LaunchedEffect(showStats) { while (showStats) { updateStats(); kotlinx.coroutines.delay(1000) } }
 
@@ -432,7 +436,8 @@ class TvPlayerActivity : ComponentActivity() {
     private fun Controls(channel: Channel?) {
         val now = remember(index, interaction) { channel?.let { Epg.now(it) } }
         val next = remember(index, interaction) { channel?.let { Epg.next(it) } }
-        Box(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val compact = maxHeight < 480.dp
             // Верх
             Row(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xCC000000), Color.Transparent))).statusBarsPadding().padding(horizontal = 6.dp, vertical = 8.dp).padding(bottom = 22.dp),
                 verticalAlignment = Alignment.CenterVertically) {
@@ -449,7 +454,7 @@ class TvPlayerActivity : ComponentActivity() {
                 if (queue.size > 1) IconButton(onClick = { panel = Panel.CHANNELS }) { Icon(Icons.Rounded.FormatListBulleted, "Каналы", tint = Color.White) }
             }
             // Центр
-            Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+            if (!compact) Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(28.dp)) {
                 if (queue.size > 1) RoundButton(Icons.Rounded.SkipPrevious, 52.dp) { switchTo(index - 1) }
                 if (error.isEmpty()) RoundButton(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, 72.dp) {
                     player?.let { p -> if (p.isPlaying) p.pause() else { if (p.playbackState == Player.STATE_IDLE) p.prepare(); p.play() } }; touch()
@@ -458,7 +463,13 @@ class TvPlayerActivity : ComponentActivity() {
             }
             // Низ
             Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xD9000000)))).navigationBarsPadding().padding(horizontal = 16.dp).padding(top = 28.dp, bottom = 12.dp)) {
-                if (now != null && archiveTitle.isEmpty()) {
+                if (compact) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    if (queue.size > 1) IconButton(onClick = { switchTo(index - 1) }) { Icon(Icons.Rounded.SkipPrevious, "Предыдущий", tint = Color.White) }
+                    if (error.isEmpty()) IconButton(onClick = { player?.let { p -> if (p.isPlaying) p.pause() else { if (p.playbackState == Player.STATE_IDLE) p.prepare(); p.play() } }; touch() }) { Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Пауза / продолжить", tint = Color.White) }
+                    if (queue.size > 1) IconButton(onClick = { switchTo(index + 1) }) { Icon(Icons.Rounded.SkipNext, "Следующий", tint = Color.White) }
+                }
+                TvSeekControls(player, seekEpoch, relay != null || current?.url?.startsWith("rtsp://", true) == true, { seekEpoch }, { seekDragging = it }, ::touch)
+                if (!compact && now != null && archiveTitle.isEmpty()) {
                     val format = remember { SimpleDateFormat("HH:mm", Locale.US) }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(format.format(Date(now.start)), color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelMedium)

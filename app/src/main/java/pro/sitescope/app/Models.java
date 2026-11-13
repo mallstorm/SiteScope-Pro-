@@ -480,6 +480,7 @@ public final class Models {
 
     public static final class PortResult {
         public NetworkScope scope;
+        public String probeStatus = "network_error";
         public DeviceIdentity identity = new DeviceIdentity();
         public String tlsFingerprint = "";
         public String tlsTrust = "not_applicable";
@@ -507,6 +508,7 @@ public final class Models {
                 object.put("ip", ip);
                 object.put("port", port);
                 object.put("open", open);
+                object.put("probeStatus", probeStatus);
                 object.put("latencyMs", latencyMs);
                 object.put("service", service);
                 object.put("resourceType", resourceType);
@@ -531,6 +533,7 @@ public final class Models {
             result.ip = object.optString("ip");
             result.port = object.optInt("port");
             result.open = object.optBoolean("open");
+            result.probeStatus = object.optString("probeStatus", result.open ? "open" : "network_error");
             result.latencyMs = object.optLong("latencyMs");
             result.service = object.optString("service", "Unknown TCP");
             result.resourceType = object.optString("resourceType", "Сетевой узел");
