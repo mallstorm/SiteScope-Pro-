@@ -25,6 +25,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import pro.sitescope.app.ConnectionProfileStore
 import pro.sitescope.app.DeviceInventoryStore
 import pro.sitescope.app.Models
@@ -40,6 +41,7 @@ private fun dateText(time: Long): String = if (time <= 0) "" else SimpleDateForm
 @Composable
 fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewModel = viewModel()) {
     var tab by remember { mutableIntStateOf(startTab) }
+    LifecycleResumeEffect(vm) { vm.loadProfiles(); onPauseOrDispose { } }
     LaunchedEffect(startTargets) { if (!startTargets.isNullOrBlank()) vm.targets = startTargets }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -58,138 +60,8 @@ fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewMo
 
 // ------------------------------------------------------------------ Устройства
 
-private fun deviceIcon(item: DeviceInventoryStore.Aggregate): ImageVector {
-    val text = (item.services.joinToString(" ") { it.deviceType + " " + it.protocol + " " + it.services } + " " + item.primaryName + " " + item.model).lowercase()
-    return when {
-        "камер" in text || "onvif" in text || "camera" in text -> Icons.Rounded.Videocam
-        "принтер" in text || "printer" in text || "ipp" in text -> Icons.Rounded.Print
-        "роутер" in text || "router" in text || "gateway" in text || "шлюз" in text -> Icons.Rounded.Router
-        "тв" in text || "tv" in text || "media" in text || "dlna" in text || "медиа" in text -> Icons.Rounded.Tv
-        "nas" in text || "smb" in text || "хранилищ" in text -> Icons.Rounded.Storage
-        else -> Icons.Rounded.Devices
-    }
-}
-
 @Composable
-private fun DevicesTab(vm: NetViewModel) {
-    val activity = LocalActivity.current
-    val context = LocalContext.current
-    var selected by remember { mutableStateOf<DeviceInventoryStore.Aggregate?>(null) }
-    var showWol by remember { mutableStateOf(false) }
-    var confirmClear by remember { mutableStateOf(false) }
-    vm.aliasVersion // перечитываем имена после переименования
-    val current = if (vm.discovering) vm.liveAggregates() else vm.aggregates(vm.latest)
-    val previousIps = remember(vm.previous) { DeviceInventoryStore.ipSet(vm.previous) }
-    val currentIps = current.map { it.ip }.toSet()
-    val gone = if (vm.discovering || vm.previous == null) emptyList() else vm.aggregates(vm.previous).filter { it.ip.isNotEmpty() && it.ip !in currentIps }
-    val t = tones
-
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item {
-            SoftCard(color = t.netSoft) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(if (vm.discovering) "Ищем устройства…" else if (current.isEmpty()) "Кто в моей сети?" else "Найдено устройств: ${current.size}", style = MaterialTheme.typography.titleMedium)
-                        val sub = when {
-                            vm.discovering -> vm.discoveryStatus
-                            vm.latest != null -> "Последний поиск: " + dateText(vm.latest!!.timestamp)
-                            else -> "Роутеры, камеры, принтеры, телевизоры и другие устройства рядом"
-                        }
-                        Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    if (vm.discovering) OutlinedButton(onClick = { vm.stopDiscovery() }) { Text("Стоп") }
-                    else Button(onClick = { vm.startDiscovery() }) { Icon(Icons.Rounded.Radar, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Найти") }
-                }
-                if (vm.discovering) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 12.dp))
-            }
-        }
-        if (vm.discoveryError.isNotEmpty()) item { ErrorCard(vm.discoveryError) }
-        if (current.isEmpty() && !vm.discovering) item {
-            EmptyState(Icons.Rounded.Devices, "Пока пусто", "Подключитесь к Wi-Fi и нажмите «Найти». Поиск только слушает ответы устройств и ничего на них не меняет.")
-        }
-        items(current) { item ->
-            val isNew = !vm.discovering && vm.previous != null && item.ip.isNotEmpty() && item.ip !in previousIps
-            DeviceCard(item, deviceIcon(item), if (isNew) "Новое" else null, false) { selected = item }
-        }
-        if (gone.isNotEmpty()) {
-            item { SectionTitle("Пропали с прошлого поиска") }
-            items(gone) { item -> DeviceCard(item, deviceIcon(item), "Не в сети", true) { selected = item } }
-        }
-        item {
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { showWol = true }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.PowerSettingsNew, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Включить по сети") }
-                if (vm.snapshotCount > 0) OutlinedButton(onClick = { confirmClear = true }) { Text("Очистить") }
-            }
-        }
-        if (current.isNotEmpty() && !vm.discovering) item {
-            TextButton(onClick = {
-                shareText(context, current.joinToString("\n") { a -> a.title() + " — " + a.ip + (if (a.manufacturer.isNotEmpty()) " · " + a.manufacturer else "") + " · " + a.protocols.joinToString(", ") }, "Устройства в сети")
-            }) { Icon(Icons.Rounded.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Поделиться списком") }
-        }
-    }
-
-    selected?.let { item ->
-        var rename by remember(item) { mutableStateOf(false) }
-        ModalBottomSheet(onDismissRequest = { selected = null }) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp).verticalScroll(rememberScrollState())) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconBadge(deviceIcon(item), t.net, t.netSoft, 52.dp)
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(item.title(), style = MaterialTheme.typography.titleLarge)
-                        Text(item.ip, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
-                    }
-                    IconButton(onClick = { rename = true }) { Icon(Icons.Rounded.Edit, "Переименовать") }
-                }
-                Spacer(Modifier.height(10.dp))
-                InfoRow("Производитель", item.manufacturer); InfoRow("Модель", item.model); InfoRow("Имя в сети", item.hostname)
-                SectionTitle("Что можно открыть")
-                item.services.forEach { device ->
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { if (activity != null) try { ProtocolRouter.open(activity, device) } catch (e: Exception) { toast(context, "Не удалось открыть") } }
-                        .padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Pill(device.protocol.ifEmpty { "?" }, t.net, t.netSoft)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(device.name.ifEmpty { device.deviceType }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(device.ip + (if (device.port > 0) ":" + device.port else ""), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.outline)
-                    }
-                }
-                item.services.filter { it.identity.findings.isNotEmpty() }.forEach { device ->
-                    Text(device.protocol, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 12.dp))
-                    DeviceIdentityDetails(device.identity)
-                }
-                TechDetails(item.services.joinToString("\n\n") { d -> listOf(d.protocol + " " + d.ip + ":" + d.port, d.services, d.location, d.evidence).filter { it.isNotBlank() }.joinToString("\n") }, Modifier.padding(top = 8.dp))
-            }
-        }
-        if (rename) TextDialog("Название устройства", item.alias, "Например: камера у входа", onClose = { rename = false }) { vm.rename(item.ip, it); rename = false; selected = null }
-    }
-    if (showWol) WolSheet(vm) { showWol = false }
-    if (confirmClear) ConfirmDialog("Удалить историю поисков?", "Сохранённые списки устройств будут удалены. Названия, которые вы дали устройствам, останутся.", "Удалить", { confirmClear = false }) { vm.clearSnapshots(); confirmClear = false }
-}
-
-@Composable
-private fun DeviceCard(item: DeviceInventoryStore.Aggregate, icon: ImageVector, badge: String?, faded: Boolean, onClick: () -> Unit) {
-    val t = tones
-    SoftCard(onClick = onClick, padding = 14.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconBadge(icon, if (faded) MaterialTheme.colorScheme.outline else t.net, if (faded) MaterialTheme.colorScheme.surfaceContainerHigh else t.netSoft, 46.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(item.title(), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val line = listOf(item.ip, listOf(item.manufacturer, item.model).filter { it.isNotEmpty() }.joinToString(" ")).filter { it.isNotEmpty() }.joinToString(" · ")
-                Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (item.protocols.isNotEmpty()) Text(item.protocols.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (badge != null) Pill(badge, if (faded) t.warn else t.good, if (faded) t.warnSoft else t.goodSoft)
-        }
-    }
-}
-
-@Composable
-private fun WolSheet(vm: NetViewModel, onClose: () -> Unit) {
+internal fun WolSheet(vm: NetViewModel, onClose: () -> Unit) {
     val context = LocalContext.current
     var name by remember { mutableStateOf("") }
     var mac by remember { mutableStateOf("") }

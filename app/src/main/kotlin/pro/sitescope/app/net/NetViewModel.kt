@@ -14,6 +14,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import pro.sitescope.app.DeviceRegistryStore
 import kotlinx.coroutines.withContext
 import pro.sitescope.app.ConnectionProfileStore
 import pro.sitescope.app.DeviceInventoryStore
@@ -57,6 +60,55 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
     private val context: Context get() = getApplication()
     private val main = Handler(Looper.getMainLooper())
 
+    var cards by mutableStateOf<List<DeviceRegistryStore.Card>>(emptyList()); private set
+    var cardCount by mutableStateOf(0); private set
+    var cardsLoading by mutableStateOf(false); private set
+    var cardsError by mutableStateOf(""); private set
+    var cardQuery by mutableStateOf(""); private set
+    var cardLimit by mutableStateOf(100); private set
+    var selectedCard by mutableStateOf<DeviceRegistryStore.Card?>(null); private set
+    private var selectedCardId: String? = null
+    private var detailLimit = 100
+    private val registryMutex = Mutex()
+
+    private suspend fun readCards() {
+        val wantedId = selectedCardId
+        val result = withContext(Dispatchers.IO) {
+            Triple(DeviceRegistryStore.list(context, cardQuery, cardLimit), DeviceRegistryStore.count(context),
+                wantedId?.let { DeviceRegistryStore.get(context, it, detailLimit) })
+        }
+        cards = result.first; cardCount = result.second
+        if (selectedCardId == wantedId) selectedCard = result.third
+    }
+    fun refreshCards(sync: Boolean = true) {
+        viewModelScope.launch {
+            registryMutex.withLock {
+                cardsLoading = true
+                try {
+                    if (sync) withContext(Dispatchers.IO) { DeviceRegistryStore.sync(context) }
+                    readCards(); cardsError = ""
+                } catch (e: Exception) { cardsError = e.message ?: "Не удалось загрузить карточки" }
+                finally { cardsLoading = false }
+            }
+        }
+    }
+    fun searchCards(query: String) { cardQuery = query; cardLimit = 100; refreshCards(false) }
+    fun moreCards() { cardLimit += 100; refreshCards(false) }
+    fun showCard(id: String) { selectedCardId = id; detailLimit = 100; refreshCards(false) }
+    fun closeCard() { selectedCardId = null; selectedCard = null }
+    fun moreObservations() { detailLimit += 100; refreshCards(false) }
+    private fun changeCard(action: () -> Unit) {
+        viewModelScope.launch {
+            registryMutex.withLock {
+                try { withContext(Dispatchers.IO) { action() }; readCards(); cardsError = "" }
+                catch (e: Exception) { cardsError = e.message ?: "Не удалось изменить карточку" }
+            }
+        }
+    }
+    fun renameCard(id: String, name: String) = changeCard { DeviceRegistryStore.rename(context, id, name) }
+    fun mergeCards(target: String, other: String) = changeCard { DeviceRegistryStore.merge(context, target, other) }
+    fun splitCard(id: String, observations: List<String>, name: String) = changeCard { DeviceRegistryStore.split(context, id, observations, name) }
+
     // ---------- Устройства рядом ----------
     var discovering by mutableStateOf(false); private set
     var discoveryStatus by mutableStateOf(""); private set
@@ -81,11 +133,18 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
             override fun onDevice(device: Models.DiscoveredDevice?) { if (device != null) main.post { live.add(device) } }
             override fun onComplete(devices: MutableList<Models.DiscoveredDevice>?, cancelled: Boolean, error: String?) {
                 main.post {
-                    discovering = false
-                    discoveryError = error ?: ""
-                    if (!devices.isNullOrEmpty()) try { DeviceInventoryStore.saveSnapshot(context, devices, "LAN Discovery") } catch (e: Exception) { }
-                    live.clear(); loadSnapshots()
-                    discoveryStatus = if (cancelled) "Поиск остановлен" else ""
+                    viewModelScope.launch {
+                        val storageError = withContext(Dispatchers.IO) {
+                            try {
+                                if (!devices.isNullOrEmpty()) DeviceInventoryStore.saveSnapshot(context, devices, "LAN Discovery")
+                                ""
+                            } catch (e: Exception) { "Не удалось сохранить результаты поиска" }
+                        }
+                        discovering = false
+                        discoveryError = listOf(error ?: "", storageError).filter { it.isNotBlank() }.joinToString(" · ")
+                        live.clear(); loadSnapshots(); refreshCards()
+                        discoveryStatus = if (cancelled) "Поиск остановлен" else ""
+                    }
                 }
             }
         })
@@ -109,7 +168,7 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
     var ports by mutableStateOf(PORT_PRESETS[0].ports)
     var extended by mutableStateOf(false)
     var scan by mutableStateOf(ScanService.snapshot()); private set
-    private val observer = ScanService.Observer { s -> main.post { scan = s } }
+    private val observer = ScanService.Observer { s -> main.post { val finished = s.completed && (!scan.completed || scan.startedAt != s.startedAt); scan = s; if (finished) refreshCards() } }
 
     override fun onCleared() { ScanService.unregister(observer); task?.cancel(); super.onCleared() }
 
@@ -159,7 +218,7 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
     var profiles by mutableStateOf<List<ConnectionProfileStore.Profile>>(emptyList()); private set
     val checking = mutableStateListOf<String>()
 
-    fun loadProfiles() { profiles = try { ConnectionProfileStore.list(context) } catch (e: Exception) { emptyList() } }
+    fun loadProfiles() { profiles = try { ConnectionProfileStore.list(context) } catch (e: Exception) { emptyList() }; refreshCards() }
 
     fun addProfile(proto: Proto, host: String, port: Int, name: String) {
         val e = ServiceEndpoint()

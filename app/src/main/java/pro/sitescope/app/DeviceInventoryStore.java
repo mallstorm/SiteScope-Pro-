@@ -86,9 +86,17 @@ public final class DeviceInventoryStore {
         snapshot.devices.addAll(deduplicate(devices));
         ContentValues values = new ContentValues();
         values.put("id", snapshot.id); values.put("timestamp", snapshot.timestamp); values.put("json", snapshot.toJson().toString());
-        AppDatabase db = AppDatabase.get(context);
-        db.write().insertWithOnConflict("inventory_snapshots", null, values, SQLiteDatabase.CONFLICT_REPLACE);
-        db.write().execSQL("DELETE FROM inventory_snapshots WHERE id NOT IN (SELECT id FROM inventory_snapshots ORDER BY timestamp DESC LIMIT 20)");
+        List<DeviceRegistryStore.Observation> observations = new ArrayList<DeviceRegistryStore.Observation>();
+        for (Models.DiscoveredDevice d : snapshot.devices) observations.add(DeviceRegistryStore.discovery(d,
+            d.scope != null ? d.scope : new NetworkScope("legacy:discovery:" + snapshot.id, "Сеть прежнего поиска не определена", false), snapshot.timestamp));
+        SQLiteDatabase db = AppDatabase.get(context).write();
+        db.beginTransaction();
+        try {
+            db.insertWithOnConflict("inventory_snapshots", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+            DeviceRegistryStore.recordBatch(db, observations);
+            db.execSQL("DELETE FROM inventory_snapshots WHERE id NOT IN (SELECT id FROM inventory_snapshots ORDER BY timestamp DESC LIMIT 20)");
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
         return snapshot;
     }
 
@@ -159,22 +167,26 @@ public final class DeviceInventoryStore {
         return new ArrayList<Models.DiscoveredDevice>(map.values());
     }
 
-    private static JSONObject deviceToJson(Models.DiscoveredDevice d) {
+    static JSONObject deviceToJson(Models.DiscoveredDevice d) {
         JSONObject o = new JSONObject();
         try {
             o.put("ip", d.ip); o.put("port", d.port); o.put("protocol", d.protocol); o.put("deviceType", d.deviceType);
             o.put("name", d.name); o.put("hostname", d.hostname); o.put("manufacturer", d.manufacturer); o.put("model", d.model);
             o.put("identity", d.identity.toJson());
+            o.put("stableId", d.stableId);
+            if (d.scope != null) o.put("scope", d.scope.toJson());
             o.put("location", d.location); o.put("services", d.services); o.put("evidence", d.evidence); o.put("confidence", d.confidence); o.put("latencyMs", d.latencyMs);
         } catch (Exception ignored) { }
         return o;
     }
 
-    private static Models.DiscoveredDevice deviceFromJson(JSONObject o) {
+    static Models.DiscoveredDevice deviceFromJson(JSONObject o) {
         Models.DiscoveredDevice d = new Models.DiscoveredDevice();
         d.ip = o.optString("ip"); d.port = o.optInt("port"); d.protocol = o.optString("protocol"); d.deviceType = o.optString("deviceType", "Сетевое устройство");
         d.name = o.optString("name"); d.hostname = o.optString("hostname"); d.manufacturer = o.optString("manufacturer"); d.model = o.optString("model");
         d.identity = DeviceIdentity.fromJson(o.optJSONObject("identity"));
+        d.stableId = o.optString("stableId");
+        if (o.has("scope")) d.scope = NetworkScope.fromJson(o.optJSONObject("scope"), "discovery");
         if (!o.has("identity") && "ONVIF WS-Discovery".equals(d.protocol)) {
             d.identity = DeviceFingerprintEngine.fromOnvifScopes(d.model);
             d.model = ""; d.identity.observedAt = 0;

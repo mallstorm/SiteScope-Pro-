@@ -67,6 +67,7 @@ public final class ScannerEngine {
     }
 
     public static final class Config {
+        public android.net.Network boundNetwork;
         public int timeoutMs = 650;
         public int concurrency = 32;
         public int delayMs = 0;
@@ -97,6 +98,7 @@ public final class ScannerEngine {
         private final Object pauseLock = new Object();
         private volatile ExecutorService executor;
         private volatile Thread coordinator;
+        private android.net.Network boundNetwork;
         private final Set<Socket> sockets = ConcurrentHashMap.newKeySet();
 
         public void cancel() {
@@ -237,6 +239,7 @@ public final class ScannerEngine {
         final int total = (int) totalLong;
         if (config.startIndex > total) config.startIndex = total;
         final Task task = new Task();
+        task.boundNetwork = config.boundNetwork;
         task.coordinator = new Thread(new Runnable() {
             @Override public void run() {
                 long started = System.currentTimeMillis();
@@ -607,7 +610,7 @@ public final class ScannerEngine {
             SSLSocketFactory factory = context.getSocketFactory();
             socket = (SSLSocket) factory.createSocket();
             trackSocket(socket);
-            socket.connect(new InetSocketAddress(host, port), timeoutMs);
+            socket.connect(new InetSocketAddress(resolveAddress(host), port), timeoutMs);
             socket.setSoTimeout(Math.min(timeoutMs, 1000));
             if (host.indexOf(':') < 0 && !host.matches("[0-9.]+")) {
                 javax.net.ssl.SSLParameters parameters = socket.getSSLParameters();
@@ -714,7 +717,7 @@ public final class ScannerEngine {
         Socket socket = new Socket();
         try {
             trackSocket(socket);
-            socket.connect(new InetSocketAddress(host, port), timeoutMs);
+            socket.connect(new InetSocketAddress(resolveAddress(host), port), timeoutMs);
             socket.setSoTimeout(Math.min(timeoutMs, 1000));
             return socket;
         } catch (Exception failure) {
@@ -723,9 +726,15 @@ public final class ScannerEngine {
         }
     }
 
-    private static void trackSocket(Socket socket) throws java.net.SocketException {
+    private static InetAddress resolveAddress(String host) throws Exception {
+        Task task = CURRENT_TASK.get();
+        return task != null && task.boundNetwork != null ? task.boundNetwork.getByName(host) : InetAddress.getByName(host);
+    }
+
+    private static void trackSocket(Socket socket) throws java.io.IOException {
         Task task = CURRENT_TASK.get();
         if (task == null) return;
+        if (task.boundNetwork != null) task.boundNetwork.bindSocket(socket);
         task.sockets.add(socket);
         if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
             task.sockets.remove(socket);

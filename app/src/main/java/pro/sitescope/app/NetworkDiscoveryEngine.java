@@ -44,6 +44,7 @@ public final class NetworkDiscoveryEngine {
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
         private volatile Thread thread;
         private Network lan;
+        private NetworkScope scope;
         private boolean wifi;
         private NetworkInterface networkInterface;
         private InetAddress address;
@@ -60,6 +61,7 @@ public final class NetworkDiscoveryEngine {
                 String error = "";
                 try {
                     selectLan(context, task);
+                    task.scope = NetworkScope.capture(context, task.lan);
                     WifiManager wifi = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
                     if (wifi != null && task.wifi) {
                         multicastLock = wifi.createMulticastLock("SiteScope-Discovery");
@@ -156,12 +158,13 @@ public final class NetworkDiscoveryEngine {
                 String server = header(text, "server");
                 String usn = header(text, "usn");
                 device.name = friendlyFromUsn(usn);
+                device.stableId = DiscoveryIdentity.ssdp(usn);
                 device.identity = DeviceFingerprintEngine.fromDiscoveryServer(server);
                 device.manufacturer = device.identity.manufacturer;
                 device.deviceType = classifySsdp(device.services + " " + usn + " " + server);
                 device.evidence = firstLine(text) + " · ST=" + value(device.services) + " · SERVER=" + value(server);
                 device.confidence = "high";
-                add(found, device, listener);
+                add(found, device, listener, task.scope);
             }
         } finally { socket.close(); }
     }
@@ -192,13 +195,14 @@ public final class NetworkDiscoveryEngine {
                 device.protocol = "ONVIF WS-Discovery";
                 device.deviceType = "IP-камера / видеорегистратор";
                 device.location = xmlValue(response, "XAddrs");
+                device.stableId = DiscoveryIdentity.onvif(response);
                 device.services = xmlValue(response, "Types");
                 String scopes = xmlValue(response, "Scopes");
                 device.name = scopeValue(scopes, "name");
                 device.identity = DeviceFingerprintEngine.fromOnvifScopes(scopeValue(scopes, "hardware"));
                 device.evidence = "WS-Discovery ProbeMatch · XAddrs=" + value(device.location) + " · Scopes=" + truncate(scopes, 240);
                 device.confidence = "high";
-                add(found, device, listener);
+                add(found, device, listener, task.scope);
             }
         } finally { socket.close(); }
     }
@@ -227,7 +231,7 @@ public final class NetworkDiscoveryEngine {
                 try {
                     MdnsPacketParser.Result parsed = MdnsPacketParser.parse(packet.getData(), packet.getOffset(), packet.getLength());
                     serviceTypes.addAll(parsed.serviceTypes);
-                    addMdnsRecords(parsed, packet.getAddress().getHostAddress(), found, listener);
+                    addMdnsRecords(parsed, packet.getAddress().getHostAddress(), found, listener, task.scope);
                 } catch (Exception ignored) { }
             }
 
@@ -244,7 +248,7 @@ public final class NetworkDiscoveryEngine {
                 catch (SocketTimeoutException timeout) { continue; }
                 try {
                     MdnsPacketParser.Result parsed = MdnsPacketParser.parse(packet.getData(), packet.getOffset(), packet.getLength());
-                    addMdnsRecords(parsed, packet.getAddress().getHostAddress(), found, listener);
+                    addMdnsRecords(parsed, packet.getAddress().getHostAddress(), found, listener, task.scope);
                 } catch (Exception ignored) { }
             }
             try {
@@ -254,7 +258,7 @@ public final class NetworkDiscoveryEngine {
         } finally { socket.close(); }
     }
 
-    private static void addMdnsRecords(MdnsPacketParser.Result parsed, String sourceIp, Map<String, Models.DiscoveredDevice> found, Listener listener) {
+    private static void addMdnsRecords(MdnsPacketParser.Result parsed, String sourceIp, Map<String, Models.DiscoveredDevice> found, Listener listener, NetworkScope scope) {
         boolean hasSrv = false;
         for (MdnsPacketParser.Record record : parsed.records) {
             if (record.type != MdnsPacketParser.TYPE_SRV || record.port <= 0) continue;
@@ -272,7 +276,7 @@ public final class NetworkDiscoveryEngine {
             device.deviceType = classifyMdns(device.services);
             device.evidence = "DNS-SD SRV · " + record.target + ":" + record.port + (txt.isEmpty() ? "" : " · TXT=" + truncate(join(txt, "; ", 8), 260));
             device.confidence = "high";
-            add(found, device, listener);
+            add(found, device, listener, scope);
         }
         if (!hasSrv) {
             for (String target : parsed.ptrTargets) {
@@ -286,12 +290,13 @@ public final class NetworkDiscoveryEngine {
                 device.deviceType = classifyMdns(device.services);
                 device.evidence = "DNS-SD PTR · " + target;
                 device.confidence = "medium";
-                add(found, device, listener);
+                add(found, device, listener, scope);
             }
         }
     }
 
-    private static void add(Map<String, Models.DiscoveredDevice> found, Models.DiscoveredDevice device, Listener listener) {
+    private static void add(Map<String, Models.DiscoveredDevice> found, Models.DiscoveredDevice device, Listener listener, NetworkScope scope) {
+        device.scope = scope;
         String key = device.key();
         if (found.containsKey(key)) return;
         found.put(key, device);

@@ -18,6 +18,8 @@ public final class ConnectionProfileStore {
     private static final String KEY = "profiles_json";
 
     public static final class Profile {
+        public String deviceRef = "";
+        public NetworkScope scope;
         public String id = "";
         public String name = "";
         public String protocol = "UNKNOWN";
@@ -46,6 +48,7 @@ public final class ConnectionProfileStore {
             endpoint.displayName = name;
             endpoint.uri = uri;
             endpoint.resourceType = resourceType;
+            endpoint.scope = scope;
             return endpoint;
         }
 
@@ -53,6 +56,8 @@ public final class ConnectionProfileStore {
             JSONObject object = new JSONObject();
             try {
                 object.put("id", id);
+                object.put("deviceRef", deviceRef);
+                if (scope != null) object.put("scope", scope.toJson());
                 object.put("name", name);
                 object.put("protocol", protocol);
                 object.put("host", host);
@@ -77,6 +82,8 @@ public final class ConnectionProfileStore {
         static Profile fromJson(JSONObject object) {
             Profile profile = new Profile();
             profile.id = object.optString("id");
+            profile.deviceRef = object.optString("deviceRef");
+            if (object.has("scope")) profile.scope = NetworkScope.fromJson(object.optJSONObject("scope"), "profile");
             profile.name = object.optString("name");
             profile.protocol = object.optString("protocol", "UNKNOWN");
             profile.host = object.optString("host");
@@ -109,6 +116,8 @@ public final class ConnectionProfileStore {
             profiles.add(target);
         }
         target.id = id;
+        if (target.deviceRef.isEmpty()) target.deviceRef = java.util.UUID.randomUUID().toString();
+        if (target.scope == null) target.scope = endpoint.scope != null ? endpoint.scope : NetworkScope.current(context);
         target.name = endpoint.displayName.length() > 0 ? endpoint.displayName : endpoint.endpointText();
         target.protocol = endpoint.protocol;
         target.host = endpoint.host;
@@ -190,6 +199,19 @@ public final class ConnectionProfileStore {
 
     public static String idFor(ServiceEndpoint endpoint) {
         return endpoint.protocol + "|" + endpoint.host + "|" + endpoint.port + "|" + endpoint.uri;
+    }
+
+    static synchronized List<Profile> ensureDeviceRefs(Context context) {
+        List<Profile> profiles = list(context);
+        boolean changed = false;
+        java.util.Set<String> seen = new java.util.HashSet<String>();
+        for (Profile p : profiles) {
+            if (p.deviceRef.isEmpty() || !seen.add(p.deviceRef)) {
+                p.deviceRef = java.util.UUID.randomUUID().toString(); seen.add(p.deviceRef); changed = true;
+            }
+        }
+        if (changed) write(context, profiles);
+        return profiles;
     }
 
     private static Profile findIn(List<Profile> profiles, String id) {

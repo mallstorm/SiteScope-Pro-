@@ -54,6 +54,7 @@ public final class ScanService extends Service {
     public static Snapshot snapshot() { return copyOf(LAST); }
 
     public static final class Snapshot {
+        public NetworkScope scope;
         public boolean active;
         public boolean paused;
         public boolean completed;
@@ -77,6 +78,7 @@ public final class ScanService extends Service {
         public JSONObject toJson() {
             JSONObject object = new JSONObject();
             try {
+                if (scope != null) object.put("scope", scope.toJson());
                 object.put("active", active);
                 object.put("paused", paused);
                 object.put("completed", completed);
@@ -113,6 +115,7 @@ public final class ScanService extends Service {
             if (json == null || json.length() == 0) return state;
             try {
                 JSONObject object = new JSONObject(json);
+                if (object.has("scope")) state.scope = NetworkScope.fromJson(object.optJSONObject("scope"), "scan");
                 state.active = object.optBoolean("active");
                 state.paused = object.optBoolean("paused");
                 state.completed = object.optBoolean("completed");
@@ -192,11 +195,18 @@ public final class ScanService extends Service {
             final long runGeneration = taskGeneration;
             if (!recovered) store.clearActiveResults();
             try {
+                final NetworkScope scope = NetworkScope.current(this);
+                if (recovered && (state.scope == null || !state.scope.id.equals(scope.id))) {
+                    state.finishedAt = System.currentTimeMillis(); state.cancelled = true;
+                    saveCompletedSession();
+                    throw new IllegalStateException("Сеть изменилась. Прежние результаты сохранены; запустите новое сканирование.");
+                }
                 final int hostLimit = extendedPrivate ? ScannerEngine.EXTENDED_MAX_HOSTS : ScannerEngine.STANDARD_MAX_HOSTS;
                 final int portLimit = extendedPrivate ? ScannerEngine.EXTENDED_MAX_PORTS : ScannerEngine.STANDARD_MAX_PORTS;
                 final List<String> hosts = ScannerEngine.parseTargets(targetsRaw, hostLimit);
                 final List<Integer> ports = ScannerEngine.parsePorts(portsRaw, portLimit);
                 final ScannerEngine.Config config = new ScannerEngine.Config();
+                config.boundNetwork = scope.network;
                 config.timeoutMs = timeout;
                 config.concurrency = concurrency;
                 config.delayMs = delayMs;
@@ -206,6 +216,7 @@ public final class ScanService extends Service {
                 config.normalize();
 
                 state = new Snapshot();
+                state.scope = scope;
                 state.active = true;
                 state.paused = false;
                 state.completed = false;
@@ -246,6 +257,7 @@ public final class ScanService extends Service {
                     @Override public void onOpen(Models.PortResult result) {
                         synchronized (lock) {
                             if (runGeneration != taskGeneration) return;
+                            result.scope = state.scope;
                             upsertResult(state.results, result);
                             store.saveActiveResult(result);
                             publish(false);
@@ -353,6 +365,7 @@ public final class ScanService extends Service {
 
     private void saveCompletedSession() {
         Models.ScanSession session = new Models.ScanSession();
+        session.scope = state.scope;
         session.targetExpression = state.targetExpression;
         session.portExpression = state.portExpression;
         session.timestamp = state.startedAt > 0 ? state.startedAt : System.currentTimeMillis();

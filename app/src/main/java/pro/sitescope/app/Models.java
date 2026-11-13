@@ -479,6 +479,7 @@ public final class Models {
     }
 
     public static final class PortResult {
+        public NetworkScope scope;
         public DeviceIdentity identity = new DeviceIdentity();
         public String tlsTrust = "not_applicable";
         public String target = "";
@@ -499,6 +500,7 @@ public final class Models {
         public JSONObject toJson() {
             JSONObject object = new JSONObject();
             try {
+                if (scope != null) object.put("scope", scope.toJson());
                 object.put("target", target);
                 object.put("host", host);
                 object.put("ip", ip);
@@ -521,6 +523,7 @@ public final class Models {
 
         public static PortResult fromJson(JSONObject object) {
             PortResult result = new PortResult();
+            if (object.has("scope")) result.scope = NetworkScope.fromJson(object.optJSONObject("scope"), "result");
             result.target = object.optString("target");
             result.host = object.optString("host");
             result.ip = object.optString("ip");
@@ -547,6 +550,7 @@ public final class Models {
     }
 
     public static final class ScanSession {
+        public NetworkScope scope;
         public String targetExpression = "";
         public String portExpression = "";
         public long timestamp;
@@ -560,6 +564,7 @@ public final class Models {
             JSONObject object = new JSONObject();
             try {
                 object.put("targetExpression", targetExpression);
+                if (scope != null) object.put("scope", scope.toJson());
                 object.put("portExpression", portExpression);
                 object.put("timestamp", timestamp);
                 object.put("durationMs", durationMs);
@@ -576,6 +581,7 @@ public final class Models {
         public static ScanSession fromJson(JSONObject object) {
             ScanSession session = new ScanSession();
             session.targetExpression = object.optString("targetExpression");
+            if (object.has("scope")) session.scope = NetworkScope.fromJson(object.optJSONObject("scope"), "scan");
             session.portExpression = object.optString("portExpression");
             session.timestamp = object.optLong("timestamp");
             session.durationMs = object.optLong("durationMs");
@@ -595,6 +601,8 @@ public final class Models {
 
 
     public static final class DiscoveredDevice {
+        public NetworkScope scope;
+        public String stableId = "";
         public DeviceIdentity identity = new DeviceIdentity();
         public String ip = "";
         public int port;
@@ -610,7 +618,7 @@ public final class Models {
         public String confidence = "medium";
         public long latencyMs;
 
-        public String key() { return ip + "|" + protocol + "|" + port + "|" + (location.length() > 0 ? location : name) + "|" + services; }
+        public String key() { return ip + "|" + protocol + "|" + port + "|" + stableId + "|" + (location.length() > 0 ? location : name) + "|" + services; }
         public String displayLine() {
             return "✅ " + ip + (port > 0 ? ":" + port : "") + "  " + deviceType + "  " + (name.length() > 0 ? name : protocol);
         }
