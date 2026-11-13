@@ -121,7 +121,7 @@ class DeviceHistoryTest {
         record(observation(1000)); val card = DeviceRegistryStore.list(app, "", 10).single().id
         val db = AppDatabase.get(app).write(); db.execSQL("DROP TABLE device_history"); db.execSQL("DROP TABLE device_history_state"); db.version = 3
         TestStores.reset()
-        assertEquals(5, AppDatabase.get(app).read().version); assertEquals(card, DeviceRegistryStore.list(app, "", 10).single().id); assertTrue(history().isEmpty())
+        assertEquals(6, AppDatabase.get(app).read().version); assertEquals(card, DeviceRegistryStore.list(app, "", 10).single().id); assertTrue(history().isEmpty())
     }
     @Test fun realSaveScanPersistsCoverageErrorAndTransitionsAtomically() {
         val s = Models.ScanSession().apply { scope = lan; timestamp = base + 1000; targetExpression = "192.168.1.10"; portExpression = "443"; totalProbes = 1; completedProbes = 1; openResults.add(Models.PortResult.fromJson(observation(1000).data)) }

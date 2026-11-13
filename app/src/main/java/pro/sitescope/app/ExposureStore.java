@@ -9,6 +9,7 @@ import org.json.*;
 
 /** Owner-configured endpoints and bounded measurements; no credentials or URL paths. */
 public final class ExposureStore {
+    public static boolean externalConfirmed(JSONObject run, JSONObject row) { return run.optString("transport").equals("cellular") && run.optBoolean("externalPoint") && !run.optBoolean("cancelled") && run.optString("error").isEmpty() && row.optString("state").equals("open") && publicAddress(row.optString("address")); }
     private ExposureStore() { }
     public static final class Target {
         public String id="",name="",host="",ports="80,443";

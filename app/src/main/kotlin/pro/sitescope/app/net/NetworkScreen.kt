@@ -45,7 +45,7 @@ fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewMo
     LaunchedEffect(startTargets) { if (!startTargets.isNullOrBlank()) vm.targets = startTargets }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Устройства", "Сканер", "Подключения", "Скорость", "Доступ извне").forEachIndexed { i, title ->
+            listOf("Устройства", "Сканер", "Подключения", "Скорость", "Доступ извне", "Роутеры").forEachIndexed { i, title ->
                 FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title) })
             }
         }
@@ -54,7 +54,8 @@ fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewMo
             1 -> ScannerTab(vm)
             2 -> ConnectionsTab(vm)
             3 -> SpeedTab(vm)
-            else -> ExposureScreen()
+            4 -> ExposureScreen()
+            else -> RouterScreen()
         }
     }
 }

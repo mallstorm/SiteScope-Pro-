@@ -26,7 +26,7 @@ import java.util.Set;
 
 /** Portable, versioned backup for user-created non-secret application data. */
 public final class BackupManager {
-    public static final int SCHEMA_VERSION = 10;
+    public static final int SCHEMA_VERSION = 11;
     private static final long MAX_IMPORT_BYTES = 64L * 1024L * 1024L;
     private static final List<String> PREF_FILES = Arrays.asList(
         "sitescope_data_v1",

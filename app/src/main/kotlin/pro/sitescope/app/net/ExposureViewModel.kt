@@ -32,7 +32,7 @@ internal object ExposurePoint {
         } + if (vpn && !selected.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) " · на телефоне активен VPN" else ""
         return ProbeOrigin(label, cell && !vpn && active != null, when { selected.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "vpn"; cell -> "cellular"; rawCell -> "other"; selected.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"; selected.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"; else -> "other" })
     }
-    fun confirmed(run: JSONObject, row: JSONObject): Boolean = run.optString("transport") == "cellular" && run.optBoolean("externalPoint") && !run.optBoolean("cancelled") && run.optString("error").isEmpty() && row.optString("state") == "open" && ExposureStore.publicAddress(row.optString("address"))
+    fun confirmed(run: JSONObject, row: JSONObject): Boolean = ExposureStore.externalConfirmed(run, row)
 }
 
 class ExposureViewModel(app: Application) : AndroidViewModel(app) {

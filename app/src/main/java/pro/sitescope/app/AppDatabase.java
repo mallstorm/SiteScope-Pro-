@@ -16,7 +16,7 @@ import org.json.JSONObject;
  */
 public final class AppDatabase extends SQLiteOpenHelper {
     private static final String NAME = "sitescope_app.db";
-    private static final int VERSION = 5;
+    private static final int VERSION = 6;
     private static volatile AppDatabase INSTANCE;
     private final Context context;
 
@@ -65,6 +65,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
         DeviceRegistryStore.createTables(db);
         DeviceHistoryStore.createTables(db);
         ExposureStore.createTables(db);
+        RouterStore.createTables(db);
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
@@ -72,6 +73,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
         if (oldVersion < 3) DeviceRegistryStore.createTables(db);
         if (oldVersion < 4) DeviceHistoryStore.createTables(db);
         if (oldVersion < 5) ExposureStore.createTables(db);
+        if (oldVersion < 6) RouterStore.createTables(db);
     }
 
     private void createHostsTables(SQLiteDatabase db) {
@@ -220,6 +222,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
             db.delete("connection_events", null, null); db.delete("inventory_snapshots", null, null); db.delete("inventory_aliases", null, null);
             db.delete("device_observations", null, null); db.delete("device_cards", null, null);
             db.delete("exposure_targets", null, null); db.delete("exposure_runs", null, null);
+            db.delete("router_connections", null, null); db.delete("router_snapshots", null, null);
             db.delete("app_meta", "key=?", new String[]{"legacy_migrated_v1"});
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
@@ -243,6 +246,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
         root.put("hostsProfiles", new HostsStore(context).exportProfiles());
         root.put("deviceRegistry", DeviceRegistryStore.exportGraph(read()));
         root.put("exposure", ExposureStore.exportState(read()));
+        root.put("routers", RouterStore.exportState(read()));
         return root;
     }
 
@@ -263,6 +267,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
             db.delete("connection_events", null, null); db.delete("inventory_snapshots", null, null); db.delete("inventory_aliases", null, null);
             DeviceRegistryStore.restoreGraph(db, root.optJSONObject("deviceRegistry"));
             ExposureStore.restore(db, root.optJSONObject("exposure"));
+            RouterStore.restore(db, root.optJSONObject("routers"));
             importProjects(db, root.optJSONArray("projects"));
             importSimple(db, "audits", root.optJSONArray("audits"), "timestamp");
             JSONArray scans = root.optJSONArray("scans"); if (scans != null) for (int i = scans.length() - 1; i >= 0; i--) insertScanJson(db, scans.getJSONObject(i));
@@ -281,6 +286,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
 
     /** Validate all row containers before deleting any current data. */
     public static void validatePortable(JSONObject root) throws Exception {
+        if (root.has("routers")) RouterStore.validate(root.getJSONObject("routers"));
         if (root.has("exposure")) ExposureStore.validate(root.getJSONObject("exposure"));
         if (root.has("deviceRegistry")) DeviceRegistryStore.validateGraph(root.getJSONObject("deviceRegistry"));
         String[] fields = {"projects", "audits", "scans", "iptvHistory", "connectionProfiles", "connectionEvents", "inventorySnapshots", "inventoryAliases", "hostsProfiles"};

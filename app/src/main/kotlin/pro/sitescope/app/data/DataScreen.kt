@@ -62,8 +62,9 @@ fun DataScreen(startTab: Int = 0) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("Проекты") })
             FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("История") })
+            FilterChip(selected = tab == 2, onClick = { tab = 2 }, label = { Text("Отчёты") })
         }
-        if (tab == 0) ProjectsTab() else HistoryTab()
+        when (tab) { 0 -> ProjectsTab(); 1 -> HistoryTab(); else -> ReportsScreen() }
     }
 }
 
