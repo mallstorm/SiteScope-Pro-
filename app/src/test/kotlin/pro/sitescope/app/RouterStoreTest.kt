@@ -26,7 +26,7 @@ class RouterStoreTest {
         val backup = AppDatabase.get(app).exportPortable(); assertFalse(backup.toString().contains("SECRET-CREDENTIALS"))
         RouterStore.clearSnapshots(app); RouterStore.remove(app, config.id); AppDatabase.get(app).restorePortable(backup)
         assertEquals(config.id, RouterStore.configs(app).single().id); assertEquals("hAP", RouterStore.snapshots(app).single().getJSONArray("rows").getJSONObject(0).getString("model"))
-        assertArrayEquals(arrayOf("", ""), RouterStore.credentials(app, config.id)); assertEquals(12, BackupManager.SCHEMA_VERSION)
+        assertArrayEquals(arrayOf("", ""), RouterStore.credentials(app, config.id)); assertEquals(13, BackupManager.SCHEMA_VERSION)
     }
     @Test fun invalidRestoreDoesNotDeleteExistingDataAndOldBackupsClearNewTables() {
         RouterStore.snapshot(app, snapshot()); val backup = AppDatabase.get(app).exportPortable()

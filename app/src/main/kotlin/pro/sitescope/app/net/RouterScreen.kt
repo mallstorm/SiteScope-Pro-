@@ -102,7 +102,7 @@ internal fun RouterScreen() {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { SoftCard {
             Text("API моего роутера", style = MaterialTheme.typography.titleMedium)
-            Text("RouterOS 7 REST и OpenWrt ubus: система, интерфейсы и DHCP. Нужен включённый API и пользователь с правами чтения. Для OpenWrt также нужен rpcd/uhttpd-mod-ubus.", style = MaterialTheme.typography.bodySmall)
+            Text("RouterOS 7 REST и OpenWrt ubus: система, интерфейсы и DHCP. Нужен включённый API и пользователь с правами чтения. Для OpenWrt нужны rpcd/uhttpd-mod-ubus; для DHCP dnsmasq — rpcd-mod-luci и права чтения luci-rpc.getDHCPLeases.", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(kind == "routeros", { kind = "routeros"; id = ""; owner = false }, enabled = !busy, label = { Text("RouterOS 7") })
                 FilterChip(kind == "openwrt", { kind = "openwrt"; id = ""; owner = false }, enabled = !busy, label = { Text("OpenWrt") })
@@ -142,13 +142,14 @@ private fun RouterSnapshot(snapshot: JSONObject, onLease: (String) -> Unit) {
         Text(snapshot.optString("name").ifBlank { snapshot.optString("host") }, style = MaterialTheme.typography.titleSmall)
         Text(SimpleDateFormat("d MMM yyyy, HH:mm:ss", Locale.forLanguageTag("ru")).format(Date(snapshot.optLong("time"))))
         Text(snapshot.optString("source"), style = MaterialTheme.typography.bodySmall)
+        if (snapshot.optString("dhcpSource").isNotEmpty()) Text("DHCP: ${snapshot.optString("dhcpSource")}", style = MaterialTheme.typography.labelSmall)
         val warnings = snapshot.optJSONArray("warnings")
         for (i in 0 until (warnings?.length() ?: 0)) Text(warnings!!.optString(i), color = MaterialTheme.colorScheme.error)
         if (RouterComparison.origin(snapshot).isEmpty()) Text("Для сравнения и привязки DHCP нужен новый снимок с определённой сетью.", style = MaterialTheme.typography.bodySmall)
         val rows = snapshot.getJSONArray("rows")
         for (i in 0 until minOf(rows.length(), limit)) {
             val r = rows.getJSONObject(i)
-            Text(listOf("kind", "name", "model", "manufacturer", "address", "mac", "software", "uptime", "interface_type", "status").map { r.optString(it) }.filter { it.isNotBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+            Text(listOf("kind", "name", "model", "manufacturer", "address", "mac", "software", "uptime", "interface_type", "status", "lease_source").map { r.optString(it) }.filter { it.isNotBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
             if (r.optString("kind") == "lease") TextButton(enabled = RouterComparison.origin(snapshot).isNotEmpty() && RouterComparison.mac(r.optString("mac")).isNotEmpty(), onClick = { onLease(r.optString("mac")) }) { Text("Связать с карточкой…") }
         }
         if (limit < rows.length()) TextButton(onClick = { limit += 32 }) { Text("Ещё · ${minOf(limit, rows.length())} из ${rows.length()}") }

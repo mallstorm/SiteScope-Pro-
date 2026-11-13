@@ -100,6 +100,7 @@ public final class RouterComparison {
         if (before.getString("id").equals(after.getString("id")) || before.getLong("time") > after.getLong("time")) throw new IllegalArgumentException("Выберите разные снимки: сначала более ранний");
         Index a = index(before), b = index(after); Result result = new Result();
         result.partial = !before.has("partial") || !after.has("partial") || before.optBoolean("partial") || after.optBoolean("partial");
+        if(!before.optString("dhcpSource").equals(after.optString("dhcpSource")))result.partial=true;
         result.unkeyed = a.unkeyed + b.unkeyed;
         Set<String> duplicates = new HashSet<>(a.duplicate); duplicates.addAll(b.duplicate); result.ambiguous = duplicates.size();
         Set<String> keys = new TreeSet<>(a.rows.keySet()); keys.addAll(b.rows.keySet());

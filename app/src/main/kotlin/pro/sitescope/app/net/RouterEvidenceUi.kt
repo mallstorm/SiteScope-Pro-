@@ -49,7 +49,7 @@ internal fun RouterComparePanel(snapshots: List<JSONObject>) {
         if (before != null && after != null) result?.let { diff ->
             Text("${routerTime(before.getLong("time"))} → ${routerTime(after.getLong("time"))}", style = MaterialTheme.typography.labelSmall)
             Text(after.getString("source"), style = MaterialTheme.typography.bodySmall)
-            if (diff.partial) Text("Один из снимков частичный. Появление и исчезновение записей не определяются; показаны изменения измеренных полей.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            if (diff.partial) Text("Снимок частичный или источник DHCP изменился. Появление и исчезновение записей не определяются; показаны изменения измеренных полей.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             if (diff.ambiguous > 0 || diff.unkeyed > 0) Text("Исключено неоднозначных ключей: ${diff.ambiguous}; записей без ключа: ${diff.unkeyed}", style = MaterialTheme.typography.bodySmall)
             Text("Различий: ${diff.changes.size}")
             diff.changes.take(limit).forEach { change ->

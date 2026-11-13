@@ -89,7 +89,7 @@ class RouterApiTest {
                 "system.board" -> JSONObject("""{"hostname":"openwrt","model":"AP","system":"Qualcomm","release":{"distribution":"OpenWrt","version":"24.10"},"password":"RAW-SECRET"}""")
                 "system.info" -> JSONObject().put("uptime", 50)
                 "network.interface.dump" -> JSONObject("""{"interface":[{"interface":"lan","proto":"static","up":true,"ipv4-address":[{"address":"192.168.1.1"}]}]}""")
-                "dhcp.ipv4leases" -> JSONObject("""{"device":{"br-lan":{"leases":[{"hostname":"phone","address":"192.168.1.2","mac":"AA:BB:CC:DD:EE:FF"},{"hostname":"legacy","ipaddr":"192.168.1.3","mac":"AA:BB:CC:DD:EE:01"}]}}}""")
+                "luci-rpc.getDHCPLeases" -> { assertEquals(4, params.getJSONObject(3).getInt("family")); JSONObject("""{"dhcp_leases":[{"hostname":"phone","ipaddr":"192.168.1.2","mac":"AA:BB:CC:DD:EE:FF"},{"hostname":"legacy","ipaddr":"192.168.1.3","mac":"AA:BB:CC:DD:EE:01"}]}""") }
                 "session.destroy" -> { assertEquals(token, params.getJSONObject(3).getString("ubus_rpc_session")); JSONObject() }
                 else -> error("Unexpected RPC $obj.$method")
             }
@@ -100,6 +100,46 @@ class RouterApiTest {
             val rows = snapshot.getJSONArray("rows"); val addresses = (0 until rows.length()).map { rows.getJSONObject(it).optString("address") }; assertTrue("192.168.1.2" in addresses); assertTrue("192.168.1.3" in addresses)
             for (secret in listOf(token, "owner-secret", "RAW-SECRET")) assertFalse(snapshot.toString().contains(secret))
         }
+    }
+    private fun ubusTest(luciCode: Int, odhcpdCode: Int = 0, luciData: JSONObject = JSONObject().put("dhcp_leases", JSONArray()), luciHttp: Int = 200): Pair<JSONObject, List<String>> {
+        val methods = mutableListOf<String>()
+        val token = "abcdef0123456789abcdef0123456789"
+        Server { r ->
+            val params = JSONObject(r.body).getJSONArray("params"); val method = params.getString(1) + "." + params.getString(2); methods.add(method)
+            if (method != "session.login") assertEquals(token, params.getString(0))
+            var code = 0
+            val data = when (method) {
+                "session.login" -> JSONObject().put("ubus_rpc_session", token)
+                "system.board", "system.info", "session.destroy" -> JSONObject()
+                "network.interface.dump" -> JSONObject().put("interface", JSONArray())
+                "luci-rpc.getDHCPLeases" -> { assertEquals(4, params.getJSONObject(3).getInt("family")); code = luciCode; luciData }
+                "dhcp.ipv4leases" -> { code = odhcpdCode; JSONObject("""{"device":{"lan":{"leases":[{"hostname":"phone","address":"192.168.1.2","mac":"021234567890"}]}}}""") }
+                else -> error("Unexpected RPC")
+            }
+            if (method == "luci-rpc.getDHCPLeases" && luciHttp != 200) luciHttp to "PRIVATE-HTTP-BODY"
+            else 200 to (if (code < 0) JSONObject().put("error", JSONObject().put("code", code).put("message", "PRIVATE-RPC-BODY")) else JSONObject().put("result", JSONArray().put(code).put(data))).toString()
+        }.use { server ->
+            val snapshot = RouterApiClient(null).use { it.read(config(server.base, "openwrt"), "owner", "owner-secret", "Дом") }
+            assertTrue(server.failures.toString(), server.failures.isEmpty()); return snapshot to methods.toList()
+        }
+    }
+    @Test fun validEmptyLuciResponseDoesNotTriggerFallbackOrMarkPartial() {
+        val (s, methods) = ubusTest(0); assertFalse(s.getBoolean("partial")); assertEquals(OpenWrtLeases.LUCI, s.getString("dhcpSource")); assertFalse(methods.contains("dhcp.ipv4leases")); assertEquals("session.destroy", methods.last())
+    }
+    @Test fun missingMethodAndAclDenialFallBackToOdhcpdWithoutDuplicatingRows() {
+        for (code in listOf(3, 4, 6, -32002)) {
+            val (s, methods) = ubusTest(code); assertFalse(s.getBoolean("partial")); assertEquals(OpenWrtLeases.ODHCPD, s.getString("dhcpSource")); assertEquals(1, methods.count { it == "dhcp.ipv4leases" })
+            val leases = s.getJSONArray("rows"); val row = (0 until leases.length()).map { leases.getJSONObject(it) }.single { it.getString("kind") == "lease" }; assertEquals(OpenWrtLeases.ODHCPD, row.getString("lease_source"))
+        }
+    }
+    @Test fun deniedBothSourcesProducePartialMeasurementWithSafeExplanation() {
+        val (s, methods) = ubusTest(6, 4); assertTrue(s.getBoolean("partial")); assertEquals("", s.getString("dhcpSource")); assertTrue(s.getJSONArray("warnings").toString().contains("ACL")); assertEquals("session.destroy", methods.last()); assertFalse(s.toString().contains("owner-secret"))
+    }
+    @Test fun malformedLuciResponseIsPartialAndDoesNotSilentlyTryAnotherSource() {
+        val (s, methods) = ubusTest(0, luciData = JSONObject().put("dhcp_leases", "bad")); assertTrue(s.getBoolean("partial")); assertFalse(methods.contains("dhcp.ipv4leases")); assertEquals("session.destroy", methods.last())
+    }
+    @Test fun httpAuthenticationFailureDoesNotCauseFallbackAndSessionStillEnds() {
+        val e = assertThrows(RouterApiClient.Failure::class.java) { ubusTest(0, luciHttp = 401) }; assertEquals(401, e.status); assertFalse(e.message!!.contains("PRIVATE-HTTP-BODY"))
     }
     @Test fun cancelPreventsAnyRequest() {
         Server(::standard).use { s -> val c = RouterApiClient(null); c.close(); val e = assertThrows(RouterApiClient.Failure::class.java) { c.read(config(s.base), "owner", "secret", "Дом") }; assertTrue(e.message!!.contains("отменён")); assertTrue(s.requests.isEmpty()) }

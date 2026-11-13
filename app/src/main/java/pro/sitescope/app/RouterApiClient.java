@@ -14,13 +14,14 @@ import javax.net.ssl.SSLException;
 public final class RouterApiClient implements AutoCloseable {
     public static final class Failure extends IOException {
         public final int status;
+        public int rpcStatus;
         Failure(String text,int status){super(text);this.status=status;}
     }
     private final Network network;
     private final AtomicBoolean cancelled=new AtomicBoolean();
     private volatile HttpURLConnection connection;
     private long deadline;
-    private String base,user,password,token="",basic="";
+    private String base,user,password,token="",basic="",dhcpSource="";
     private JSONArray rows,warnings;
     private int bytes;
     public RouterApiClient(Network network){this.network=network;}
@@ -29,11 +30,11 @@ public final class RouterApiClient implements AutoCloseable {
     public JSONObject read(RouterStore.Config config,String username,String secret,String source)throws Exception {
         base=RouterStore.address(config.base,config.allowHttp).toASCIIString();user=username;password=secret;
         if(user.isEmpty()||user.length()>512||password.length()>4096||user.contains(":"))throw new Failure("Проверьте учётные данные владельца",0);
-        rows=new JSONArray();warnings=new JSONArray();bytes=0;deadline=System.nanoTime()+30_000_000_000L;
+        rows=new JSONArray();warnings=new JSONArray();bytes=0;dhcpSource="";deadline=System.nanoTime()+30_000_000_000L;
         basic=Base64.encodeToString((user+":"+password).getBytes(StandardCharsets.UTF_8),Base64.NO_WRAP);
         try {
             if(config.kind.equals("routeros"))routeros();else if(config.kind.equals("openwrt"))openwrt();else throw new Failure("Неизвестный адаптер",0);
-            check();return new JSONObject().put("id",UUID.randomUUID().toString()).put("time",System.currentTimeMillis()).put("adapter",config.kind).put("source",safe(source)).put("name",safe(config.name)).put("host",new URI(base).getHost()).put("partial",warnings.length()>0).put("warnings",warnings).put("rows",rows);
+            check();return new JSONObject().put("id",UUID.randomUUID().toString()).put("time",System.currentTimeMillis()).put("adapter",config.kind).put("source",safe(source)).put("name",safe(config.name)).put("host",new URI(base).getHost()).put("partial",warnings.length()>0).put("warnings",warnings).put("rows",rows).put("dhcpSource",dhcpSource);
         } catch(Failure e){throw e;}catch(SSLException e){throw new Failure("Не удалось проверить TLS-сертификат роутера. Установите доверенный сертификат",0);}catch(SocketTimeoutException e){throw new Failure("Роутер не ответил вовремя",0);}catch(JSONException e){throw new Failure("Некорректный ответ API роутера",0);}catch(IOException e){throw new Failure(cancelled.get()?"Запрос отменён":"Нет связи с API роутера",0);}
         finally{user="";password="";token="";basic="";}
     }
@@ -59,6 +60,7 @@ public final class RouterApiClient implements AutoCloseable {
         throw new Failure("API вернул неоднозначный ответ о системе",0);
     }
     private void routeros()throws Exception {
+        dhcpSource="routeros.dhcp";
         JSONObject identity=singleton(request("/rest/system/identity",null,true));JSONObject system=row("system");put(system,"name",identity.opt("name"));put(system,"manufacturer","MikroTik");add(system);
         optional("Система",()->{JSONObject info=singleton(request("/rest/system/resource",null,true));JSONObject r=row("system");put(r,"model",info.opt("board-name"));put(r,"software",info.opt("version"));put(r,"uptime",info.opt("uptime"));add(r);});
         optional("Интерфейсы",()->{JSONArray list=(JSONArray)request("/rest/interface",null,true);for(int i=0;i<list.length();i++){check();JSONObject o=list.getJSONObject(i),r=row("interface");put(r,"name",o.opt("name"));put(r,"interface_type",o.opt("type"));put(r,"status",o.opt("running"));add(r);}});
@@ -67,10 +69,34 @@ public final class RouterApiClient implements AutoCloseable {
     private JSONObject rpc(String object,String method,JSONObject args)throws Exception {
         String session=token.isEmpty()?"00000000000000000000000000000000":token;
         JSONObject body=new JSONObject().put("jsonrpc","2.0").put("id",1).put("method","call").put("params",new JSONArray().put(session).put(object).put(method).put(args));
-        JSONObject response=(JSONObject)request("/ubus",body,false);JSONArray result=response.optJSONArray("result");
+        JSONObject response=(JSONObject)request("/ubus",body,false);
+        JSONObject error=response.optJSONObject("error");
+        if(error!=null){Failure failure=new Failure("API ubus отклонил запрос",-1);failure.rpcStatus=error.optInt("code");throw failure;}
+        JSONArray result=response.optJSONArray("result");
         if(result==null||result.length()==0)throw new Failure("API ubus вернул неподдерживаемый ответ",-1);
-        if(result.getInt(0)!=0)throw new Failure("API ubus отклонил операцию или права доступа",-1);
+        if(result.getInt(0)!=0){Failure failure=new Failure("API ubus отклонил операцию или права доступа",-1);failure.rpcStatus=result.getInt(0);throw failure;}
         return result.optJSONObject(1)==null?new JSONObject():result.getJSONObject(1);
+    }
+    private boolean unavailable(Failure e){return e.status==-1&&Arrays.asList(3,4,6,-32002).contains(e.rpcStatus);}
+    private String reason(Failure e){return e.rpcStatus==6||e.rpcStatus==-32002?"отказ ACL: недостаточно прав":"метод отсутствует или не поддерживается";}
+    private void appendLeases(JSONArray leases)throws Exception{
+        for(int i=0;i<leases.length();i++){check();JSONObject input=leases.getJSONObject(i),output=row("lease");
+            for(String field:Arrays.asList("name","address","mac","lease_source"))put(output,field,input.opt(field));
+            add(output);
+        }
+    }
+    private void readDhcp()throws Exception{
+        String luciFailure="";
+        try{
+            JSONObject data=rpc("luci-rpc","getDHCPLeases",new JSONObject().put("family",4));
+            JSONArray leases=OpenWrtLeases.luci(data);dhcpSource=OpenWrtLeases.LUCI;appendLeases(leases);return;
+        }catch(JSONException e){warnings.put("DHCP LuCI: неверный формат ответа; аренды не определены");return;}
+        catch(Failure e){check();if(!unavailable(e))throw e;luciFailure=reason(e);}
+        try{
+            JSONArray leases=OpenWrtLeases.odhcpd(rpc("dhcp","ipv4leases",new JSONObject()));
+            dhcpSource=OpenWrtLeases.ODHCPD;appendLeases(leases);
+        }catch(JSONException e){warnings.put("DHCP: LuCI — "+luciFailure+"; odhcpd — неверный формат ответа");}
+        catch(Failure e){check();if(!unavailable(e))throw e;warnings.put("DHCP недоступен: LuCI — "+luciFailure+"; odhcpd — "+reason(e)+". Проверьте rpcd-mod-luci и ACL чтения.");}
     }
     private void openwrt()throws Exception {
         JSONObject login=rpc("session","login",new JSONObject().put("username",user).put("password",password).put("timeout",60));token=login.optString("ubus_rpc_session");if(!token.matches("[a-fA-F0-9]{32}"))throw new Failure("API ubus отклонил вход",401);
@@ -78,7 +104,7 @@ public final class RouterApiClient implements AutoCloseable {
             JSONObject b=rpc("system","board",new JSONObject()),r=row("system");put(r,"name",b.opt("hostname"));put(r,"model",b.opt("model"));put(r,"manufacturer",b.opt("system"));JSONObject release=b.optJSONObject("release");if(release!=null)put(r,"software",release.optString("distribution")+" "+release.optString("version"));add(r);
             optional("Состояние системы",()->{JSONObject info=rpc("system","info",new JSONObject()),v=row("system");put(v,"uptime",info.opt("uptime"));add(v);});
             optional("Интерфейсы",()->{JSONArray list=rpc("network.interface","dump",new JSONObject()).optJSONArray("interface");if(list==null)throw new JSONException("interface");for(int i=0;i<list.length();i++){check();JSONObject o=list.getJSONObject(i),v=row("interface");put(v,"name",o.opt("interface"));put(v,"interface_type",o.opt("proto"));put(v,"status",o.opt("up"));StringBuilder addresses=new StringBuilder();for(String family:Arrays.asList("ipv4-address","ipv6-address")){JSONArray a=o.optJSONArray(family);if(a!=null)for(int j=0;j<a.length();j++){if(addresses.length()>0)addresses.append(", ");addresses.append(a.getJSONObject(j).optString("address"));}}put(v,"address",addresses.toString());add(v);}});
-            optional("DHCP odhcpd",()->{JSONObject leases=rpc("dhcp","ipv4leases",new JSONObject());JSONObject devices=leases.optJSONObject("device");if(devices==null)throw new Failure("Нет данных odhcpd",-1);Iterator<String> keys=devices.keys();while(keys.hasNext()){JSONObject device=devices.getJSONObject(keys.next());JSONArray list=device.optJSONArray("leases");if(list==null)continue;for(int i=0;i<list.length();i++){check();JSONObject o=list.getJSONObject(i),v=row("lease");put(v,"name",o.opt("hostname"));put(v,"address",o.has("address")?o.opt("address"):o.opt("ipaddr"));put(v,"mac",o.opt("mac"));add(v);}}});
+            readDhcp();
         }finally{if(!cancelled.get()&&System.nanoTime()<deadline)try{rpc("session","destroy",new JSONObject().put("ubus_rpc_session",token));}catch(Exception ignored){warnings.put("Сессия завершится по таймауту сервера (60 с)");}}
     }
 }
