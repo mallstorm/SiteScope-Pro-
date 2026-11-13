@@ -62,7 +62,7 @@ class AnonProxy(private val config: () -> AnonConfig, private val connectTimeout
             val cfg = config()
             val route = AnonRouting.routeOf(request.host, cfg.torForAll)
             val via = when (route) {
-                AnonRouting.Route.DIRECT -> null
+                AnonRouting.Route.DIRECT -> if (AnonRouting.isLocalHost(request.host)) null else cfg.direct
                 AnonRouting.Route.TOR -> cfg.tor ?: run { reply(output, 502, "Tor не запущен. Откройте «Onion и I2P» и включите Tor."); return }
                 AnonRouting.Route.I2P -> cfg.i2p ?: run { reply(output, 502, "I2P-прокси не настроен. Откройте «Onion и I2P» и укажите адрес роутера I2P."); return }
             }

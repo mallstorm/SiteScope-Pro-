@@ -1,0 +1,3 @@
+e2684772fbda45f2ff4fc220922a010370534216
+Источник: https://github.com/hufrea/byedpi (лицензия MIT, см. LICENSE). Файлы без изменений.
+Собирается задачей buildCiadpi из app/build.gradle.kts в исполняемый libciadpi_exec.so (запускается как отдельный процесс).

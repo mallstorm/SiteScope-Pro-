@@ -506,6 +506,7 @@ public final class HostsVpnService extends VpnService {
         if (healthProbe != null && healthProbe != Thread.currentThread()) healthProbe.interrupt(); healthProbe = null;
         pro.sitescope.app.vpn.TunnelProxy.remove(this);
         if (xrayRuntime != null) { xrayRuntime.stop(); xrayRuntime = null; }
+        pro.sitescope.app.dpi.DpiChain.release();
         if (captureTee != null) { try { captureTee.stop(); } catch (Throwable ignored) { } captureTee = null; }
         pro.sitescope.app.vpn.CaptureHub.stop();
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("capturing", false).apply();
@@ -537,6 +538,11 @@ public final class HostsVpnService extends VpnService {
         config.json = pro.sitescope.app.vpn.Mitm.apply(this, config.json);
         if (!direct) config.json = pro.sitescope.app.vpn.SplitRules.apply(this, config.json);
         config.json = pro.sitescope.app.vpn.BlockRules.apply(this, config.json);
+        int dpiPort = pro.sitescope.app.dpi.DpiChain.ensure(this);
+        if (dpiPort > 0) {
+            config.json = pro.sitescope.app.dpi.DpiChainConfig.apply(config.json, dpiPort);
+            VpnDiagnostics.log(this, "DPI_CHAIN", "Xray направлен через byedpi, порт " + dpiPort);
+        }
         return config;
     }
 

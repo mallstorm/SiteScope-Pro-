@@ -66,4 +66,6 @@ data class AnonConfig(
     val tor: Upstream? = null,
     val i2p: Upstream? = null,
     val torForAll: Boolean = false,
+    /** Если задан — обычные (не локальные) адреса идут через этот SOCKS5 (обход DPI). */
+    val direct: Upstream? = null,
 )

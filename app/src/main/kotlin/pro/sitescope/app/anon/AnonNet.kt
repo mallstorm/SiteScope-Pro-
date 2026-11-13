@@ -105,7 +105,14 @@ object AnonNet {
         return if (s.i2pSocks) Upstream.Socks5(s.i2pHost, s.i2pPort) else Upstream.Http(s.i2pHost, s.i2pPort)
     }
 
-    private fun currentConfig() = AnonConfig(tor = torUpstream(), i2p = i2pUpstream(), torForAll = settings.torForAll)
+    private fun currentConfig() = AnonConfig(tor = torUpstream(), i2p = i2pUpstream(), torForAll = settings.torForAll, direct = dpiUpstream())
+
+    private fun dpiUpstream(): Upstream? =
+        if (inited && pro.sitescope.app.dpi.DpiStore.browserViaDpi(app) && pro.sitescope.app.dpi.DpiRuntime.running) Upstream.Socks5("127.0.0.1", pro.sitescope.app.dpi.DpiRuntime.port) else null
+
+    /** Обычные адреса браузера должны идти через локальный прокси, потому что включён обход DPI для браузера. */
+    @JvmStatic
+    fun directViaDpi(): Boolean = inited && dpiUpstream() != null
 
     // ───── встроенный Tor ─────
 
@@ -187,7 +194,7 @@ object AnonNet {
         init(context)
         val host = AnonRouting.hostOf(url)
         val route = AnonRouting.routeOf(host, settings.torForAll)
-        if (route == AnonRouting.Route.DIRECT && !_state.value.webViewProxyOn) { main.post { listener.ready() }; return }
+        if (route == AnonRouting.Route.DIRECT && !directViaDpi() && !_state.value.webViewProxyOn) { main.post { listener.ready() }; return }
         Thread({
             try {
                 val port = proxy.start()

@@ -17,8 +17,8 @@ android {
         applicationId = "pro.sitescope.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1_000_029
-        versionName = "1.0.0-beta29"
+        versionCode = 1_000_030
+        versionName = "1.0.0-beta30"
         ndk { abiFilters += "arm64-v8a" }
     }
 
@@ -71,6 +71,35 @@ tasks.withType<Test>().configureEach {
     // Robolectric's TLS server fixture on JDK 17 uses InetAddress through reflection.
     jvmArgs("--add-opens=java.base/java.net=ALL-UNNAMED")
 }
+
+// ── Обход DPI: исходники byedpi (MIT) собираются NDK-clang в исполняемый файл libciadpi_exec.so (arm64).
+// Он упаковывается как jni-библиотека, распаковывается в nativeLibraryDir и запускается отдельным процессом.
+val ciadpiOut = layout.buildDirectory.dir("ciadpi/jniLibs/arm64-v8a")
+val buildCiadpi = tasks.register("buildCiadpi") {
+    val sources = layout.projectDirectory.dir("src/main/cpp/byedpi")
+    inputs.dir(sources)
+    outputs.dir(ciadpiOut)
+    doLast {
+        val roots = listOfNotNull(System.getenv("ANDROID_NDK_HOME"), System.getenv("ANDROID_NDK_LATEST_HOME"), System.getenv("ANDROID_NDK_ROOT"))
+            .map { File(it) }.toMutableList()
+        listOfNotNull(System.getenv("ANDROID_HOME"), System.getenv("ANDROID_SDK_ROOT")).forEach { sdk ->
+            File(sdk, "ndk").listFiles()?.filter { it.isDirectory }?.sortedByDescending { it.name }?.let { roots.addAll(it) }
+        }
+        val os = System.getProperty("os.name").lowercase()
+        val host = when { os.contains("win") -> "windows-x86_64"; os.contains("mac") -> "darwin-x86_64"; else -> "linux-x86_64" }
+        val clang = roots.map { File(it, "toolchains/llvm/prebuilt/$host/bin/aarch64-linux-android28-clang" + if (os.contains("win")) ".cmd" else "") }
+            .firstOrNull { it.exists() } ?: throw GradleException("Не найден Android NDK (ANDROID_NDK_HOME): он нужен для сборки byedpi")
+        val out = ciadpiOut.get().asFile.also { it.mkdirs() }
+        val files = listOf("conev", "desync", "extend", "main", "mpool", "packets", "proxy").map { File(sources.asFile, "$it.c").absolutePath }
+        val command = listOf(clang.absolutePath, "-O2", "-std=c99", "-D_DEFAULT_SOURCE", "-fPIE", "-pie", "-s", "-Wno-unused",
+            "-Wl,-z,max-page-size=16384", "-I" + sources.asFile.absolutePath, "-o", File(out, "libciadpi_exec.so").absolutePath) + files
+        val process = ProcessBuilder(command).redirectErrorStream(true).start()
+        val log = process.inputStream.bufferedReader().readText()
+        if (process.waitFor() != 0) throw GradleException("Сборка byedpi не удалась:\n$log")
+    }
+}
+android.sourceSets.getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("ciadpi/jniLibs"))
+tasks.named("preBuild") { dependsOn(buildCiadpi) }
 
 dependencies {
     implementation(files("libs/jsch-0.2.16.jar", "libs/libv2ray.jar"))

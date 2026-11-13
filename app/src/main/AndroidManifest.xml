@@ -13,6 +13,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <queries>
         <intent>
@@ -53,6 +54,26 @@
             </intent-filter>
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-managed local Hosts DNS or combined Hosts + Xray tunnel" />
         </service>
+        <service
+            android:name=".dpi.DpiService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Local SOCKS5 proxy that bypasses DPI blocking (byedpi)" />
+        </service>
+        <service
+            android:name=".dpi.DpiVpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-started VPN that routes selected apps through a local DPI-bypass proxy" />
+        </service>
+        <receiver android:name=".dpi.DpiBootReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
         <activity android:name=".PlayerActivity" android:exported="false" android:theme="@android:style/Theme.NoDisplay" />
         <activity android:name=".IptvActivity" android:exported="false" android:screenOrientation="unspecified" />
         <activity android:name=".SeoActivity" android:exported="false" android:screenOrientation="unspecified" />

@@ -120,7 +120,8 @@ public final class WebClientActivity extends Activity {
     private boolean needsPrepare(String url) {
         String host = AnonRouting.INSTANCE.hostOf(url);
         AnonRouting.Route route = AnonRouting.INSTANCE.routeOf(host, AnonNet.INSTANCE.settings().getTorForAll());
-        return route != AnonRouting.Route.DIRECT && !AnonNet.INSTANCE.getState().getValue().getWebViewProxyOn();
+        boolean needProxy = route != AnonRouting.Route.DIRECT || AnonNet.directViaDpi();
+        return needProxy && !AnonNet.INSTANCE.getState().getValue().getWebViewProxyOn();
     }
 
     private String page(String title, String body) {

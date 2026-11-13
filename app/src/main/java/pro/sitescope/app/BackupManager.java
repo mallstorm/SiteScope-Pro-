@@ -40,7 +40,7 @@ public final class BackupManager {
         "site_monitor",
         "ip_recent",
         "wake_on_lan",
-        "speed_test","anon_net",
+        "speed_test","anon_net","dpi_bypass",
         "tv_mask",
         "net_monitor",
         "vpn_settings"
