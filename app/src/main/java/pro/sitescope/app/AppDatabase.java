@@ -16,7 +16,7 @@ import org.json.JSONObject;
  */
 public final class AppDatabase extends SQLiteOpenHelper {
     private static final String NAME = "sitescope_app.db";
-    private static final int VERSION = 6;
+    private static final int VERSION = 7;
     private static volatile AppDatabase INSTANCE;
     private final Context context;
 
@@ -66,6 +66,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
         DeviceHistoryStore.createTables(db);
         ExposureStore.createTables(db);
         RouterStore.createTables(db);
+        RouterLeaseStore.createTables(db);
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
@@ -74,6 +75,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
         if (oldVersion < 4) DeviceHistoryStore.createTables(db);
         if (oldVersion < 5) ExposureStore.createTables(db);
         if (oldVersion < 6) RouterStore.createTables(db);
+        if (oldVersion < 7) RouterLeaseStore.createTables(db);
     }
 
     private void createHostsTables(SQLiteDatabase db) {
@@ -244,9 +246,14 @@ public final class AppDatabase extends SQLiteOpenHelper {
         finally { cursor.close(); }
         root.put("inventoryAliases", aliases);
         root.put("hostsProfiles", new HostsStore(context).exportProfiles());
-        root.put("deviceRegistry", DeviceRegistryStore.exportGraph(read()));
-        root.put("exposure", ExposureStore.exportState(read()));
-        root.put("routers", RouterStore.exportState(read()));
+        SQLiteDatabase graphDb=read();graphDb.beginTransactionNonExclusive();
+        try {
+            root.put("deviceRegistry", DeviceRegistryStore.exportGraph(graphDb));
+            root.put("exposure", ExposureStore.exportState(graphDb));
+            root.put("routers", RouterStore.exportState(graphDb));
+            root.put("routerLeaseLinks", RouterLeaseStore.exportState(graphDb));
+            graphDb.setTransactionSuccessful();
+        } finally { graphDb.endTransaction(); }
         return root;
     }
 
@@ -268,6 +275,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
             DeviceRegistryStore.restoreGraph(db, root.optJSONObject("deviceRegistry"));
             ExposureStore.restore(db, root.optJSONObject("exposure"));
             RouterStore.restore(db, root.optJSONObject("routers"));
+            RouterLeaseStore.restore(db, root.optJSONArray("routerLeaseLinks"));
             importProjects(db, root.optJSONArray("projects"));
             importSimple(db, "audits", root.optJSONArray("audits"), "timestamp");
             JSONArray scans = root.optJSONArray("scans"); if (scans != null) for (int i = scans.length() - 1; i >= 0; i--) insertScanJson(db, scans.getJSONObject(i));
@@ -286,6 +294,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
 
     /** Validate all row containers before deleting any current data. */
     public static void validatePortable(JSONObject root) throws Exception {
+        if (root.has("routerLeaseLinks")) RouterLeaseStore.validate(root.getJSONArray("routerLeaseLinks"), root.optJSONObject("deviceRegistry"));
         if (root.has("routers")) RouterStore.validate(root.getJSONObject("routers"));
         if (root.has("exposure")) ExposureStore.validate(root.getJSONObject("exposure"));
         if (root.has("deviceRegistry")) DeviceRegistryStore.validateGraph(root.getJSONObject("deviceRegistry"));

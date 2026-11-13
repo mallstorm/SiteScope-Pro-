@@ -54,6 +54,6 @@ class ExposureStoreTest {
     @Test fun sqliteFourUpgradePreservesCardsAndAddsOwnServiceTables() {
         DeviceRegistryStore.recordBatch(app, listOf(DeviceRegistryStore.scan(Models.PortResult().apply { ip = "192.168.1.10"; port = 443; open = true }, NetworkScope("home", "Дом", true), System.currentTimeMillis())))
         val db = AppDatabase.get(app).write(); db.execSQL("DROP TABLE exposure_targets"); db.execSQL("DROP TABLE exposure_runs"); db.version = 4
-        TestStores.reset(); assertEquals(6, AppDatabase.get(app).read().version); assertEquals(1, DeviceRegistryStore.count(app)); assertTrue(ExposureStore.targets(app).isEmpty())
+        TestStores.reset(); assertEquals(7, AppDatabase.get(app).read().version); assertEquals(1, DeviceRegistryStore.count(app)); assertTrue(ExposureStore.targets(app).isEmpty())
     }
 }

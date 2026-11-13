@@ -26,7 +26,7 @@ class RouterStoreTest {
         val backup = AppDatabase.get(app).exportPortable(); assertFalse(backup.toString().contains("SECRET-CREDENTIALS"))
         RouterStore.clearSnapshots(app); RouterStore.remove(app, config.id); AppDatabase.get(app).restorePortable(backup)
         assertEquals(config.id, RouterStore.configs(app).single().id); assertEquals("hAP", RouterStore.snapshots(app).single().getJSONArray("rows").getJSONObject(0).getString("model"))
-        assertArrayEquals(arrayOf("", ""), RouterStore.credentials(app, config.id)); assertEquals(11, BackupManager.SCHEMA_VERSION)
+        assertArrayEquals(arrayOf("", ""), RouterStore.credentials(app, config.id)); assertEquals(12, BackupManager.SCHEMA_VERSION)
     }
     @Test fun invalidRestoreDoesNotDeleteExistingDataAndOldBackupsClearNewTables() {
         RouterStore.snapshot(app, snapshot()); val backup = AppDatabase.get(app).exportPortable()
@@ -43,7 +43,7 @@ class RouterStoreTest {
     @Test fun v5MigrationPreservesCardsAndAddsRouterTables() {
         DeviceRegistryStore.recordBatch(app, listOf(DeviceRegistryStore.scan(Models.PortResult().apply { ip = "192.168.1.10"; port = 443; open = true }, NetworkScope("home", "Дом", true), 1000)))
         val db = AppDatabase.get(app).write(); db.execSQL("DROP TABLE router_connections"); db.execSQL("DROP TABLE router_snapshots"); db.version = 5; TestStores.reset()
-        assertEquals(6, AppDatabase.get(app).read().version); assertEquals(1, DeviceRegistryStore.count(app)); assertTrue(RouterStore.configs(app).isEmpty()); assertTrue(RouterStore.snapshots(app).isEmpty())
+        assertEquals(7, AppDatabase.get(app).read().version); assertEquals(1, DeviceRegistryStore.count(app)); assertTrue(RouterStore.configs(app).isEmpty()); assertTrue(RouterStore.snapshots(app).isEmpty())
     }
     @Test fun snapshotRejectsUnknownRootFieldsNonScalarRowsAndOversizedData() {
         for (bad in listOf(snapshot().put("password", "PRIVATE"), snapshot().apply { getJSONArray("rows").getJSONObject(0).put("model", JSONObject().put("password", "PRIVATE")) }, snapshot().apply { getJSONArray("rows").getJSONObject(0).put("model", "x".repeat(1025)) })) assertThrows(Exception::class.java) { RouterStore.snapshot(app, bad) }

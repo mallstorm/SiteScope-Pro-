@@ -115,6 +115,7 @@ private fun DeviceCardSheet(vm: NetViewModel, card: DeviceRegistryStore.Card) {
                 }
                 SectionTitle("Источники и сервисы (${card.memberCount})")
             }
+            item { CardLeaseLinks(card.id, card.memberCount) }
             if (vm.cardsError.isNotBlank()) item { ErrorCard(vm.cardsError) }
             items(card.observations, key = { it.id }) { o ->
                 SoftCard(padding = 12.dp) {

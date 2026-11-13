@@ -213,6 +213,7 @@ public final class DeviceRegistryStore {
             ContentValues namesValue=new ContentValues();namesValue.put("names",new JSONArray(names).toString());db.update("device_cards",namesValue,"id=?",new String[]{target});
             if(a.alias.isEmpty()&&!b.alias.isEmpty()){ContentValues v=new ContentValues();v.put("alias",b.alias);db.update("device_cards",v,"id=?",new String[]{target});}
             refreshSearch(db,target);
+            RouterLeaseStore.moveCard(db,other,target);
             db.delete("device_cards","id=?",new String[]{other});db.execSQL("UPDATE device_cards SET updated_at=? WHERE id=?",new Object[]{Math.max(a.updatedAt,b.updatedAt),target});db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }

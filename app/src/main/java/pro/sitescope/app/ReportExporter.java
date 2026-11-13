@@ -12,8 +12,8 @@ import java.util.*;
 /** Streaming projection of measured fields. Never opens profiles, raw banners or SecureStore. */
 public final class ReportExporter {
     private ReportExporter() { }
-    public static final List<String> SECTIONS=Collections.unmodifiableList(Arrays.asList("devices","services","changes","exposure","routers"));
-    public static final List<String> FIELDS=Collections.unmodifiableList(Arrays.asList("section","time","source","device","address","port","protocol","manufacturer","model","confidence","field","before","after","status","point","latency_ms","external_tcp_confirmed","run_state","mac","software","uptime","interface_type"));
+    public static final List<String> SECTIONS=Collections.unmodifiableList(Arrays.asList("devices","services","changes","exposure","routers","router_links"));
+    public static final List<String> FIELDS=Collections.unmodifiableList(Arrays.asList("section","time","source","device","address","port","protocol","manufacturer","model","confidence","field","before","after","status","point","latency_ms","external_tcp_confirmed","run_state","mac","software","uptime","interface_type","card_id","observed_at","snapshot_id","router_address"));
     public static final String NOTE="Время — Unix milliseconds UTC. Данные собраны из сохранённых измерений, не являются проверкой текущей доступности. Чтение отчёта не является атомарной резервной копией. TCP-доступ подтверждается только для указанной точки и времени.";
     public static final class Options {
         public final List<String> sections,fields; public final String format;public final int limit;
@@ -29,12 +29,12 @@ public final class ReportExporter {
         SQLiteDatabase db=AppDatabase.get(context).read();Result result=new Result();result.startedAt=System.currentTimeMillis();
         Writer out=new BufferedWriter(new OutputStreamWriter(output,StandardCharsets.UTF_8));Sink sink=new Sink(out,options,result,cancel);sink.start();
         for(String section:options.sections){cancel.throwIfCanceled();String last="";
-            while(!result.truncated){cancel.throwIfCanceled();String table=section.equals("devices")?"device_cards":section.equals("services")?"device_observations":section.equals("changes")?"device_history":section.equals("exposure")?"exposure_runs":"router_snapshots";
+            while(!result.truncated){cancel.throwIfCanceled();String table=section.equals("devices")?"device_cards":section.equals("services")?"device_observations":section.equals("changes")?"device_history":section.equals("exposure")?"exposure_runs":section.equals("router_links")?"router_lease_links":"router_snapshots";
                 String columns=section.equals("devices")?"id,alias,names,updated_at,(SELECT group_concat(DISTINCT host) FROM device_observations WHERE card_id=device_cards.id) AS address":"id,json";
                 Cursor c=db.rawQuery("SELECT "+columns+" FROM "+table+" WHERE id>? ORDER BY id LIMIT 1",new String[]{last},cancel);
                 try {if(!c.moveToFirst())break;last=c.getString(0);
                     if(section.equals("devices")){String name=c.getString(1);JSONArray names=new JSONArray(c.getString(2));if(name.isEmpty()&&names.length()>0)name=names.optString(0);sink.row(new JSONObject().put("section",section).put("time",c.getLong(3)).put("source","Каталог карточек").put("device",name.isEmpty()?last:name).put("address",c.getString(4)));}
-                    else {JSONObject o=new JSONObject(c.getString(1));if(section.equals("services"))service(o,sink);else if(section.equals("changes"))change(o,sink);else if(section.equals("exposure"))exposure(o,sink);else router(o,sink);}
+                    else {JSONObject o=new JSONObject(c.getString(1));if(section.equals("services"))service(o,sink);else if(section.equals("changes"))change(o,sink);else if(section.equals("exposure"))exposure(o,sink);else if(section.equals("router_links"))link(o,sink);else router(o,sink);}
                 }finally{c.close();}
             }
             if(result.truncated)break;
@@ -54,6 +54,9 @@ public final class ReportExporter {
     }
     private static void router(JSONObject o,Sink sink)throws Exception {
         JSONArray list=o.getJSONArray("rows");for(int i=0;i<list.length()&&!sink.result.truncated;i++){JSONObject v=list.getJSONObject(i),r=new JSONObject().put("section","routers").put("time",o.getLong("time")).put("source",o.getString("source")).put("device",o.optString("name")+" · "+v.optString("name")).put("field",v.optString("kind")).put("run_state",o.optBoolean("partial")?"partial":"completed");for(String key:Arrays.asList("address","mac","manufacturer","model","software","uptime","interface_type","status"))r.put(key,v.opt(key));sink.row(r);}
+    }
+    private static void link(JSONObject o,Sink sink)throws Exception {
+        sink.row(new JSONObject().put("section","router_links").put("time",o.getLong("time")).put("source","Подтверждено владельцем · "+o.getString("source")).put("device",o.optString("leaseName")).put("address",o.optString("address")).put("mac",o.getString("mac")).put("card_id",o.getString("cardId")).put("observed_at",o.getLong("observedAt")).put("snapshot_id",o.getString("snapshotId")).put("router_address",o.getString("routerHost")).put("status","Ручная связь DHCP; доступность не проверялась"));
     }
     private static final class Sink {
         final Writer out;final Options options;final Result result;final CancellationSignal cancel;

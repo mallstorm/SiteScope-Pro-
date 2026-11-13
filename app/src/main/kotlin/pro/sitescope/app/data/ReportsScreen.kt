@@ -22,8 +22,8 @@ import java.io.File
 import java.util.UUID
 
 private data class PreparedReport(val file: File, val format: String, val result: ReportExporter.Result)
-private val sectionNames = mapOf("devices" to "Карточки", "services" to "Сервисы", "changes" to "Изменения", "exposure" to "Доступ извне", "routers" to "Роутеры API")
-private val fieldNames = mapOf("section" to "Раздел", "time" to "Время", "source" to "Источник", "device" to "Название", "address" to "Адрес", "port" to "Порт", "protocol" to "Протокол", "manufacturer" to "Производитель", "model" to "Модель", "confidence" to "Уверенность", "field" to "Тип сведений", "before" to "Было", "after" to "Стало", "status" to "Статус", "point" to "Точка проверки", "latency_ms" to "Задержка, мс", "external_tcp_confirmed" to "Подтверждение TCP извне", "run_state" to "Состояние опроса", "mac" to "MAC", "software" to "Версия ПО", "uptime" to "Время работы", "interface_type" to "Тип интерфейса")
+private val sectionNames = mapOf("devices" to "Карточки", "services" to "Сервисы", "changes" to "Изменения", "exposure" to "Доступ извне", "routers" to "Роутеры API", "router_links" to "Связи DHCP")
+private val fieldNames = mapOf("section" to "Раздел", "time" to "Время", "source" to "Источник", "device" to "Название", "address" to "Адрес", "port" to "Порт", "protocol" to "Протокол", "manufacturer" to "Производитель", "model" to "Модель", "confidence" to "Уверенность", "field" to "Тип сведений", "before" to "Было", "after" to "Стало", "status" to "Статус", "point" to "Точка проверки", "latency_ms" to "Задержка, мс", "external_tcp_confirmed" to "Подтверждение TCP извне", "run_state" to "Состояние опроса", "mac" to "MAC", "software" to "Версия ПО", "uptime" to "Время работы", "interface_type" to "Тип интерфейса", "card_id" to "ID карточки", "observed_at" to "Время DHCP-снимка", "snapshot_id" to "ID снимка", "router_address" to "Адрес роутера")
 
 @Composable
 internal fun ReportsScreen() {

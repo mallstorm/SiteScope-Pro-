@@ -52,6 +52,7 @@ internal fun RouterScreen() {
     var job by remember { mutableStateOf<Job?>(null) }
     var generation by remember { mutableLongStateOf(0) }
     var clear by remember { mutableStateOf(false) }
+    var linking by remember { mutableStateOf<Pair<JSONObject, String>?>(null) }
     fun cancel() { generation++; job?.cancel(); job = null; busy = false; status = "Опрос отменён" }
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP && busy) cancel() }
@@ -78,18 +79,22 @@ internal fun RouterScreen() {
             val endpoint = ServiceEndpoint().also { it.host = java.net.URI(c.base).host.removeSurrounding("[", "]") }
             val network = CameraClient.selectNetwork(context, endpoint)
             if (network == null) { error = "Нет доступной сети для подключения к роутеру"; return }
-            val source = "${if (kind == "routeros") "RouterOS REST" else "OpenWrt ubus"} · ${NetworkScope.capture(context, network).label}"
+            val capturedScope = NetworkScope.capture(context, network)
+            val source = "${if (kind == "routeros") "RouterOS REST" else "OpenWrt ubus"} · ${capturedScope.label}"
             val client = RouterApiClient(network); val stamp = ++generation
             busy = true; error = ""; status = "Чтение API роутера…"
             job = scope.launch {
                 try {
                     val result = readRouter(client) { client.read(c, login.first, login.second, source) }
                     ensureActive()
+                    val manager = context.getSystemService(android.net.ConnectivityManager::class.java)
+                    if (manager?.getNetworkCapabilities(network) == null || NetworkScope.capture(context, network).id != capturedScope.id) throw IllegalArgumentException("Сеть изменилась: повторите опрос")
+                    RouterComparison.attach(result, c.base, capturedScope)
                     withContext(Dispatchers.IO) { RouterStore.snapshot(context, result) }
                     if (generation == stamp) { version++; status = if (result.optBoolean("partial")) "Получен частичный снимок: смотрите пояснения" else "Сведения прочитаны. Конфигурация не изменялась." }
                 } catch (e: CancellationException) { throw e }
                 catch (e: RouterApiClient.Failure) { if (generation == stamp) error = e.message ?: "Ошибка API" }
-                catch (e: Exception) { if (generation == stamp) error = "Не удалось получить или сохранить сведения роутера" }
+                catch (e: Exception) { if (generation == stamp) error = if (e is IllegalArgumentException) e.message ?: "Проверьте сведения" else "Не удалось получить или сохранить сведения роутера" }
                 finally { if (generation == stamp) busy = false }
             }
         } catch (e: Exception) { error = if (e is IllegalArgumentException) e.message ?: "Проверьте адрес" else "Проверьте адрес роутера" }
@@ -107,7 +112,7 @@ internal fun RouterScreen() {
             Row { Checkbox(allowHttp, { allowHttp = it; owner = false }, enabled = !busy); Text("Разрешить HTTP для локального числового IP") }
             if (allowHttp) Text("HTTP передаёт данные входа без шифрования. Используйте только в доверенной локальной сети.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(user, { user = it }, Modifier.fillMaxWidth(), enabled = !busy, label = { Text("Пользователь владельца") }, singleLine = true)
-            OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), enabled = !busy, label = { Text("Пароль") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
+            OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), enabled = !busy, label = { Text("Пароль") }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password), singleLine = true)
             Row { Checkbox(keep, { keep = it }, enabled = !busy); Text("Запомнить данные входа на этом устройстве") }
             Row { Checkbox(owner, { owner = it }, enabled = !busy); Text("Это мой роутер или у меня есть разрешение владельца") }
             Row { TextButton(enabled = !busy && owner, onClick = ::save) { Text("Сохранить") }; Button(enabled = !busy && owner, onClick = ::read) { Text("Прочитать") } }
@@ -123,13 +128,15 @@ internal fun RouterScreen() {
             }
         } }
         item { SectionTitle("Снимки API (${snapshots.size}, последние 20)"); Text("DHCP-аренда и включённый интерфейс не доказывают доступность устройства сейчас. Снимки доступны в «Данные → Отчёты».", style = MaterialTheme.typography.bodySmall) }
+        item { RouterComparePanel(snapshots) }
         if (snapshots.isNotEmpty()) item { TextButton(enabled = !busy, onClick = { clear = true }) { Text("Очистить снимки") } }
-        items(snapshots, key = { it.optString("id") }) { RouterSnapshot(it) }
+        items(snapshots, key = { it.optString("id") }) { RouterSnapshot(it) { mac -> linking = it to mac } }
     }
+    linking?.let { (snapshot, mac) -> RouterLeaseLinkDialog(snapshot, mac, close = { linking = null }, saved = { version++; status = "Связь DHCP подтверждена" }) }
     if (clear) AlertDialog(onDismissRequest = { clear = false }, title = { Text("Удалить снимки API?") }, text = { Text("Сохранённые подключения останутся.") }, confirmButton = { TextButton(onClick = { RouterStore.clearSnapshots(context); version++; clear = false }) { Text("Удалить") } }, dismissButton = { TextButton(onClick = { clear = false }) { Text("Отмена") } })
 }
 @Composable
-private fun RouterSnapshot(snapshot: JSONObject) {
+private fun RouterSnapshot(snapshot: JSONObject, onLease: (String) -> Unit) {
     var limit by remember(snapshot.optString("id")) { mutableIntStateOf(8) }
     SoftCard {
         Text(snapshot.optString("name").ifBlank { snapshot.optString("host") }, style = MaterialTheme.typography.titleSmall)
@@ -137,10 +144,12 @@ private fun RouterSnapshot(snapshot: JSONObject) {
         Text(snapshot.optString("source"), style = MaterialTheme.typography.bodySmall)
         val warnings = snapshot.optJSONArray("warnings")
         for (i in 0 until (warnings?.length() ?: 0)) Text(warnings!!.optString(i), color = MaterialTheme.colorScheme.error)
+        if (RouterComparison.origin(snapshot).isEmpty()) Text("Для сравнения и привязки DHCP нужен новый снимок с определённой сетью.", style = MaterialTheme.typography.bodySmall)
         val rows = snapshot.getJSONArray("rows")
         for (i in 0 until minOf(rows.length(), limit)) {
             val r = rows.getJSONObject(i)
             Text(listOf("kind", "name", "model", "manufacturer", "address", "mac", "software", "uptime", "interface_type", "status").map { r.optString(it) }.filter { it.isNotBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+            if (r.optString("kind") == "lease") TextButton(enabled = RouterComparison.origin(snapshot).isNotEmpty() && RouterComparison.mac(r.optString("mac")).isNotEmpty(), onClick = { onLease(r.optString("mac")) }) { Text("Связать с карточкой…") }
         }
         if (limit < rows.length()) TextButton(onClick = { limit += 32 }) { Text("Ещё · ${minOf(limit, rows.length())} из ${rows.length()}") }
     }

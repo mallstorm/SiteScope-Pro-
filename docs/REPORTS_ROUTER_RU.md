@@ -48,3 +48,7 @@ HTTPS использует обычную проверку доверия Androi
 
 - [Официальное руководство RouterOS REST](https://manual.mikrotik.com/docs/developer-guides/rest-api/): Basic, права read/api/rest-api, GET и форматы объектов/списков.
 - [Исходники odhcpd ubus](https://lxr.openwrt.org/source/odhcpd/src/ubus.c): контейнеры device/leases и поле address; сохранена совместимость с прежним ipaddr.
+
+## Дополнение beta21
+
+Сравнение новых снимков и подтверждённые вручную связи DHCP описаны в [ROUTER_COMPARISON_RU.md](ROUTER_COMPARISON_RU.md). Они сохраняются в копии v12/SQLite v7; «Связи DHCP» доступны отдельным разделом CSV/JSON/HTML. Учётные данные по-прежнему не включаются.
