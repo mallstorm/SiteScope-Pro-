@@ -19,9 +19,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import pro.sitescope.app.IptvTargets
+import kotlinx.coroutines.Job
 import pro.sitescope.app.IptvEngine
 import pro.sitescope.app.Models
 import pro.sitescope.app.ScannerEngine
@@ -36,7 +39,11 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
     val t = tones
     var targets by remember { mutableStateOf(net.localSubnet()) }
     var ports by remember { mutableStateOf("4022,8080,81,80") }
+    val discoveryPrefs = remember { context.getSharedPreferences("iptv_discovery", Context.MODE_PRIVATE) }
+    var threadCount by remember { mutableIntStateOf(discoveryPrefs.getInt("threads", 8).coerceIn(2, 250)) }
+    var delayMs by remember { mutableIntStateOf(discoveryPrefs.getInt("delay_ms", 0).coerceIn(0, 5000)) }
     var searching by remember { mutableStateOf(false) }
+    var searchJob by remember { mutableStateOf<Job?>(null) }
     var status by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
     val gateways = remember { mutableStateListOf<Models.UdpxyEndpoint>() }
@@ -54,17 +61,22 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
 
     fun findGateways() = scope.launch {
         searching = true; error = ""; gateways.clear(); status = "Готовим список адресов…"
-        withContext(Dispatchers.IO) {
+        val workers = threadCount; val delay = delayMs
+        discoveryPrefs.edit().putInt("threads", workers).putInt("delay_ms", delay).apply()
+        val job = coroutineContext[Job]
+        try { withContext(Dispatchers.IO) {
             try {
-                val hosts = ScannerEngine.parseTargets(targets); val list = ScannerEngine.parsePorts(ports)
-                IptvEngine.discoverUdpxy(hosts, list, 900, object : IptvEngine.DiscoveryListener {
-                    override fun onProgress(completed: Int, total: Int, currentHost: String?) { status = "Проверено $completed из $total" }
+                val hosts = IptvTargets.parse(targets); val list = ScannerEngine.parsePorts(ports)
+                IptvEngine.discoverUdpxy(hosts, list, 900, workers, delay.toLong(), object : IptvEngine.DiscoveryListener {
+                    override fun onProgress(completed: Long, total: Long, currentHost: String?) { status = "Проверено $completed из $total" }
+                    override fun isCancelled(): Boolean = job?.isActive == false
                     override fun onFound(endpoint: Models.UdpxyEndpoint?) { if (endpoint != null) scope.launch { gateways.add(endpoint) } }
                 })
             } catch (e: Exception) { error = e.message ?: "Проверьте адреса и порты" }
         }
-        searching = false; status = if (gateways.isEmpty() && error.isEmpty()) "Шлюз не найден. Возможно, провайдер его не использует — тогда каналы открываются напрямую." else ""
-    }
+        } finally { searching = false }
+        status = if (gateways.isEmpty() && error.isEmpty()) "Шлюз не найден. Возможно, провайдер его не использует — тогда каналы открываются напрямую." else ""
+    }.also { searchJob = it }
 
     fun listen() = scope.launch {
         listening = true; announced.clear(); sapStatus = "Слушаем сеть 8 секунд…"
@@ -112,9 +124,14 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
             BigField(targets, { targets = it }, "Где искать: 192.168.1.0/24", leading = Icons.Rounded.Lan, mono = true)
             Spacer(Modifier.height(8.dp))
             BigField(ports, { ports = it }, "Порты", leading = Icons.Rounded.Tag, keyboard = KeyboardType.Ascii, mono = true)
+            Text("Параллельных потоков: $threadCount", modifier = Modifier.padding(top = 12.dp))
+            Slider(value = threadCount.toFloat(), onValueChange = { threadCount = it.roundToInt() }, valueRange = 2f..250f, steps = 247, enabled = !searching)
+            Text("Задержка между стартами проверок: $delayMs мс")
+            Slider(value = delayMs.toFloat(), onValueChange = { delayMs = (it / 50).roundToInt() * 50 }, valueRange = 0f..5000f, steps = 99, enabled = !searching)
             Button(onClick = { findGateways() }, enabled = !searching && targets.isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
                 Icon(Icons.Rounded.Search, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (searching) "Ищем…" else "Найти шлюз")
             }
+            if (searching) TextButton(onClick = { searchJob?.cancel(); status = "Поиск остановлен" }) { Text("Остановить поиск") }
             if (searching) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
             if (status.isNotEmpty()) Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
         }

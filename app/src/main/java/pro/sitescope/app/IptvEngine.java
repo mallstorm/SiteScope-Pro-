@@ -30,7 +30,6 @@ import java.util.regex.Pattern;
  */
 public final class IptvEngine {
     public static final int MAX_CHANNELS = 5000;
-    public static final int MAX_DISCOVERY_HOSTS = 32;
     public static final int MAX_DISCOVERY_PORTS = 16;
     public static final int MAX_PLAYLIST_BYTES = 4 * 1024 * 1024;
     public static final int MAX_PROBE_BYTES = 768 * 1024;
@@ -63,8 +62,9 @@ public final class IptvEngine {
     }
 
     public interface DiscoveryListener {
-        void onProgress(int completed, int total, String current);
+        void onProgress(long completed, long total, String current);
         void onFound(Models.UdpxyEndpoint endpoint);
+        default boolean isCancelled() { return Thread.currentThread().isInterrupted(); }
     }
 
     public static List<Models.IptvChannel> parseM3u(String text) throws Exception {
@@ -255,31 +255,95 @@ public final class IptvEngine {
 
     public static List<Models.UdpxyEndpoint> discoverUdpxy(List<String> hosts, List<Integer> ports, int timeoutMs, DiscoveryListener listener) throws Exception {
         if (hosts == null || hosts.isEmpty()) throw new Exception("Список узлов пуст");
-        if (ports == null || ports.isEmpty()) throw new Exception("Список портов пуст");
-        if (hosts.size() > MAX_DISCOVERY_HOSTS) throw new Exception("IPTV-обнаружение ограничено " + MAX_DISCOVERY_HOSTS + " узлами");
-        if (ports.size() > MAX_DISCOVERY_PORTS) throw new Exception("IPTV-обнаружение ограничено " + MAX_DISCOVERY_PORTS + " портами");
-        List<Models.UdpxyEndpoint> results = new ArrayList<Models.UdpxyEndpoint>();
-        int total = hosts.size() * ports.size();
-        int completed = 0;
-        for (String host : hosts) {
-            if (!isPrivateOrLocalHost(host)) throw new Exception("Автоматическое обнаружение udpxy разрешено только в локальных/частных сетях: " + host);
-            for (Integer port : ports) {
-                String current = host + ":" + port;
-                Models.UdpxyEndpoint endpoint = probeUdpxy(host, port, timeoutMs);
-                completed++;
-                if (listener != null) listener.onProgress(completed, total, current);
-                if (endpoint != null && endpoint.confirmed) {
-                    results.add(endpoint);
-                    if (listener != null) listener.onFound(endpoint);
+        return discoverUdpxy(hosts, hosts.size(), ports, timeoutMs, listener);
+    }
+
+    public static List<Models.UdpxyEndpoint> discoverUdpxy(IptvTargets hosts, List<Integer> ports, int timeoutMs, DiscoveryListener listener) throws Exception {
+        if (hosts == null || hosts.count() == 0) throw new Exception("Список узлов пуст");
+        return discoverUdpxy(hosts, hosts.count(), ports, timeoutMs, listener);
+    }
+
+    public static List<Models.UdpxyEndpoint> discoverUdpxy(IptvTargets hosts, List<Integer> ports, int timeoutMs, int threads, long delayMs, DiscoveryListener listener) throws Exception {
+        if (hosts == null || hosts.count() == 0) throw new IllegalArgumentException("Список узлов пуст");
+        return discoverUdpxy(hosts, hosts.count(), ports, timeoutMs, threads, delayMs, listener);
+    }
+
+    private static List<Models.UdpxyEndpoint> discoverUdpxy(Iterable<String> hosts, long hostCount, List<Integer> ports, int timeoutMs, DiscoveryListener listener) throws Exception {
+        return discoverUdpxy(hosts, hostCount, ports, timeoutMs, 8, 0, listener);
+    }
+
+    private static boolean cancelled(DiscoveryListener listener) {
+        return Thread.currentThread().isInterrupted() || (listener != null && listener.isCancelled());
+    }
+
+    private static List<Models.UdpxyEndpoint> discoverUdpxy(Iterable<String> hosts, long hostCount, List<Integer> ports, int timeoutMs, int threads, long delayMs, DiscoveryListener listener) throws Exception {
+        if (ports == null || ports.isEmpty()) throw new IllegalArgumentException("Список портов пуст");
+        if (ports.size() > MAX_DISCOVERY_PORTS) throw new IllegalArgumentException("IPTV-обнаружение ограничено " + MAX_DISCOVERY_PORTS + " портами");
+        if (threads < 1 || threads > 250 || delayMs < 0) throw new IllegalArgumentException("Проверьте число потоков и задержку");
+        List<Models.UdpxyEndpoint> results = new ArrayList<>();
+        long total = Math.multiplyExact(hostCount, (long) ports.size());
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        java.util.concurrent.CompletionService<DiscoveryResult> finished = new java.util.concurrent.ExecutorCompletionService<>(pool);
+        Object startLock = new Object();
+        long[] lastStart = {0};
+        java.util.Iterator<String> iterator = hosts.iterator();
+        long submitted = 0, completed = 0;
+        int inFlight = 0, portIndex = 0;
+        String host = null;
+        try {
+            while (completed < total && !cancelled(listener)) {
+                // At most one job per worker is retained; never enqueue the whole range.
+                while (inFlight < threads && submitted < total && !cancelled(listener)) {
+                    if (portIndex == 0) {
+                        host = iterator.next();
+                        if (!isPrivateOrLocalHost(host)) throw new IllegalArgumentException("Автоматическое обнаружение udpxy разрешено только в локальных/частных сетях: " + host);
+                    }
+                    final String target = host;
+                    final int port = ports.get(portIndex);
+                    portIndex = (portIndex + 1) % ports.size();
+                    finished.submit(() -> {
+                        synchronized (startLock) {
+                            while (!cancelled(listener) && lastStart[0] != 0) {
+                                long remaining = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(delayMs) - (System.nanoTime() - lastStart[0]);
+                                if (remaining <= 0) break;
+                                java.util.concurrent.TimeUnit.NANOSECONDS.sleep(Math.min(remaining, 50_000_000L));
+                            }
+                            if (cancelled(listener)) return new DiscoveryResult(target, port, null);
+                            lastStart[0] = System.nanoTime();
+                        }
+                        return new DiscoveryResult(target, port, probeUdpxy(target, port, timeoutMs, listener));
+                    });
+                    inFlight++; submitted++;
+                }
+                if (cancelled(listener)) break;
+                java.util.concurrent.Future<DiscoveryResult> future = finished.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (future == null) continue;
+                DiscoveryResult result = future.get();
+                inFlight--; completed++;
+                if (cancelled(listener)) break;
+                if (listener != null) listener.onProgress(completed, total, result.host + ":" + result.port);
+                if (result.endpoint != null && result.endpoint.confirmed) {
+                    results.add(result.endpoint);
+                    if (listener != null) listener.onFound(result.endpoint);
                 }
             }
-        }
+        } finally { pool.shutdownNow(); }
         return results;
     }
 
+    private static final class DiscoveryResult {
+        final String host; final int port; final Models.UdpxyEndpoint endpoint;
+        DiscoveryResult(String host, int port, Models.UdpxyEndpoint endpoint) { this.host = host; this.port = port; this.endpoint = endpoint; }
+    }
+
     public static Models.UdpxyEndpoint probeUdpxy(String host, int port, int timeoutMs) {
+        return probeUdpxy(host, port, timeoutMs, null);
+    }
+
+    private static Models.UdpxyEndpoint probeUdpxy(String host, int port, int timeoutMs, DiscoveryListener listener) {
         String[] paths = {"/status/", "/status", "/"};
         for (String path : paths) {
+            if (cancelled(listener)) return null;
             HttpURLConnection connection = null;
             long started = System.currentTimeMillis();
             try {

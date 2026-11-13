@@ -662,10 +662,10 @@ public class IptvActivity extends Activity {
         workers.execute(new Runnable() {
             @Override public void run() {
                 try {
-                    final List<String> hosts = ScannerEngine.parseTargets(targetExpr);
+                    final IptvTargets hosts = IptvTargets.parse(targetExpr);
                     final List<Integer> ports = ScannerEngine.parsePorts(portExpr);
                     final List<Models.UdpxyEndpoint> found = IptvEngine.discoverUdpxy(hosts, ports, 900, new IptvEngine.DiscoveryListener() {
-                        @Override public void onProgress(final int completed, final int total, final String current) {
+                        @Override public void onProgress(final long completed, final long total, final String current) {
                             runOnUiThread(new Runnable() { @Override public void run() { sourceStatus.setText("Проверено " + completed + "/" + total + " · " + current); } });
                         }
                         @Override public void onFound(final Models.UdpxyEndpoint endpoint) {
