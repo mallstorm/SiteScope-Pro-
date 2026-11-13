@@ -132,6 +132,10 @@ private fun DeviceCardSheet(vm: NetViewModel, card: DeviceRegistryStore.Card) {
                             } catch (e: Exception) { toast(context, "Не удалось открыть сервис") }
                         }) { Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Открыть сервис") }
                     }
+                    if (o.protocol == "ONVIF") TextButton(onClick = {
+                        try { val endpoint = o.endpoint(context); if (endpoint != null && activity != null) ProtocolRouter.openBuiltIn(activity, endpoint) }
+                        catch (e: Exception) { toast(context, "Не удалось открыть центр камеры") }
+                    }) { Text("Камера: профили и видео") }
                     Text(o.scope.label, style = MaterialTheme.typography.bodySmall)
                     if (o.stableId.isNotBlank()) Text("Объявленный ID: ${o.stableId}", style = MaterialTheme.typography.labelSmall)
                     if (o.ambiguous) Text("Совпадение ID неоднозначно — требуется ручная проверка", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)

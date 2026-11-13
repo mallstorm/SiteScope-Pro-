@@ -509,48 +509,6 @@ fun MqttScreen(ep: ServiceEndpoint) {
 
 // ------------------------------------------------------------------ камеры ONVIF
 
-@Composable
-fun OnvifScreen(ep: ServiceEndpoint) {
-    val context = LocalContext.current
-    val activity = context as? Activity
-    val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf("") }
-    var device by remember { mutableStateOf<Onvif.Device?>(null) }
-    var creds by remember { mutableStateOf("" to "") }
-    val base = remember { Onvif.defaultUrl(ep.host, ep.port, ep.location) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        LoginCard(ep, if (device == null) "Опросить камеру" else "Опросить заново", busy, error, userLabel = "Логин камеры (если нужен)") { user, password ->
-            busy = true; error = ""; creds = user to password
-            scope.launch { device = withContext(Dispatchers.IO) { try { Onvif.inspect(base, user, password) } catch (e: Exception) { error = e.message ?: "Камера не ответила"; null } }; busy = false }
-        }
-        device?.let { d ->
-            if (d.info.isNotEmpty()) { SectionTitle("Камера"); SoftCard(padding = 12.dp) { d.info.forEach { (k, v) -> InfoRow(k, v) } } }
-            SectionTitle("Видеопотоки: ${d.profiles.size}")
-            if (d.profiles.isEmpty()) Text("Камера не сообщила о потоках. Возможно, нужен логин и пароль.", style = MaterialTheme.typography.bodyMedium)
-            d.profiles.forEach { p ->
-                SoftCard(padding = 12.dp, modifier = Modifier.padding(bottom = 8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconBadge(Icons.Rounded.Videocam, tones.tv, tones.tvSoft, 40.dp); Spacer(Modifier.width(12.dp))
-                        Text(p.name.ifEmpty { p.token }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        TextButton(onClick = { scope.launch {
-                            val uri = withContext(Dispatchers.IO) { try { Onvif.streamUri(d.mediaUrl, p.token, creds.first, creds.second) } catch (e: Exception) { "" } }
-                            if (uri.isEmpty()) toast(context, "Камера не выдала адрес потока") else copyText(context, uri, "Адрес потока скопирован")
-                        } }) { Text("Адрес") }
-                        Button(onClick = { scope.launch {
-                            var uri = withContext(Dispatchers.IO) { try { Onvif.streamUri(d.mediaUrl, p.token, creds.first, creds.second) } catch (e: Exception) { "" } }
-                            if (uri.isEmpty()) { toast(context, "Камера не выдала адрес потока"); return@launch }
-                            if (creds.first.isNotEmpty() && uri.startsWith("rtsp://") && !uri.contains("@")) uri = "rtsp://" + Uri.encode(creds.first) + ":" + Uri.encode(creds.second) + "@" + uri.removePrefix("rtsp://")
-                            val rtsp = ServiceEndpoint(); rtsp.host = ep.host; rtsp.port = 554; rtsp.protocol = "RTSP"; rtsp.displayName = p.name.ifEmpty { ep.displayName }; rtsp.uri = uri
-                            if (activity != null) ProtocolRouter.openBuiltIn(activity, rtsp)
-                        } }) { Text("Смотреть") }
-                    }
-                }
-            }
-        }
-    }
-}
-
 // ------------------------------------------------------------------ медиасервер DLNA
 
 @Composable

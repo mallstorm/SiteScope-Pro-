@@ -75,6 +75,7 @@ private val inApp = setOf("SSH", "SFTP", "FTP", "FTPS", "WEBDAV", "RDP", "VNC", 
 private fun copyOf(ep: ServiceEndpoint, protocol: String, port: Int): ServiceEndpoint {
     val e = ServiceEndpoint()
     e.host = ep.host; e.port = port; e.protocol = protocol; e.service = protocol; e.displayName = ep.displayName; e.resourceType = ep.resourceType
+    e.scope = ep.scope
     e.location = if (protocol == "DLNA" || protocol == "ONVIF") ep.location else ""
     e.uri = try { ServiceEndpoint.buildUri(protocol, ep.host, port, "") ?: "" } catch (ex: Exception) { "" }
     return e

@@ -66,6 +66,8 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import pro.sitescope.app.MulticastRelay
+import pro.sitescope.app.CameraPlayback
+import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import pro.sitescope.app.ui.AppTheme
 import pro.sitescope.app.ui.Dot
 import pro.sitescope.app.ui.tones
@@ -88,6 +90,10 @@ class TvPlayerActivity : ComponentActivity() {
     private var droppedFrames = 0
     private var bandwidth = 0L
     private var sleepRunnable: Runnable? = null
+    private var cameraTimeout: Runnable? = null
+    private var cameraNetwork: android.net.Network? = null
+    private var cameraMode = false
+    private var restartCamera = false
 
     // Состояние для интерфейса
     private var index by mutableIntStateOf(0)
@@ -129,7 +135,7 @@ class TvPlayerActivity : ComponentActivity() {
         exo.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 buffering = state == Player.STATE_BUFFERING
-                if (state == Player.STATE_READY) { error = ""; status = ""; triedAlternate = true; current?.let { markWorking(it) } }
+                if (state == Player.STATE_READY) { cameraTimeout?.let { handler.removeCallbacks(it) }; error = ""; status = ""; triedAlternate = true; current?.let { markWorking(it) } }
                 if (state == Player.STATE_ENDED && archiveTitle.isNotEmpty()) { archiveTitle = ""; start() }
             }
             override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
@@ -146,7 +152,11 @@ class TvPlayerActivity : ComponentActivity() {
     }
 
     private fun readQueue() {
-        val url = intent.getStringExtra("url")
+        cameraMode = intent.hasExtra(CameraPlayback.EXTRA)
+        val session = if (cameraMode) CameraPlayback.consumeSession(intent.getStringExtra(CameraPlayback.EXTRA)) else null
+        cameraNetwork = session?.network
+        val url = if (cameraMode) session?.uri else intent.getStringExtra("url")
+        if (cameraMode && url.isNullOrBlank()) { queue = emptyList(); return }
         if (!url.isNullOrBlank()) {
             // Вызов из прежних экранов: один поток и, возможно, соседние
             fun make(u: String?, n: String?): Channel? = if (u.isNullOrBlank()) null else Channel().apply { this.url = u; name = n?.takeIf { it.isNotBlank() } ?: "Поток"; id = Playlist.channelId(u, name) }
@@ -167,9 +177,10 @@ class TvPlayerActivity : ComponentActivity() {
 
     /** Запускает текущий канал с начала (прямой эфир). */
     private fun start(overrideUrl: String? = null) {
-        val channel = current ?: run { error = "Нет потока для воспроизведения"; buffering = false; return }
+        val channel = current ?: run { error = if (cameraMode) "Сеанс камеры истёк. Вернитесь к её профилям и откройте поток снова." else "Нет потока для воспроизведения"; buffering = false; return }
         val exo = player ?: return
         stopRelay()
+        cameraTimeout?.let { handler.removeCallbacks(it) }
         error = ""; buffering = true; droppedFrames = 0; stats = ""
         if (overrideUrl == null) { archiveTitle = ""; triedAlternate = false; forcedMime = null }
         var target = overrideUrl ?: Playlist.playbackUrl(TvStore.udpxyBase, channel.url)
@@ -189,11 +200,17 @@ class TvPlayerActivity : ComponentActivity() {
             http.setDefaultRequestProperties(if (channel.referrer.isNotBlank()) mapOf("Referer" to channel.referrer) else emptyMap())
             val item = MediaItem.Builder().setUri(target)
             (forcedMime ?: guessMime(target, channel))?.let { if (it != MimeTypes.VIDEO_MP2T) item.setMimeType(it) }
-            exo.setMediaItem(item.build())
+            if (target.startsWith("rtsp://", true)) {
+                status = "Подключаемся к RTSP; получение адреса ещё не подтверждает видео…"
+                val factory = RtspMediaSource.Factory().setForceUseRtpTcp(cameraMode).setTimeoutMs(8000).setDebugLoggingEnabled(false)
+                cameraNetwork?.let { factory.setSocketFactory(it.socketFactory) }
+                exo.setMediaSource(factory.createMediaSource(item.build()))
+                cameraTimeout = Runnable { if (buffering) { exo.stop(); buffering = false; error = "Камера не передала поток за 20 секунд. Проверьте доступ и профиль."; controls = true } }.also { handler.postDelayed(it, 20000) }
+            } else exo.setMediaItem(item.build())
             exo.prepare()
             exo.playWhenReady = true
         } catch (e: Exception) {
-            error = "Не удалось открыть поток: " + (e.message ?: e.javaClass.simpleName); buffering = false
+            error = if (cameraMode || channel.url.startsWith("rtsp://", true)) "Не удалось открыть RTSP-поток. Проверьте адрес и доступ к камере." else "Не удалось открыть поток: " + (e.message ?: e.javaClass.simpleName); buffering = false
         }
     }
 
@@ -208,6 +225,19 @@ class TvPlayerActivity : ComponentActivity() {
 
     private fun handleError(e: PlaybackException) {
         val channel = current
+        cameraTimeout?.let { handler.removeCallbacks(it) }
+        if (channel?.url?.startsWith("rtsp://", true) == true) {
+            buffering = false; controls = true
+            var cause: Throwable? = e; var auth = false
+            repeat(8) { val c = cause; if (c != null) { if (Regex("(?:^|\\D)(401|403)(?:\\D|$)").containsMatchIn(c.message.orEmpty())) auth = true; cause = c.cause } }
+            error = when {
+                auth -> "Камера отклонила авторизацию RTSP. Проверьте пользователя и права на просмотр."
+                e.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "Истёк таймаут RTSP. Камера не передаёт поток."
+                e.errorCode in listOf(PlaybackException.ERROR_CODE_DECODER_INIT_FAILED, PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED, PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES) -> "Кодек камеры не поддерживается телефоном. Выберите другой профиль."
+                else -> "Не удалось получить RTSP-видео. Проверьте профиль, адрес и доступ к камере."
+            }
+            status = e.errorCodeName; return
+        }
         // Ссылки без расширения: если не угадали формат — пробуем второй вариант
         if (!triedAlternate && channel != null && relay == null) {
             triedAlternate = true
@@ -315,15 +345,22 @@ class TvPlayerActivity : ComponentActivity() {
         if (isInPictureInPictureMode) panel = Panel.NONE
     }
 
+    override fun onStart() {
+        super.onStart()
+        if (restartCamera) { restartCamera = false; start() }
+    }
+
     override fun onStop() {
         super.onStop()
-        player?.pause()
+        if (cameraMode && !isInPictureInPictureMode) { player?.stop(); restartCamera = true } else player?.pause()
+        cameraTimeout?.let { handler.removeCallbacks(it) }
         if (queue === PlayerQueue.channels) try { TvStore.save(applicationContext) } catch (e: Exception) { }
     }
 
     private fun stopRelay() { try { relay?.stop() } catch (e: Exception) { }; relay = null }
 
     override fun onDestroy() {
+        cameraTimeout?.let { handler.removeCallbacks(it) }
         sleepRunnable?.let { handler.removeCallbacks(it) }
         stopRelay()
         player?.release(); player = null

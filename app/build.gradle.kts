@@ -17,8 +17,8 @@ android {
         applicationId = "pro.sitescope.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1_000_017
-        versionName = "1.0.0-beta17"
+        versionCode = 1_000_018
+        versionName = "1.0.0-beta18"
         ndk { abiFilters += "arm64-v8a" }
     }
 
