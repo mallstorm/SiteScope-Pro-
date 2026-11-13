@@ -18,7 +18,7 @@ object DpiProbe {
             val plain: Socket = Socks5.connect("127.0.0.1", socksPort, host, 443, timeoutMs)
             raw = plain
             plain.soTimeout = timeoutMs
-            val ssl = (SSLSocketFactory.getDefault().createSocket(plain, host, 443, true) as SSLSocket)
+            val ssl = ((SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(plain, host, 443, true) as SSLSocket)
             ssl.soTimeout = timeoutMs
             ssl.startHandshake()
             if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(host, ssl.session)) return fail(host, t0, "сертификат не для этого имени")
