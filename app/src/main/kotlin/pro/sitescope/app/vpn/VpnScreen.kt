@@ -101,6 +101,8 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
     var blockQuic by mutableStateOf(true); private set
     var targets by mutableStateOf<Set<String>>(emptySet()); private set
     var caInstalled by mutableStateOf(false); private set
+    var caNote by mutableStateOf(""); private set
+    var caFingerprint by mutableStateOf(""); private set
     var apps by mutableStateOf<List<Pair<String, String>>>(emptyList()); private set
 
     val active: Boolean get() = lifecycle == HostsVpnService.STATE_ACTIVE
@@ -229,7 +231,23 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
         if (active && runningMode == HostsVpnService.MODE_XRAY) applyLive()
     }
     fun switchQuic(on: Boolean) { VpnSettings.setBlockQuic(context, on); blockQuic = on; if (mitm && active && runningMode == HostsVpnService.MODE_XRAY) applyLive() }
-    fun refreshCa() = viewModelScope.launch(Dispatchers.IO) { caInstalled = mitm && Mitm.caInstalled(context) }
+    fun refreshCa() = viewModelScope.launch(Dispatchers.IO) {
+        val d = Mitm.diagnose(context)
+        caInstalled = VpnSettings.mitm(context) && d.installed; caFingerprint = d.shortFingerprint
+    }
+
+    /** Кнопка «Я установил — проверить»: говорит, что именно найдено и почему сертификат не засчитан. */
+    fun checkCa(done: (String) -> Unit) = viewModelScope.launch {
+        val d = withContext(Dispatchers.IO) { Mitm.diagnose(context) }
+        caInstalled = d.installed; caFingerprint = d.shortFingerprint
+        caNote = when {
+            d.installed -> ""
+            d.error.isNotEmpty() -> "Не удалось прочитать список сертификатов: " + d.error
+            d.staleSameName -> "В системе есть другой сертификат SiteScope — от прошлой установки. Удалите его (Настройки → Шифрование и учётные данные → Пользовательские сертификаты) и установите свежий файл sitescope-ca-${d.shortFingerprint}.crt."
+            else -> "Нашего сертификата среди пользовательских ЦС нет (пользовательских: ${d.userCount}). Проверьте: выбран пункт «Сертификат ЦС», а не «VPN и приложения»; установка закончилась без ошибки (нужна блокировка экрана); выбран именно файл sitescope-ca-${d.shortFingerprint}.crt. Отпечаток: ${d.fingerprint.take(16)}…"
+        }
+        done(if (d.installed) "Сертификат SiteScope установлен" else "Сертификат не найден")
+    }
     fun exportCa(target: Uri, done: (Boolean) -> Unit) = viewModelScope.launch {
         val ok = withContext(Dispatchers.IO) { try { val file = Mitm.ensureCa(context); context.contentResolver.openOutputStream(target)?.use { it.write(file.readBytes()) }; true } catch (e: Exception) { false } }
         done(ok)
@@ -772,13 +790,14 @@ private fun CaptureTab(vm: VpnViewModel) {
             if (vm.caInstalled) Pill("Сертификат SiteScope установлен", t.good, t.goodSoft, icon = Icons.Rounded.Check)
             else Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(t.warnSoft).padding(12.dp)) {
                 Text("Нужно один раз установить сертификат", style = MaterialTheme.typography.titleSmall)
-                Text("1. Сохраните файл сертификата.\n2. Откройте настройки безопасности → «Шифрование и учётные данные» → «Установить сертификат» → «Сертификат ЦС».\n3. Выберите сохранённый файл.",
+                Text("Пока сертификат не установлен, выключите «Расшифровку TLS»: иначе браузеры покажут ошибки сертификата. Сама запись трафика сертификата не требует.\n1. Сохраните файл сертификата.\n2. Откройте настройки безопасности → «Шифрование и учётные данные» → «Установить сертификат» → «Сертификат ЦС».\n3. Выберите сохранённый файл.",
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
                 Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { saveCa.launch("sitescope-ca.crt") }) { Text("Сохранить файл") }
+                    Button(onClick = { saveCa.launch("sitescope-ca-" + vm.caFingerprint.ifEmpty { "new" } + ".crt") }) { Text("Сохранить файл") }
                     OutlinedButton(onClick = { try { context.startActivity(Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS)) } catch (e: Exception) { toast(context, "Откройте Настройки → Безопасность") } }) { Text("Настройки") }
                 }
-                TextButton(onClick = { vm.refreshCa() }, contentPadding = PaddingValues(0.dp)) { Text("Я установил — проверить") }
+                TextButton(onClick = { vm.checkCa { msg -> toast(context, msg) } }, contentPadding = PaddingValues(0.dp)) { Text("Я установил — проверить") }
+                if (vm.caNote.isNotEmpty()) Text(vm.caNote, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
             }
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

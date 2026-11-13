@@ -41,23 +41,38 @@ object Mitm {
         return cert
     }
 
-    /** Установлен ли наш сертификат в системе как доверенный пользовательский. */
-    fun caInstalled(context: Context): Boolean = try {
+    class CaDiagnosis(val installed: Boolean, val staleSameName: Boolean, val userCount: Int, val fingerprint: String, val error: String) {
+        /** Короткий отпечаток для имени файла и сверки с «Пользовательскими сертификатами» в настройках. */
+        val shortFingerprint: String get() = fingerprint.take(8)
+    }
+
+    /**
+     * Ищет наш сертификат среди пользовательских доверенных ЦС. Возвращает причину, если не нашёл:
+     * ошибка чтения, «в системе лежит другой сертификат SiteScope (от прошлой установки)» или «нет вообще».
+     */
+    fun diagnose(context: Context): CaDiagnosis {
         val file = certificateFile(context)
-        if (!file.isFile) false else {
+        if (!file.isFile) return CaDiagnosis(false, false, 0, "", "Файл сертификата ещё не создан")
+        return try {
             val mine = CertAuthority.derOf(file.readText())
+            val fp = java.security.MessageDigest.getInstance("SHA-256").digest(mine).joinToString("") { "%02x".format(it) }
             val store = KeyStore.getInstance("AndroidCAStore"); store.load(null)
-            var found = false
+            var users = 0; var found = false; var sameName = false
             val aliases = store.aliases()
-            while (aliases.hasMoreElements() && !found) {
+            while (aliases.hasMoreElements()) {
                 val alias = aliases.nextElement()
                 if (!alias.startsWith("user:")) continue
                 val c = store.getCertificate(alias) as? X509Certificate ?: continue
+                users++
                 if (c.encoded.contentEquals(mine)) found = true
+                else if (c.subjectX500Principal.name.contains("SiteScope Pro CA")) sameName = true
             }
-            found
-        }
-    } catch (e: Exception) { false }
+            CaDiagnosis(found, sameName && !found, users, fp, "")
+        } catch (e: Exception) { CaDiagnosis(false, false, 0, "", e.message ?: e.javaClass.simpleName) }
+    }
+
+    /** Установлен ли наш сертификат в системе как доверенный пользовательский. */
+    fun caInstalled(context: Context): Boolean = diagnose(context).installed
 
     private fun freePort(): Int = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
 
