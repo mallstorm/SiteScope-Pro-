@@ -479,6 +479,8 @@ public final class Models {
     }
 
     public static final class PortResult {
+        public DeviceIdentity identity = new DeviceIdentity();
+        public String tlsTrust = "not_applicable";
         public String target = "";
         public String host = "";
         public String ip = "";
@@ -508,6 +510,8 @@ public final class Models {
                 object.put("hostname", hostname);
                 object.put("banner", banner);
                 object.put("tlsSubject", tlsSubject);
+                object.put("identity", identity.toJson());
+                object.put("tlsTrust", tlsTrust);
                 object.put("evidence", evidence);
                 object.put("confidence", confidence);
                 object.put("description", description);
@@ -528,6 +532,8 @@ public final class Models {
             result.hostname = object.optString("hostname");
             result.banner = object.optString("banner");
             result.tlsSubject = object.optString("tlsSubject");
+            result.identity = DeviceIdentity.fromJson(object.optJSONObject("identity"));
+            result.tlsTrust = object.optString("tlsTrust", result.tlsSubject.isEmpty() ? "not_applicable" : "not_checked");
             result.evidence = object.optString("evidence");
             result.confidence = object.optString("confidence", "low");
             result.description = object.optString("description");
@@ -589,6 +595,7 @@ public final class Models {
 
 
     public static final class DiscoveredDevice {
+        public DeviceIdentity identity = new DeviceIdentity();
         public String ip = "";
         public int port;
         public String protocol = "";

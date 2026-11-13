@@ -156,7 +156,8 @@ public final class NetworkDiscoveryEngine {
                 String server = header(text, "server");
                 String usn = header(text, "usn");
                 device.name = friendlyFromUsn(usn);
-                device.manufacturer = server;
+                device.identity = DeviceFingerprintEngine.fromDiscoveryServer(server);
+                device.manufacturer = device.identity.manufacturer;
                 device.deviceType = classifySsdp(device.services + " " + usn + " " + server);
                 device.evidence = firstLine(text) + " · ST=" + value(device.services) + " · SERVER=" + value(server);
                 device.confidence = "high";
@@ -194,7 +195,7 @@ public final class NetworkDiscoveryEngine {
                 device.services = xmlValue(response, "Types");
                 String scopes = xmlValue(response, "Scopes");
                 device.name = scopeValue(scopes, "name");
-                device.model = scopeValue(scopes, "hardware");
+                device.identity = DeviceFingerprintEngine.fromOnvifScopes(scopeValue(scopes, "hardware"));
                 device.evidence = "WS-Discovery ProbeMatch · XAddrs=" + value(device.location) + " · Scopes=" + truncate(scopes, 240);
                 device.confidence = "high";
                 add(found, device, listener);

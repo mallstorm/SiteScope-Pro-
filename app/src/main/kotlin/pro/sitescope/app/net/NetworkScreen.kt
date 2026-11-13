@@ -157,6 +157,10 @@ private fun DevicesTab(vm: NetViewModel) {
                         Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.outline)
                     }
                 }
+                item.services.filter { it.identity.findings.isNotEmpty() }.forEach { device ->
+                    Text(device.protocol, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 12.dp))
+                    DeviceIdentityDetails(device.identity)
+                }
                 TechDetails(item.services.joinToString("\n\n") { d -> listOf(d.protocol + " " + d.ip + ":" + d.port, d.services, d.location, d.evidence).filter { it.isNotBlank() }.joinToString("\n") }, Modifier.padding(top = 8.dp))
             }
         }
@@ -359,15 +363,26 @@ private fun ScannerTab(vm: NetViewModel) {
 
 @Composable
 fun PortRow(r: Models.PortResult, onClick: () -> Unit) {
+    var showIdentity by remember(r.target, r.port) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(r.port.toString(), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.titleSmall, modifier = Modifier.width(58.dp))
         Column(Modifier.weight(1f)) {
             Text(r.service, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (r.identity.isKnown || r.identity.conflicting) Text(r.identity.summary(), style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             val extra = r.description.ifEmpty { r.banner }
             if (extra.isNotEmpty()) Text(extra, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (r.latencyMs > 0) Text("${r.latencyMs} мс", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+        IconButton(onClick = { showIdentity = true }) { Icon(Icons.Rounded.Info, "Как определено устройство", tint = MaterialTheme.colorScheme.outline) }
         Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.outline)
+    }
+    if (showIdentity) ModalBottomSheet(onDismissRequest = { showIdentity = false }) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text("${r.ip.ifEmpty { r.host }}:${r.port} · ${r.service}", style = MaterialTheme.typography.titleMedium)
+            val confidence = when (r.confidence) { "high" -> "Высокая"; "medium" -> "Средняя"; else -> "Низкая" }
+            InfoRow("Уверенность в протоколе", confidence)
+            DeviceIdentityDetails(r.identity, r.tlsTrust)
+        }
     }
 }
 

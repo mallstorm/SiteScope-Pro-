@@ -164,6 +164,7 @@ public final class DeviceInventoryStore {
         try {
             o.put("ip", d.ip); o.put("port", d.port); o.put("protocol", d.protocol); o.put("deviceType", d.deviceType);
             o.put("name", d.name); o.put("hostname", d.hostname); o.put("manufacturer", d.manufacturer); o.put("model", d.model);
+            o.put("identity", d.identity.toJson());
             o.put("location", d.location); o.put("services", d.services); o.put("evidence", d.evidence); o.put("confidence", d.confidence); o.put("latencyMs", d.latencyMs);
         } catch (Exception ignored) { }
         return o;
@@ -173,6 +174,14 @@ public final class DeviceInventoryStore {
         Models.DiscoveredDevice d = new Models.DiscoveredDevice();
         d.ip = o.optString("ip"); d.port = o.optInt("port"); d.protocol = o.optString("protocol"); d.deviceType = o.optString("deviceType", "Сетевое устройство");
         d.name = o.optString("name"); d.hostname = o.optString("hostname"); d.manufacturer = o.optString("manufacturer"); d.model = o.optString("model");
+        d.identity = DeviceIdentity.fromJson(o.optJSONObject("identity"));
+        if (!o.has("identity") && "ONVIF WS-Discovery".equals(d.protocol)) {
+            d.identity = DeviceFingerprintEngine.fromOnvifScopes(d.model);
+            d.model = ""; d.identity.observedAt = 0;
+        } else if (!o.has("identity") && "SSDP/UPnP".equals(d.protocol)) {
+            d.identity = DeviceFingerprintEngine.fromDiscoveryServer(d.manufacturer);
+            d.manufacturer = d.identity.manufacturer; d.identity.observedAt = 0;
+        }
         d.location = o.optString("location"); d.services = o.optString("services"); d.evidence = o.optString("evidence"); d.confidence = o.optString("confidence", "medium"); d.latencyMs = o.optLong("latencyMs");
         return d;
     }

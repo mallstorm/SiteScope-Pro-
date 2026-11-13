@@ -10,6 +10,8 @@ public final class ServiceEndpoint {
     public static final String EXTRA_PREFIX = "service_endpoint_";
 
     public String host = "";
+    public DeviceIdentity identity = new DeviceIdentity();
+    public String tlsTrust = "not_applicable";
     public int port;
     public String protocol = "UNKNOWN";
     public String service = "";
@@ -37,6 +39,8 @@ public final class ServiceEndpoint {
         endpoint.banner = value(result.banner);
         endpoint.tlsSubject = value(result.tlsSubject);
         endpoint.confidence = value(result.confidence);
+        endpoint.identity = result.identity;
+        endpoint.tlsTrust = result.tlsTrust;
         endpoint.description = value(result.description);
         endpoint.latencyMs = result.latencyMs;
         endpoint.uri = buildUri(endpoint.protocol, endpoint.host, endpoint.port, "");
@@ -56,12 +60,15 @@ public final class ServiceEndpoint {
         endpoint.services = value(device.services);
         endpoint.evidence = value(device.evidence);
         endpoint.confidence = value(device.confidence);
+        endpoint.identity = device.identity;
         endpoint.latencyMs = device.latencyMs;
         endpoint.uri = buildUri(endpoint.protocol, endpoint.host, endpoint.port, endpoint.location);
         return endpoint;
     }
 
     public void put(Intent intent) {
+        intent.putExtra(EXTRA_PREFIX + "identity", identity.toJson().toString());
+        intent.putExtra(EXTRA_PREFIX + "tlsTrust", tlsTrust);
         intent.putExtra(EXTRA_PREFIX + "host", host);
         intent.putExtra(EXTRA_PREFIX + "port", port);
         intent.putExtra(EXTRA_PREFIX + "protocol", protocol);
@@ -81,6 +88,9 @@ public final class ServiceEndpoint {
 
     public static ServiceEndpoint from(Intent intent) {
         ServiceEndpoint endpoint = new ServiceEndpoint();
+        try { endpoint.identity = DeviceIdentity.fromJson(new org.json.JSONObject(value(intent.getStringExtra(EXTRA_PREFIX + "identity")))); } catch (Exception ignored) { }
+        endpoint.tlsTrust = intent.getStringExtra(EXTRA_PREFIX + "tlsTrust");
+        if (endpoint.tlsTrust == null) endpoint.tlsTrust = "not_applicable";
         endpoint.host = value(intent.getStringExtra(EXTRA_PREFIX + "host"));
         endpoint.port = intent.getIntExtra(EXTRA_PREFIX + "port", 0);
         endpoint.protocol = value(intent.getStringExtra(EXTRA_PREFIX + "protocol"));

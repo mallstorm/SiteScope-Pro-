@@ -355,6 +355,8 @@ public final class ScannerEngine {
         result.tlsSubject = fingerprint.tlsSubject;
         result.evidence = fingerprint.evidence;
         result.confidence = fingerprint.confidence;
+        result.identity = fingerprint.identity;
+        result.tlsTrust = fingerprint.tlsTrust;
         result.resourceType = resourceType(result, info.publicAddress);
         result.description = serviceDescription(result.service);
         return result;
@@ -439,15 +441,12 @@ public final class ScannerEngine {
         try {
             if (tls) return null;
             socket = connect(host, port, timeoutMs);
-            OutputStream output = socket.getOutputStream();
-            output.write(("HEAD / HTTP/1.0\r\nHost: " + host + "\r\nUser-Agent: SiteScopePro/0.4\r\nConnection: close\r\n\r\n").getBytes("ISO-8859-1"));
-            output.flush();
-            byte[] response = readSome(socket, 1200, Math.min(timeoutMs, 900));
-            String text = printable(response, 1000).trim();
-            if (!text.toUpperCase(Locale.US).startsWith("HTTP/")) return null;
+            HttpFingerprintResponse response = HttpFingerprintResponse.request(socket, host, Math.min(timeoutMs, 1200));
+            if (!response.isHttp()) return null;
             Fingerprint result = new Fingerprint();
             result.service = "HTTP";
-            result.banner = firstLines(text, 4);
+            result.banner = response.status + (response.server.isEmpty() ? "" : "\nServer: " + response.server);
+            result.identity = DeviceFingerprintEngine.fromHttp(response.server, response.realm, response.title, "");
             result.evidence = "Получен корректный HTTP status line";
             result.confidence = "high";
             return result;
@@ -610,6 +609,10 @@ public final class ScannerEngine {
             trackSocket(socket);
             socket.connect(new InetSocketAddress(host, port), timeoutMs);
             socket.setSoTimeout(Math.min(timeoutMs, 1000));
+            if (host.indexOf(':') < 0 && !host.matches("[0-9.]+")) {
+                javax.net.ssl.SSLParameters parameters = socket.getSSLParameters();
+                try { parameters.setServerNames(Collections.singletonList(new javax.net.ssl.SNIHostName(IDN.toASCII(host)))); socket.setSSLParameters(parameters); } catch (IllegalArgumentException ignored) { }
+            }
             socket.startHandshake();
             SSLSession session = socket.getSession();
             String subject = "";
@@ -619,18 +622,18 @@ public final class ScannerEngine {
                     subject = ((X509Certificate) certificates[0]).getSubjectX500Principal().getName();
                 }
             } catch (Exception ignored) { }
-            OutputStream output = socket.getOutputStream();
-            output.write(("HEAD / HTTP/1.0\r\nHost: " + host + "\r\nUser-Agent: SiteScopePro/0.4\r\nConnection: close\r\n\r\n").getBytes("ISO-8859-1"));
-            output.flush();
-            byte[] response = readSome(socket, 1000, 600);
-            String text = printable(response, 900).trim();
+            HttpFingerprintResponse response;
+            try { response = HttpFingerprintResponse.request(socket, host, Math.min(timeoutMs, 1200)); }
+            catch (Exception httpFailure) { response = HttpFingerprintResponse.parse(new byte[0]); }
             Fingerprint result = new Fingerprint();
             result.tlsSubject = subject;
+            result.tlsTrust = "not_checked";
+            result.identity = DeviceFingerprintEngine.fromHttp(response.server, response.realm, response.title, subject);
             result.confidence = "high";
-            if (text.toUpperCase(Locale.US).startsWith("HTTP/")) {
+            if (response.isHttp()) {
                 result.service = "HTTPS";
-                result.banner = firstLines(text, 4);
-                result.evidence = "TLS handshake и HTTP status line подтверждены";
+                result.banner = response.status + (response.server.isEmpty() ? "" : "\nServer: " + response.server);
+                result.evidence = "TLS handshake и HTTP status line подтверждены; доверие сертификату не проверялось";
             } else {
                 result.service = "TLS";
                 result.banner = subject;
@@ -1009,6 +1012,8 @@ public final class ScannerEngine {
     }
 
     private static final class Fingerprint {
+        DeviceIdentity identity = new DeviceIdentity();
+        String tlsTrust = "not_applicable";
         String service = "Unknown TCP";
         String banner = "";
         String tlsSubject = "";

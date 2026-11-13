@@ -1,0 +1,9 @@
+# label|Server|realm|title|manufacturer|family|model
+asus|nginx||ASUSWRT ASUS RT-AX58U - Login|ASUS|ASUSWRT|RT-AX58U
+tplink|TP-LINK|TP-LINK Wireless Router|TP-Link Archer C6 - Login|TP-Link|Archer|Archer C6
+mikrotik|MikroTik HttpProxy||MikroTik RouterOS WebFig|MikroTik|RouterOS|
+ubiquiti|nginx||Ubiquiti EdgeOS ER-X|Ubiquiti|EdgeOS|ER-X
+hikvision|Hikvision-Webs||Hikvision DS-2CD2143G0-I Network Camera|Hikvision||DS-2CD2143G0-I
+dahua|DahuaHttpDvr||Dahua IPC-HFW1230S WebClient|Dahua||IPC-HFW1230S
+synology|nginx||Synology DiskStation DS920+|Synology|DiskStation|DS920+
+qnap|QNAP HTTP Server||QNAP QTS TS-453D|QNAP|QTS|TS-453D

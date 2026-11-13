@@ -100,7 +100,7 @@ public final class ServiceActionActivity extends Activity {
         identity.setOrientation(LinearLayout.VERTICAL);
         identity.setPadding(dp(14), 0, 0, 0);
         identity.addView(text(displayName(), 20, NAVY, true));
-        identity.addView(text(endpoint.protocol + " · " + FeatureReadiness.label(endpoint.protocol) + " · " + confidenceTitle(endpoint.confidence), 13, "BETA".equals(FeatureReadiness.protocolStatus(endpoint.protocol)) ? AMBER : GREEN, true));
+        identity.addView(text(endpoint.protocol + " · " + FeatureReadiness.label(endpoint.protocol) + " · " + "протокол: " + confidenceTitle(endpoint.confidence), 13, "BETA".equals(FeatureReadiness.protocolStatus(endpoint.protocol)) ? AMBER : GREEN, true));
         if (endpoint.resourceType.length() > 0) identity.addView(text(endpoint.resourceType, 13, MUTED, false));
         top.addView(identity, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         hero.addView(top);
@@ -108,6 +108,9 @@ public final class ServiceActionActivity extends Activity {
         if (endpoint.description.length() > 0) hero.addView(infoRow("Назначение", endpoint.description));
         if (endpoint.latencyMs > 0) hero.addView(infoRow("Задержка", endpoint.latencyMs + " мс"));
         if (endpoint.tlsSubject.length() > 0) hero.addView(infoRow("TLS subject", endpoint.tlsSubject));
+        hero.addView(infoRow("Оборудование", endpoint.identity.summary()));
+        hero.addView(infoRow("Уверенность в оборудовании", endpoint.identity.confidenceLabel()));
+        if ("not_checked".equals(endpoint.tlsTrust)) hero.addView(infoRow("Доверие сертификату TLS", "Не проверялось"));
         body.addView(hero);
         if ("BETA".equals(FeatureReadiness.protocolStatus(endpoint.protocol))) {
             TextView beta = text("Бета-клиент: компонент компилируется и поддерживает базовый сценарий, но совместимость с конкретным сервером должна быть подтверждена на реальном оборудовании.", 12, Color.rgb(117,77,10), false);
@@ -126,7 +129,10 @@ public final class ServiceActionActivity extends Activity {
         body.addView(sectionTitle("Технические сведения", "Результаты пассивного определения и протокольного рукопожатия"));
         LinearLayout details = card(15);
         if (endpoint.services.length() > 0) details.addView(infoRow("Сервисы", endpoint.services));
-        if (endpoint.evidence.length() > 0) details.addView(infoRow("Доказательство", endpoint.evidence));
+        if (endpoint.evidence.length() > 0) details.addView(infoRow("Признак протокола", endpoint.evidence));
+        for (DeviceIdentity.Finding finding : endpoint.identity.findings) {
+            details.addView(infoRow(finding.source, finding.value + " · " + finding.detail));
+        }
         if (endpoint.banner.length() > 0) {
             TextView banner = text(endpoint.banner, 12, NAVY, false);
             banner.setTypeface(Typeface.MONOSPACE);
