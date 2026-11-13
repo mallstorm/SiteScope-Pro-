@@ -55,6 +55,21 @@
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-managed local Hosts DNS or combined Hosts + Xray tunnel" />
         </service>
         <service
+            android:name=".anon.TorProcessService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Embedded Tor client process for .onion sites in the built-in browser" />
+        </service>
+        <service
+            android:name=".anon.I2pService"
+            android:exported="false"
+            android:process=":i2pcore"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Embedded i2pd router for .i2p sites in the built-in browser" />
+        </service>
+        <service
             android:name=".dpi.DpiService"
             android:exported="false"
             android:stopWithTask="false"

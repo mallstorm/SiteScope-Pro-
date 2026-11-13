@@ -13,6 +13,8 @@ import androidx.activity.ComponentActivity
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Процесс :i2pcore держит только встроенный I2P: остальная инициализация приложения ему не нужна.
+        if (Application.getProcessName().endsWith(":i2pcore")) return
         pro.sitescope.app.vpn.CrashLog.install(this)
         registerActivityLifecycleCallbacks(LegacyInsets)
         pro.sitescope.app.ui.ThemePrefs.load(this)
