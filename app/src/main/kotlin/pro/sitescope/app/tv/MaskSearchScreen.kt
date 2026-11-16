@@ -30,14 +30,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pro.sitescope.app.MulticastProbe
+import pro.sitescope.app.MulticastRelay
 import pro.sitescope.app.ScannerEngine
 import pro.sitescope.app.ui.*
 import java.util.concurrent.Executors
@@ -74,6 +85,7 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
     var stopAfter by mutableStateOf(prefs.getString("stopAfter", "0") ?: "0")
     var grabFrames by mutableStateOf(prefs.getBoolean("frames", true))
     var useCatalog by mutableStateOf(prefs.getBoolean("catalog", true))
+    var livePreview by mutableStateOf(prefs.getBoolean("live", true))
 
     val found = mutableStateListOf<FoundChannel>()
     var latest by mutableStateOf<FoundChannel?>(null); private set
@@ -86,11 +98,54 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
     private val udpGate = java.util.concurrent.Semaphore(3)   // не больше трёх одновременных подписок на группы
     private val frameExec = Executors.newFixedThreadPool(2) { r -> Thread(r).apply { isDaemon = true } }
 
+    // ---- живое превью найденного канала (как при автопоиске каналов на телевизоре) ----
+    private val previewHttp = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(6000).setReadTimeoutMs(8000)
+    private var exo: ExoPlayer? = null
+    private var relay: MulticastRelay? = null
+    var previewUrl by mutableStateOf(""); private set
+    var previewMuted by mutableStateOf(true); private set
+
+    /** Плеер для текущего живого превью; создаётся один раз и переиспользуется, пока открыт этот экран. */
+    fun previewPlayer(): ExoPlayer {
+        exo?.let { return it }
+        val p = ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(DefaultDataSource.Factory(context, previewHttp)))
+            .build()
+        p.volume = if (previewMuted) 0f else 1f
+        p.addListener(object : Player.Listener { override fun onPlayerError(e: PlaybackException) { previewUrl = "" } })
+        exo = p
+        return p
+    }
+
+    fun toggleMute() { previewMuted = !previewMuted; exo?.volume = if (previewMuted) 0f else 1f }
+
+    private fun stopRelay() { relay?.let { try { it.stop() } catch (_: Exception) { } }; relay = null }
+
+    /** Переключает живое превью на свежий рабочий канал — ровно так, как ТВ показывает картинку при автопоиске. */
+    private fun showLive(h: MaskSearch.Hit) {
+        if (!livePreview) return
+        val p = previewPlayer()
+        stopRelay(); previewUrl = ""
+        try {
+            var target = h.url
+            target = if (target.startsWith("udp://", true) || target.startsWith("rtp://", true)) {
+                val r = MulticastRelay(context, target, object : MulticastRelay.Listener {
+                    override fun onStatus(status: String?) { }
+                    override fun onStats(packets: Long, bytes: Long, lostPackets: Long, networkInterface: String?) { }
+                    override fun onError(message: String?) { }
+                })
+                relay = r; r.start()
+            } else Playlist.playbackUrl(TvStore.udpxyBase, target)
+            p.setMediaItem(MediaItem.fromUri(target)); p.prepare(); p.playWhenReady = true
+            previewUrl = h.url
+        } catch (e: Exception) { previewUrl = "" }
+    }
+
     fun save() {
         prefs.edit().putString("template", template).putString("min", min).putString("max", max).putString("wildcards", wildcards)
             .putString("names", names).putString("hosts", hosts).putString("ports", ports)
             .putInt("concurrency", concurrency.toInt()).putInt("timeout", timeoutSec.toInt()).putString("maxCand", maxCandidates)
-            .putString("stopAfter", stopAfter).putBoolean("frames", grabFrames).putBoolean("catalog", useCatalog).apply()
+            .putString("stopAfter", stopAfter).putBoolean("frames", grabFrames).putBoolean("catalog", useCatalog).putBoolean("live", livePreview).apply()
     }
 
     private fun lines(s: String) = s.split('\n', ';').map { it.trim() }.filter { it.isNotEmpty() }
@@ -127,6 +182,7 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
     fun start() {
         if (running) return
         save(); cancel.set(false); found.clear(); latest = null; error = ""; done = 0; total = 0; finished = false; running = true
+        stopRelay(); previewUrl = ""; exo?.let { it.stop(); it.clearMediaItems() }
         viewModelScope.launch(Dispatchers.IO) {
             val catalog = try { TvStore.load(context); TvStore.snapshot() } catch (e: Exception) { emptyList() }
             val logos = HashMap<String, String>()
@@ -145,6 +201,7 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
                     viewModelScope.launch(Dispatchers.Main) {
                         found.add(f)
                         if (f.alive || latest == null) latest = f
+                        if (f.alive) showLive(h)
                     }
                     if (!grabFrames) h.sample = null
                     if (grabFrames && f.alive && (h.url.startsWith("http") || h.sample != null)) {
@@ -200,7 +257,7 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
 
     fun m3u(): String = MaskSearch.toM3u(found.filter { it.alive }.map { Triple(it.name.ifEmpty { "Канал " + it.hostPort }, "Поиск по маске", it.hit.url) })
 
-    override fun onCleared() { frameExec.shutdownNow() }
+    override fun onCleared() { frameExec.shutdownNow(); stopRelay(); exo?.release(); exo = null }
 
     class Captured(val thumb: Bitmap, val frames: List<Bitmap>)
 
@@ -249,7 +306,7 @@ fun MaskSearchScreen(vm: MaskViewModel = viewModel()) {
     val toCheck = MaskSearch.limit(parsed, cfg)
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
-        RecognitionWindow(vm.latest, vm.running)
+        RecognitionWindow(vm.latest, vm.running, vm)
 
         SectionTitle("Маска ссылки")
         SoftCard {
@@ -302,6 +359,10 @@ fun MaskSearchScreen(vm: MaskViewModel = viewModel()) {
                 Text("Снимать кадр и читать эмблему канала (OCR)", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                 Switch(vm.grabFrames, { vm.grabFrames = it })
             }
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Показывать живое видео найденного канала, как при автопоиске на ТВ", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                Switch(vm.livePreview, { vm.livePreview = it })
+            }
             Text("Проверяйте только свою сеть и ресурсы, к которым у вас есть право доступа. Логины и пароли не подбираются. Ссылки udp://@группа:порт проверяются подпиской на мультикаст (только в сети провайдера по Wi-Fi/Ethernet, до трёх групп одновременно, молчащая группа занимает до нескольких секунд); rtp:// пока не проверяются.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
         }
@@ -349,28 +410,59 @@ fun MaskSearchScreen(vm: MaskViewModel = viewModel()) {
     }
 }
 
-/** Окно распознавания вверху экрана: маленький квадрат с кадром или логотипом и название канала. */
+/** Окно распознавания вверху экрана: живая картинка (если идёт) или кадр/логотип, и название канала — как при автопоиске на ТВ. */
 @Composable
-private fun RecognitionWindow(f: FoundChannel?, running: Boolean) {
+private fun RecognitionWindow(f: FoundChannel?, running: Boolean, vm: MaskViewModel) {
     val t = tones
+    val live = f != null && vm.previewUrl == f.hit.url
     SoftCard(Modifier.padding(top = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (f != null) FrameSquare(f, 96.dp) else Box(Modifier.size(96.dp).clip(RoundedCornerShape(16.dp)).background(t.tvSoft), contentAlignment = Alignment.Center) {
-                if (running) CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp) else Icon(Icons.Rounded.Tv, null, tint = t.tv, modifier = Modifier.size(36.dp))
+            when {
+                live -> LivePreviewSquare(vm, 96.dp)
+                f != null -> FrameSquare(f, 96.dp)
+                else -> Box(Modifier.size(96.dp).clip(RoundedCornerShape(16.dp)).background(t.tvSoft), contentAlignment = Alignment.Center) {
+                    if (running) CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp) else Icon(Icons.Rounded.Tv, null, tint = t.tv, modifier = Modifier.size(36.dp))
+                }
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 if (f == null) {
                     Text(if (running) "Ищем поток…" else "Здесь появится канал", style = MaterialTheme.typography.titleMedium)
-                    Text("Кадр из потока в случайный момент и название, прочитанное с эмблемы: 1+1, Интер, НТВ, РЕН ТВ…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Как при автопоиске каналов на телевизоре: нашёлся поток — сразу идёт картинка, название читается с эмблемы: 1+1, Интер, НТВ, РЕН ТВ…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     Text(f.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(if (f.name.isEmpty()) (if (f.ocr == "busy") "Снимаем кадр и читаем эмблему…" else "Эмблема не видна — названия нет") else "Название ${f.nameSource}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(f.hit.url, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.outline)
-                    Pill(f.hit.status.title, statusColor(f.hit.status, t), t.infoSoft)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Pill(f.hit.status.title, statusColor(f.hit.status, t), t.infoSoft)
+                        if (live) {
+                            Spacer(Modifier.width(8.dp))
+                            Pill("Прямой эфир", t.good, t.goodSoft, icon = Icons.Rounded.PlayArrow)
+                            IconButton(onClick = { vm.toggleMute() }, modifier = Modifier.size(28.dp)) {
+                                Icon(if (vm.previewMuted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp, null, tint = t.tv, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+/** Живая картинка текущего найденного канала в квадрате такого же размера, что и FrameSquare. */
+@Composable
+private fun LivePreviewSquare(vm: MaskViewModel, size: androidx.compose.ui.unit.Dp) {
+    Box(Modifier.size(size).clip(RoundedCornerShape(size / 5))) {
+        AndroidView(
+            factory = { ctx -> PlayerView(ctx).apply {
+                useController = false
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                setShutterBackgroundColor(android.graphics.Color.BLACK)
+                player = vm.previewPlayer()
+            } },
+            update = { it.player = vm.previewPlayer() },
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 
