@@ -40,7 +40,7 @@ object PlaylistMaskSuggester {
             if (position >= 0 && position + portToken.length == origin.length) {
                 val base = port / 100 * 100
                 if (base + 99 <= 65535) {
-                    val replacement = ":$base".dropLast(2) + "%02d{0-99}"
+                    val replacement = ":" + (if (base == 0) "" else (base / 100).toString()) + "%02d{0-99}"
                     add("Порт: $base–${base + 99}", origin.substring(0, position) + replacement + tail, 100)
                 }
                 val ten = port / 10 * 10
