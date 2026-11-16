@@ -451,6 +451,7 @@ private fun RecognitionWindow(f: FoundChannel?, running: Boolean, vm: MaskViewMo
 }
 
 /** Живая картинка текущего найденного канала в квадрате такого же размера, что и FrameSquare. */
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
 private fun LivePreviewSquare(vm: MaskViewModel, size: androidx.compose.ui.unit.Dp) {
     Box(Modifier.size(size).clip(RoundedCornerShape(size / 5))) {
