@@ -68,6 +68,7 @@ class FoundChannel(val hit: MaskSearch.Hit, name: String, source: String, logo: 
     val hostPort get() = hit.url.substringAfter("://").substringBefore('/')
 }
 
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class MaskViewModel(app: Application) : AndroidViewModel(app) {
     private val context = app.applicationContext
     private val prefs = context.getSharedPreferences("tv_mask", Context.MODE_PRIVATE)
