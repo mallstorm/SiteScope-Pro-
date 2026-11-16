@@ -39,6 +39,7 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
     val t = tones
     var targets by remember { mutableStateOf(net.localSubnet()) }
     var ports by remember { mutableStateOf("4022,8080,81,80") }
+    var allowPublic by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var status by remember { mutableStateOf("") }
@@ -63,7 +64,10 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
         try { withContext(Dispatchers.IO) {
             try {
                 val hosts = IptvTargets.parse(targets); val list = ScannerEngine.parsePorts(ports)
-                IptvEngine.discoverUdpxy(hosts, list, 900, workers, delay.toLong(), object : IptvEngine.DiscoveryListener {
+                IptvEngine.discoverUdpxy(hosts, list, 900,
+                    if (allowPublic) workers.coerceAtMost(8) else workers,
+                    if (allowPublic) maxOf(delay.toLong(), 250L) else delay.toLong(), allowPublic,
+                    object : IptvEngine.DiscoveryListener {
                     override fun onProgress(completed: Long, total: Long, currentHost: String?) { status = "Проверено $completed из $total" }
                     override fun isCancelled(): Boolean = job?.isActive == false
                     override fun onFound(endpoint: Models.UdpxyEndpoint?) { if (endpoint != null) scope.launch { gateways.add(endpoint) } }
@@ -102,7 +106,7 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
-        Text("Для телевидения, которое провайдер раздаёт внутри своей сети. Работает только по Wi-Fi этой сети.", style = MaterialTheme.typography.bodySmall,
+        Text("Локальные и разрешённые публичные IPTV-источники. SAP/UDP-мультикаст работает только внутри сети провайдера, а HTTP/HTTPS можно проверять через поиск по маске.", style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
 
         Button(onClick = { context.startActivity(android.content.Intent(context, pro.sitescope.app.ui.ToolActivity::class.java).putExtra("screen", "tvmask")) }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
@@ -125,6 +129,11 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
             Spacer(Modifier.height(8.dp))
             BigField(ports, { ports = it }, "Порты", leading = Icons.Rounded.Tag, keyboard = KeyboardType.Ascii, mono = true)
             Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = allowPublic, onCheckedChange = { allowPublic = it }, enabled = !searching)
+                Text("Ручная проверка публичных UDPXY-шлюзов (только с разрешением; до 256 адресов, HTTP/HTTPS)",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            }
             ScanTuningControls(enabled = !searching)
             Button(onClick = { findGateways() }, enabled = !searching && targets.isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
                 Icon(Icons.Rounded.Search, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (searching) "Ищем…" else "Найти шлюз")
