@@ -31,6 +31,7 @@ import java.util.regex.Pattern;
 public final class IptvEngine {
     public static final int MAX_CHANNELS = 5000;
     public static final int MAX_DISCOVERY_PORTS = 16;
+    public static final int MAX_PUBLIC_DISCOVERY_HOSTS = 256;
     public static final int MAX_PLAYLIST_BYTES = 4 * 1024 * 1024;
     public static final int MAX_PROBE_BYTES = 768 * 1024;
 
@@ -277,7 +278,23 @@ public final class IptvEngine {
         return Thread.currentThread().isInterrupted() || (listener != null && listener.isCancelled());
     }
 
+    /**
+     * Ручной режим для публичных шлюзов, на проверку которых получено разрешение.
+     * Автоматический режим и все старые overload-ы остаются ограничены локальными сетями.
+     */
+    public static List<Models.UdpxyEndpoint> discoverUdpxy(IptvTargets hosts, List<Integer> ports, int timeoutMs,
+            int threads, long delayMs, boolean allowPublic, DiscoveryListener listener) throws Exception {
+        if (hosts == null || hosts.count() == 0) throw new IllegalArgumentException("Список узлов пуст");
+        return discoverUdpxy(hosts, hosts.count(), ports, timeoutMs, threads, delayMs, allowPublic, listener);
+    }
+
     private static List<Models.UdpxyEndpoint> discoverUdpxy(Iterable<String> hosts, long hostCount, List<Integer> ports, int timeoutMs, int threads, long delayMs, DiscoveryListener listener) throws Exception {
+        return discoverUdpxy(hosts, hostCount, ports, timeoutMs, threads, delayMs, false, listener);
+    }
+
+    private static List<Models.UdpxyEndpoint> discoverUdpxy(Iterable<String> hosts, long hostCount, List<Integer> ports, int timeoutMs, int threads, long delayMs, boolean allowPublic, DiscoveryListener listener) throws Exception {
+        if (allowPublic && hostCount > MAX_PUBLIC_DISCOVERY_HOSTS)
+            throw new IllegalArgumentException("Для публичного поиска не более " + MAX_PUBLIC_DISCOVERY_HOSTS + " адресов за запуск");
         if (ports == null || ports.isEmpty()) throw new IllegalArgumentException("Список портов пуст");
         if (ports.size() > MAX_DISCOVERY_PORTS) throw new IllegalArgumentException("IPTV-обнаружение ограничено " + MAX_DISCOVERY_PORTS + " портами");
         if (threads < 1 || threads > ScannerEngine.MAX_CONCURRENCY || delayMs < 0) throw new IllegalArgumentException("Проверьте число потоков и задержку");
@@ -300,14 +317,17 @@ public final class IptvEngine {
                 while (inFlight < threads && submitted < total && !cancelled(listener)) {
                     if (portIndex == 0) {
                         host = iterator.next();
-                        if (!isPrivateOrLocalHost(host)) throw new IllegalArgumentException("Автоматическое обнаружение udpxy разрешено только в локальных/частных сетях: " + host);
+                        if (!allowPublic && !isPrivateOrLocalHost(host)) throw new IllegalArgumentException("Для публичного адреса включите ручной режим разрешённой проверки: " + host);
                     }
                     final String target = host;
                     final int port = ports.get(portIndex);
                     portIndex = (portIndex + 1) % ports.size();
                     finished.submit(() -> {
                         gate.awaitTurn(control);
-                        return new DiscoveryResult(target, port, probeUdpxy(target, port, timeoutMs, listener));
+                        Models.UdpxyEndpoint endpoint = probeUdpxy(target, port, timeoutMs, listener);
+                        if (endpoint == null && allowPublic)
+                            endpoint = probeUdpxyScheme(target, port, timeoutMs, listener, "https");
+                        return new DiscoveryResult(target, port, endpoint);
                     });
                     inFlight++; submitted++;
                 }
@@ -337,13 +357,17 @@ public final class IptvEngine {
     }
 
     private static Models.UdpxyEndpoint probeUdpxy(String host, int port, int timeoutMs, DiscoveryListener listener) {
+        return probeUdpxyScheme(host, port, timeoutMs, listener, "http");
+    }
+
+    private static Models.UdpxyEndpoint probeUdpxyScheme(String host, int port, int timeoutMs, DiscoveryListener listener, String scheme) {
         String[] paths = {"/status/", "/status", "/"};
         for (String path : paths) {
             if (cancelled(listener)) return null;
             HttpURLConnection connection = null;
             long started = System.currentTimeMillis();
             try {
-                URL url = new URL("http", host, port, path);
+                URL url = new URL(scheme, host, port, path);
                 connection = (HttpURLConnection) url.openConnection();
                 connection.setConnectTimeout(timeoutMs);
                 connection.setReadTimeout(timeoutMs);
@@ -360,7 +384,7 @@ public final class IptvEngine {
                     Models.UdpxyEndpoint endpoint = new Models.UdpxyEndpoint();
                     endpoint.host = host;
                     endpoint.port = port;
-                    endpoint.baseUrl = "http://" + formatHost(host) + ":" + port;
+                    endpoint.baseUrl = scheme + "://" + formatHost(host) + ":" + port;
                     endpoint.statusUrl = endpoint.baseUrl + path;
                     endpoint.server = server;
                     endpoint.version = extractVersion(text + " " + server);
