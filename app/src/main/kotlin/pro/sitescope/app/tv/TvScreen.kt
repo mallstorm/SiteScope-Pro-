@@ -80,7 +80,7 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
 
         if (vm.loaded && vm.channels.isEmpty()) {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                EmptyState(Icons.Rounded.LiveTv, "Добавьте свои каналы", "Вставьте ссылку на плейлист, выберите файл M3U или войдите по данным Xtream. Мы проверим, какие каналы работают, и покажем программу передач.") {
+                EmptyState(Icons.Rounded.LiveTv, "Добавьте свои каналы", "Вставьте ссылку на плейлист или выберите файл M3U. Мы проверим, какие каналы работают, и покажем программу передач.") {
                     Button(onClick = { addSheet = true }, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(8.dp)); Text("Добавить плейлист") }
                     Spacer(Modifier.height(8.dp))
                     TextButton(onClick = { open(context, ToolActivity::class.java) { putExtra("screen", "tvlan") } }) { Text("Найти IPTV в моей сети (udpxy, SAP)") }
@@ -246,10 +246,10 @@ private fun DetailsSheet(vm: TvViewModel, channel: Channel, tick: Int, onPlay: (
             Spacer(Modifier.height(14.dp))
             Button(onClick = { onClose(); onPlay() }, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("Смотреть") }
             Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = { vm.toggleFavorite(channel) }) { key(tick) { Text(if (channel.favorite) "Убрать из избранного" else "В избранное") } }
-                TextButton(onClick = { copyText(context, channel.url, "Ссылка скопирована") }) { Text("Ссылка") }
-                TextButton(onClick = { vm.remove(channel); onClose() }) { Text("Удалить", color = MaterialTheme.colorScheme.error) }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                TextButton(onClick = { vm.toggleFavorite(channel) }) { key(tick) { Text(if (channel.favorite) "Убрать из избранного" else "В избранное", maxLines = 1) } }
+                TextButton(onClick = { copyText(context, channel.url, "Ссылка скопирована") }) { Text("Ссылка", maxLines = 1) }
+                TextButton(onClick = { vm.remove(channel); onClose() }) { Text("Удалить", maxLines = 1, color = MaterialTheme.colorScheme.error) }
             }
             RecordAndArchiveRow(vm, channel)
             TechDetails(listOf(channel.url, if (channel.userAgent.isNotEmpty()) "User-Agent: ${channel.userAgent}" else "", if (channel.referrer.isNotEmpty()) "Referer: ${channel.referrer}" else "",
@@ -273,7 +273,7 @@ private fun RecordAndArchiveRow(vm: TvViewModel, channel: Channel) {
                 TextButton(onClick = { TvRecorder.stop(context) }) { Text("Остановить", color = MaterialTheme.colorScheme.error) }
             }
         } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 TextButton(onClick = { TvRecorder.start(context, channel, vm.udpxy, 60); toast(context, "Запись начата: ${channel.name}") }, enabled = !busyOther) {
                     Icon(Icons.Rounded.FiberManualRecord, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Записать (1 ч)")
                 }
@@ -296,36 +296,52 @@ private fun fmtBytes(bytes: Long): String = when {
 
 @Composable
 private fun AddSheet(vm: TvViewModel, prefill: String, onClose: () -> Unit) {
-    var mode by remember { mutableIntStateOf(0) }
-    var url by remember { mutableStateOf(prefill) }
-    var server by remember { mutableStateOf("") }
-    var user by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) { vm.addFile(uri); onClose() } }
+    var url by remember(prefill) { mutableStateOf(prefill) }
+    val context = LocalContext.current
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) { vm.addFile(uri); onClose() }
+    }
     ModalBottomSheet(onDismissRequest = onClose) {
-        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             Text("Добавить плейлист", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = mode == 0, onClick = { mode = 0 }, label = { Text("Ссылка") })
-                FilterChip(selected = mode == 1, onClick = { mode = 1 }, label = { Text("Xtream") })
-                val ctx = androidx.compose.ui.platform.LocalContext.current
-                FilterChip(selected = false, onClick = { ctx.startActivity(android.content.Intent(ctx, pro.sitescope.app.ui.ToolActivity::class.java).putExtra("screen", "tvmask")); onClose() }, label = { Text("Поиск по маске") }, leadingIcon = { Icon(Icons.Rounded.ManageSearch, null, Modifier.size(18.dp)) })
-                FilterChip(selected = false, onClick = { pickFile.launch(arrayOf("*/*")) }, label = { Text("Файл M3U") }, leadingIcon = { Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp)) })
+            // Each item retains a readable width on phones and with a larger font scale.
+            // The strip scrolls horizontally rather than compressing "Файл M3U" into vertical letters.
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(
+                    selected = true, onClick = {},
+                    modifier = Modifier.widthIn(min = 94.dp),
+                    label = { Text("Ссылка", maxLines = 1, softWrap = false) }
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = {
+                        context.startActivity(Intent(context, ToolActivity::class.java).putExtra("screen", "tvmask"))
+                        onClose()
+                    },
+                    modifier = Modifier.widthIn(min = 160.dp),
+                    label = { Text("Поиск по маске", maxLines = 1, softWrap = false) },
+                    leadingIcon = { Icon(Icons.Rounded.ManageSearch, null, Modifier.size(18.dp)) }
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = { pickFile.launch(arrayOf("*/*")) },
+                    modifier = Modifier.widthIn(min = 116.dp),
+                    label = { Text("Файл M3U", maxLines = 1, softWrap = false) },
+                    leadingIcon = { Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp)) }
+                )
             }
             Spacer(Modifier.height(12.dp))
-            if (mode == 0) {
-                BigField(url, { url = it }, "https://…/playlist.m3u", leading = Icons.Rounded.Link, onGo = { vm.addUrl(url); onClose() })
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = { vm.addUrl(url); onClose() }, enabled = url.isNotBlank(), modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) { Text("Загрузить") }
-            } else {
-                OutlinedTextField(server, { server = it }, label = { Text("Адрес сервера") }, placeholder = { Text("http://portal.example:8080") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp))
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(user, { user = it }, label = { Text("Логин") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp))
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(password, { password = it }, label = { Text("Пароль") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp))
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = { vm.addXtream(server, user, password); onClose() }, enabled = server.isNotBlank() && user.isNotBlank() && password.isNotBlank(), modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) { Text("Войти и загрузить") }
+            BigField(url, { url = it }, "https://…/playlist.m3u", leading = Icons.Rounded.Link,
+                onGo = { vm.addUrl(url); onClose() })
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = { vm.addUrl(url); onClose() }, enabled = url.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) {
+                Text("Загрузить")
             }
         }
     }
@@ -358,10 +374,10 @@ private fun ManageSheet(vm: TvViewModel, onClose: () -> Unit) {
 
             SectionTitle("Порядок в списке")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(onClick = { vm.removeDead() }, label = { Text("Убрать нерабочие") }, leadingIcon = { Icon(Icons.Rounded.CleaningServices, null, Modifier.size(18.dp)) })
-                AssistChip(onClick = { vm.dedupe() }, label = { Text("Убрать повторы") }, leadingIcon = { Icon(Icons.Rounded.ContentCopy, null, Modifier.size(18.dp)) })
-                AssistChip(onClick = { exportText = vm.exportM3u(true); save.launch("working.m3u") }, label = { Text("Сохранить рабочие") }, leadingIcon = { Icon(Icons.Rounded.Download, null, Modifier.size(18.dp)) })
-                AssistChip(onClick = { exportText = vm.exportM3u(false); save.launch("playlist.m3u") }, label = { Text("Сохранить все") })
+                AssistChip(onClick = { vm.removeDead() }, label = { Text("Убрать нерабочие", maxLines = 1) }, leadingIcon = { Icon(Icons.Rounded.CleaningServices, null, Modifier.size(18.dp)) })
+                AssistChip(onClick = { vm.dedupe() }, label = { Text("Убрать повторы", maxLines = 1) }, leadingIcon = { Icon(Icons.Rounded.ContentCopy, null, Modifier.size(18.dp)) })
+                AssistChip(onClick = { exportText = vm.exportM3u(true); save.launch("working.m3u") }, label = { Text("Сохранить рабочие", maxLines = 1) }, leadingIcon = { Icon(Icons.Rounded.Download, null, Modifier.size(18.dp)) })
+                AssistChip(onClick = { exportText = vm.exportM3u(false); save.launch("playlist.m3u") }, label = { Text("Сохранить все", maxLines = 1) })
             }
 
             SectionTitle("Телепрограмма")
