@@ -300,7 +300,17 @@ fun MaskSearchScreen(vm: MaskViewModel = viewModel()) {
     val context = LocalContext.current
     val t = tones
     var catalogNames by remember { mutableStateOf<List<String>>(emptyList()) }
-    LaunchedEffect(Unit) { catalogNames = withContext(Dispatchers.IO) { try { TvStore.load(context.applicationContext); TvStore.snapshot().map { it.name }.distinct().take(300) } catch (e: Exception) { emptyList() } } }
+    var importedChannels by remember { mutableStateOf<List<Channel>>(emptyList()) }
+    var sourceFilter by remember { mutableStateOf("") }
+    var selectedSourceUrl by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        val snapshot = withContext(Dispatchers.IO) {
+            try { TvStore.load(context.applicationContext); TvStore.snapshot() } catch (_: Exception) { emptyList() }
+        }
+        catalogNames = snapshot.map { it.name }.distinct().take(300)
+        importedChannels = snapshot.filter { PlaylistMaskSuggester.suggest(it.url).isNotEmpty() }
+            .distinctBy { it.url }.take(500)
+    }
     val opts = remember(vm.template, vm.min, vm.max, vm.wildcards, vm.names, vm.hosts, vm.ports, vm.useCatalog, catalogNames) { vm.options(catalogNames) }
     val parsed = remember(opts, vm.template) { MaskSearch.parse(vm.template, opts.first) }
     val cfg = vm.config()
@@ -308,6 +318,39 @@ fun MaskSearchScreen(vm: MaskViewModel = viewModel()) {
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
         RecognitionWindow(vm.latest, vm.running, vm)
+
+        SectionTitle("Маска из импортированного плейлиста")
+        SoftCard {
+            Text("Выберите канал из добавленных M3U. Приложение построит маски для чисел в IP, порте или пути. Исходные ссылки не изменяются.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (importedChannels.isEmpty()) {
+                Text("Сначала импортируйте M3U на вкладке «ТВ».", style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 8.dp))
+            } else {
+                OutlinedTextField(sourceFilter, { sourceFilter = it }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    label = { Text("Найти канал или адрес") }, singleLine = true)
+                val choices = importedChannels.filter { sourceFilter.isBlank() ||
+                    it.name.contains(sourceFilter, ignoreCase = true) || it.url.contains(sourceFilter, ignoreCase = true) }.take(10)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    choices.forEach { channel ->
+                        FilterChip(selected = selectedSourceUrl == channel.url,
+                            onClick = { selectedSourceUrl = channel.url },
+                            label = { Text(channel.name.ifBlank { channel.url.substringAfter("://").substringBefore('/') }, maxLines = 1) })
+                    }
+                }
+                importedChannels.firstOrNull { it.url == selectedSourceUrl }?.let { selected ->
+                    Text(selected.url, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        PlaylistMaskSuggester.suggest(selected.url).forEach { suggestion ->
+                            AssistChip(onClick = { vm.template = suggestion.template },
+                                label = { Text("${suggestion.title} · ${suggestion.variants}") })
+                        }
+                        AssistChip(onClick = { vm.template = selected.url }, label = { Text("Проверить исходный URL") })
+                    }
+                }
+            }
+        }
 
         SectionTitle("Маска ссылки")
         SoftCard {
