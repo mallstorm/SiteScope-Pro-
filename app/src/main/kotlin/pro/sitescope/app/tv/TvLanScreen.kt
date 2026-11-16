@@ -39,7 +39,6 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
     val t = tones
     var targets by remember { mutableStateOf(net.localSubnet()) }
     var ports by remember { mutableStateOf("4022,8080,81,80") }
-    var allowPublic by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var status by remember { mutableStateOf("") }
@@ -64,10 +63,8 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
         try { withContext(Dispatchers.IO) {
             try {
                 val hosts = IptvTargets.parse(targets); val list = ScannerEngine.parsePorts(ports)
-                IptvEngine.discoverUdpxy(hosts, list, 900,
-                    if (allowPublic) workers.coerceAtMost(8) else workers,
-                    if (allowPublic) maxOf(delay.toLong(), 250L) else delay.toLong(), allowPublic,
-                    object : IptvEngine.DiscoveryListener {
+                IptvEngine.discoverUdpxy(hosts, list, 900, workers.coerceAtMost(8),
+                    maxOf(delay.toLong(), 250L), object : IptvEngine.DiscoveryListener {
                     override fun onProgress(completed: Long, total: Long, currentHost: String?) { status = "Проверено $completed из $total" }
                     override fun isCancelled(): Boolean = job?.isActive == false
                     override fun onFound(endpoint: Models.UdpxyEndpoint?) { if (endpoint != null) scope.launch { gateways.add(endpoint) } }
@@ -113,7 +110,7 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
             Icon(Icons.Rounded.ManageSearch, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Поиск потока по маске ссылки")
         }
 
-        SectionTitle("Шлюз udpxy")
+        SectionTitle("Шлюз UDPXY · локальный или публичный")
         SoftCard {
             Text("Шлюз на роутере превращает «сырой» поток провайдера в обычную ссылку, которую может открыть плеер.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (current.isNotEmpty()) {
@@ -125,15 +122,13 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
                 }
             }
             Spacer(Modifier.height(10.dp))
-            BigField(targets, { targets = it }, "Где искать: 192.168.1.0/24", leading = Icons.Rounded.Lan, mono = true)
+            BigField(targets, { targets = it }, "IP / домен / CIDR: 192.168.1.0/24, 85.14.32.26", leading = Icons.Rounded.Lan, mono = true)
             Spacer(Modifier.height(8.dp))
             BigField(ports, { ports = it }, "Порты", leading = Icons.Rounded.Tag, keyboard = KeyboardType.Ascii, mono = true)
             Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = allowPublic, onCheckedChange = { allowPublic = it }, enabled = !searching)
-                Text("Ручная проверка публичных UDPXY-шлюзов (только с разрешением; до 256 адресов, HTTP/HTTPS)",
-                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-            }
+            Text("UDPXY: частные и публичные адреса, HTTP/HTTPS. Для внешних узлов — до 256 за запуск. Проверяйте только разрешённые ресурсы.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
             ScanTuningControls(enabled = !searching)
             Button(onClick = { findGateways() }, enabled = !searching && targets.isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
                 Icon(Icons.Rounded.Search, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (searching) "Ищем…" else "Найти шлюз")
