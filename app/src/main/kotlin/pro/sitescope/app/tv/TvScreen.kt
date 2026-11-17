@@ -305,16 +305,14 @@ private fun AddSheet(vm: TvViewModel, prefill: String, onClose: () -> Unit) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             Text("Добавить плейлист", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(12.dp))
-            // Each item retains a readable width on phones and with a larger font scale.
-            // The strip scrolls horizontally rather than compressing "Файл M3U" into vertical letters.
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            // Xtream убран (как в основной ветке); три плашки помещаются по центру, перенос — только при очень крупном шрифте.
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 FilterChip(
                     selected = true, onClick = {},
-                    modifier = Modifier.widthIn(min = 94.dp),
                     label = { Text("Ссылка", maxLines = 1, softWrap = false) }
                 )
                 FilterChip(
@@ -323,14 +321,12 @@ private fun AddSheet(vm: TvViewModel, prefill: String, onClose: () -> Unit) {
                         context.startActivity(Intent(context, ToolActivity::class.java).putExtra("screen", "tvmask"))
                         onClose()
                     },
-                    modifier = Modifier.widthIn(min = 160.dp),
-                    label = { Text("Поиск по маске", maxLines = 1, softWrap = false) },
+                    label = { Text("По маске", maxLines = 1, softWrap = false) },
                     leadingIcon = { Icon(Icons.Rounded.ManageSearch, null, Modifier.size(18.dp)) }
                 )
                 FilterChip(
                     selected = false,
                     onClick = { pickFile.launch(arrayOf("*/*")) },
-                    modifier = Modifier.widthIn(min = 116.dp),
                     label = { Text("Файл M3U", maxLines = 1, softWrap = false) },
                     leadingIcon = { Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp)) }
                 )

@@ -59,7 +59,8 @@ object DpiArgs {
         return listOf("-i127.0.0.1", "-p$port") + checked.args
     }
 
-    private val listRef = Regex("""\{list:([^}]+)}""")
+    // На Android (ICU) закрывающая фигурная скобка обязана быть экранирована, иначе PatternSyntaxException.
+    private val listRef = Regex("""\{list:([^\}]+)\}""")
 
     fun expand(line: String, sni: String, lists: Map<String, List<String>>): String {
         val withLists = listRef.replace(line) { m ->
