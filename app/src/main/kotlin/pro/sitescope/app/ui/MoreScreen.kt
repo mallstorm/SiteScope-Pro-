@@ -27,7 +27,8 @@ fun MoreScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
         ScreenHeader("Ещё", "Сеть, защита и ваши данные")
         Group("Защита и доступ", t.info, t.infoSoft, listOf(
-            Entry(Icons.Rounded.Shield, "VPN и свои адреса", "Сервер, подмена адресов и DNS на лету, запись трафика", ToolActivity::class.java, "vpn", 0)
+            Entry(Icons.Rounded.Shield, "VPN и свои адреса", "Сервер, подмена адресов и DNS на лету, запись трафика", ToolActivity::class.java, "vpn", 0),
+            Entry(Icons.Rounded.Security, "TLS Inspector", "Живые TLS-рукопожатия: SNI, JA3, ALPN, версия TLS", ToolActivity::class.java, "tls-inspector", 0)
         ), context)
         Group("Моя сеть", t.net, t.netSoft, listOf(
             Entry(Icons.Rounded.Devices, "Устройства рядом", "Кто в вашей сети, что появилось и что пропало", ToolActivity::class.java, "network", 0),
