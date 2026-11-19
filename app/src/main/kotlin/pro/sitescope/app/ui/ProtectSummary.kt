@@ -92,7 +92,7 @@ fun ProtectSummary(go: ProtectGo) {
         ))
 
         // Свои адреса сайтов
-        SummaryCard(Icons.Rounded.Link, "Свои адреса сайтов", "Переопределение IP-адресов и локальные записи (Hosts)", "${vpn.entries.size} " + plural(vpn.entries.size, "правило", "правила", "правил")) { go(1, 0) } {
+        SummaryCard(Icons.Rounded.Link, "Свои адреса сайтов", "Переопределение IP-адресов и локальные записи (Hosts)", "${vpn.entries.size} " + plural(vpn.entries.size, "правило", "правила", "правил"), onOpen = { go(1, 0) }) {
             if (rules.isEmpty()) Text(if (vpn.entries.isEmpty()) "Правил пока нет." else "Ничего не найдено.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
             for (e in rules.take(3)) Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Public, null, tint = if (e.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, modifier = Modifier.size(16.dp))
@@ -108,7 +108,7 @@ fun ProtectSummary(go: ProtectGo) {
         }
 
         // Серверы
-        SummaryCard(Icons.Rounded.Storage, "Серверы", "VPN / прокси-серверы и профили подключения", "${vpn.serverList.size} " + plural(vpn.serverList.size, "сервер", "сервера", "серверов")) { go(1, 1) } {
+        SummaryCard(Icons.Rounded.Storage, "Серверы", "VPN / прокси-серверы и профили подключения", "${vpn.serverList.size} " + plural(vpn.serverList.size, "сервер", "сервера", "серверов"), onOpen = { go(1, 1) }) {
             if (servers.isEmpty()) Text(if (vpn.serverList.isEmpty()) "Серверов пока нет — добавьте ссылку или отсканируйте QR." else "Ничего не найдено.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
             for (s in servers.take(3)) {
                 val live = vpn.serverActive && vpn.runningProfileId == s.id
@@ -124,7 +124,7 @@ fun ProtectSummary(go: ProtectGo) {
         }
 
         // DPI / обход
-        SummaryCard(Icons.Rounded.LockOpen, "DPI / обход", "Обход блокировок, фильтрация трафика и режимы туннелирования", if (dpiOn) "работает" else "выключен") { go(2, 0) } {
+        SummaryCard(Icons.Rounded.LockOpen, "DPI / обход", "Обход блокировок, фильтрация трафика и режимы туннелирования", if (dpiOn) "работает" else "выключен", onOpen = { go(2, 0) }) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                 ModeTile(Icons.Rounded.Hub, "Прокси", dpi.cfg.mode == "proxy", Modifier.weight(1f)) { dpi.update(dpi.cfg.copy(mode = "proxy")) }
                 ModeTile(Icons.Rounded.Apps, "VPN: выбранные приложения", dpi.cfg.mode == "vpn_only", Modifier.weight(1f)) { dpi.update(dpi.cfg.copy(mode = "vpn_only")) }
@@ -133,7 +133,7 @@ fun ProtectSummary(go: ProtectGo) {
         }
 
         // Onion и I2P
-        SummaryCard(Icons.Rounded.Language, "Onion и I2P", "Tor и I2P: анонимность и альтернативные маршруты", null) { go(3, 0) } {
+        SummaryCard(Icons.Rounded.Language, "Onion и I2P", "Tor и I2P: анонимность и альтернативные маршруты", null, onOpen = { go(3, 0) }) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 AnonCell("Tor", anon.tor.phase, anon.tor.message, Modifier.weight(1f))
                 Box(Modifier.width(1.dp).height(34.dp).background(MaterialTheme.colorScheme.outlineVariant))
