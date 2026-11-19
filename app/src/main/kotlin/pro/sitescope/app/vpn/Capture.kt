@@ -194,7 +194,10 @@ object CaptureHub {
     @Volatile var session: CaptureSession? = null; private set
     @Volatile var lastFile: File? = null; private set
 
-    @JvmStatic fun tap(packet: ByteArray, length: Int) { try { session?.onPacket(packet, length) } catch (e: Throwable) { } }
+    @JvmStatic fun tap(packet: ByteArray, length: Int) {
+        try { session?.onPacket(packet, length) } catch (_: Throwable) { }
+        try { if (TlsInspectorHub.isEnabled()) TlsInspectorHub.observe(packet, length) } catch (_: Throwable) { }
+    }
     @JvmStatic fun active(): Boolean = session != null
 
     @Volatile private var keyLog: File? = null
