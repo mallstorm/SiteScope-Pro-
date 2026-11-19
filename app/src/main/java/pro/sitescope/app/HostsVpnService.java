@@ -32,6 +32,8 @@ public final class HostsVpnService extends VpnService {
     public static final String ACTION_RELOAD = "pro.sitescope.app.hosts.RELOAD";
     public static final String ACTION_CAPTURE_START = "pro.sitescope.app.hosts.CAPTURE_START";
     public static final String ACTION_CAPTURE_STOP = "pro.sitescope.app.hosts.CAPTURE_STOP";
+    public static final String ACTION_INSPECTOR_START = "pro.sitescope.app.hosts.INSPECTOR_START";
+    public static final String ACTION_INSPECTOR_STOP = "pro.sitescope.app.hosts.INSPECTOR_STOP";
     public static final String EXTRA_FILTER = "filter";
     public static final String EXTRA_MODE = "mode";
     public static final String MODE_BASIC = "BASIC";
@@ -103,6 +105,12 @@ public final class HostsVpnService extends VpnService {
             final boolean enable = ACTION_CAPTURE_START.equals(action);
             final String filter = intent == null ? "" : intent.getStringExtra(EXTRA_FILTER);
             new Thread(new Runnable() { @Override public void run() { switchCapture(enable, filter == null ? "" : filter); } }, "SiteScopeCaptureSwitch").start();
+            return START_STICKY;
+        }
+        if (ACTION_INSPECTOR_START.equals(action) || ACTION_INSPECTOR_STOP.equals(action)) {
+            if (!running) { if (tunnel == null && starter == null) stopSelf(); return START_NOT_STICKY; }
+            final boolean enableInspector = ACTION_INSPECTOR_START.equals(action);
+            new Thread(new Runnable() { @Override public void run() { switchInspector(enableInspector); } }, "SiteScopeTlsInspectorSwitch").start();
             return START_STICKY;
         }
         if (ACTION_RELOAD.equals(action)) {
@@ -509,6 +517,7 @@ public final class HostsVpnService extends VpnService {
         pro.sitescope.app.dpi.DpiChain.release();
         if (captureTee != null) { try { captureTee.stop(); } catch (Throwable ignored) { } captureTee = null; }
         pro.sitescope.app.vpn.CaptureHub.stop();
+        pro.sitescope.app.vpn.TlsInspectorHub.setEnabled(false);
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("capturing", false).apply();
         if (tunnel != null) { try { tunnel.close(); } catch (Exception ignored) { } tunnel = null; }
         updateState(lifecycle, false, "", message, "", "", "", "");
@@ -577,21 +586,12 @@ public final class HostsVpnService extends VpnService {
             try {
                 if (enable) {
                     pro.sitescope.app.vpn.CaptureHub.start(new java.io.File(getFilesDir(), "captures"), filter);
-                    if (MODE_XRAY.equals(activeMode) && captureTee == null && xrayRuntime != null && tunnel != null) {
-                        pro.sitescope.app.vpn.TunTee tee = new pro.sitescope.app.vpn.TunTee(tunnel, this);
-                        tee.start();
-                        try { xrayRuntime.restartBridge(tee.getTunnelSide(), "capture tee attached"); captureTee = tee; }
-                        catch (Throwable e) { tee.stop(); xrayRuntime.restartBridge(tunnel, "capture tee failed, direct TUN restored"); throw e; }
-                    }
+                    attachPacketTap();
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("capturing", true).apply();
                     VpnDiagnostics.log(this, "CAPTURE_START", "mode=" + activeMode + ", filter=" + (filter.length() == 0 ? "none" : "set"));
                 } else {
                     pro.sitescope.app.vpn.CaptureHub.stop();
-                    if (captureTee != null) {
-                        pro.sitescope.app.vpn.TunTee tee = captureTee; captureTee = null;
-                        if (xrayRuntime != null && tunnel != null) xrayRuntime.restartBridge(tunnel, "capture tee detached");
-                        tee.stop();
-                    }
+                    detachPacketTapIfIdle();
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("capturing", false).apply();
                     VpnDiagnostics.log(this, "CAPTURE_STOP", "mode=" + activeMode);
                 }
@@ -600,6 +600,48 @@ public final class HostsVpnService extends VpnService {
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("capturing", false).apply();
                 setMessage("Запись трафика не запустилась: " + safeMessage(e));
                 VpnDiagnostics.log(this, "CAPTURE_FAILED", safeMessage(e));
+            }
+        }
+    }
+
+    /** Attach a packet mirror only while PCAP recording or TLS Inspector needs it. */
+    private void attachPacketTap() throws Exception {
+        if (!MODE_XRAY.equals(activeMode) || captureTee != null || xrayRuntime == null || tunnel == null) return;
+        pro.sitescope.app.vpn.TunTee tee = new pro.sitescope.app.vpn.TunTee(tunnel, this);
+        tee.start();
+        try { xrayRuntime.restartBridge(tee.getTunnelSide(), "packet tap attached"); captureTee = tee; }
+        catch (Throwable e) {
+            tee.stop();
+            xrayRuntime.restartBridge(tunnel, "packet tap attach failed, original TUN");
+            throw new IllegalStateException("Packet tap error", e);
+        }
+    }
+
+    private void detachPacketTapIfIdle() {
+        if (captureTee == null || pro.sitescope.app.vpn.CaptureHub.active() ||
+                pro.sitescope.app.vpn.TlsInspectorHub.isEnabled()) return;
+        pro.sitescope.app.vpn.TunTee tee = captureTee; captureTee = null;
+        if (xrayRuntime != null && tunnel != null) xrayRuntime.restartBridge(tunnel, "packet tap detached");
+        tee.stop();
+    }
+
+    private void switchInspector(boolean enable) {
+        synchronized (reloadLock) {
+            if (!running || !MODE_XRAY.equals(activeMode)) return;
+            try {
+                if (enable) {
+                    attachPacketTap();
+                    pro.sitescope.app.vpn.TlsInspectorHub.setEnabled(true);
+                } else {
+                    pro.sitescope.app.vpn.TlsInspectorHub.setEnabled(false);
+                    detachPacketTapIfIdle();
+                }
+                VpnDiagnostics.log(this, enable ? "TLS_INSPECTOR_START" : "TLS_INSPECTOR_STOP", "passive ClientHello metadata");
+            } catch (Throwable e) {
+                pro.sitescope.app.vpn.TlsInspectorHub.setEnabled(false);
+                setMessage("TLS Inspector: " + safeMessage(e));
+                VpnDiagnostics.log(this, "TLS_INSPECTOR_FAILED", safeMessage(e));
+                try { detachPacketTapIfIdle(); } catch (Throwable ignored) { }
             }
         }
     }
