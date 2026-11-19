@@ -620,8 +620,15 @@ public final class HostsVpnService extends VpnService {
     private void detachPacketTapIfIdle() {
         if (captureTee == null || pro.sitescope.app.vpn.CaptureHub.active() ||
                 pro.sitescope.app.vpn.TlsInspectorHub.isEnabled()) return;
-        pro.sitescope.app.vpn.TunTee tee = captureTee; captureTee = null;
-        if (xrayRuntime != null && tunnel != null) xrayRuntime.restartBridge(tunnel, "packet tap detached");
+        pro.sitescope.app.vpn.TunTee tee = captureTee;
+        if (xrayRuntime != null && tunnel != null) {
+            try { xrayRuntime.restartBridge(tunnel, "packet tap detached"); }
+            catch (Exception e) {
+                VpnDiagnostics.log(this, "PACKET_TAP_DETACH_FAILED", safeMessage(e));
+                return; // Preserve working tee until a later retry or VPN shutdown.
+            }
+        }
+        captureTee = null;
         tee.stop();
     }
 
