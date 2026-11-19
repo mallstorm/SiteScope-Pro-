@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [redesign, main]
+    branches: [redesign, redesign-v2, main]
   workflow_dispatch:
 
 permissions:
@@ -16,6 +16,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      # Ветка redesign-v2 публикует логи и сборку отдельно, чтобы не затирать результаты redesign.
+      LOGS_BRANCH: ${{ github.ref_name == 'redesign-v2' && 'ci-logs-v2' || 'ci-logs' }}
+      RELEASE_TAG: ${{ github.ref_name == 'redesign-v2' && 'beta-v2' || 'beta' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -63,10 +67,10 @@ jobs:
           tail -n 250 build.log > tail.log
           echo "$GITHUB_SHA ${{ job.status }}" > status.txt
           rm -f build.log
-          git init -q && git checkout -q -b ci-logs
+          git init -q && git checkout -q -b "$LOGS_BRANCH"
           git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add . && git commit -q -m "CI log for $GITHUB_SHA"
-          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-logs
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$LOGS_BRANCH"
 
       - name: Collect APK
         run: |
@@ -83,7 +87,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete beta --yes --cleanup-tag 2>/dev/null || true
-          gh release create beta dist/* --prerelease --target "$GITHUB_SHA" \
+          gh release delete "$RELEASE_TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$RELEASE_TAG" dist/* --prerelease --target "$GITHUB_SHA" \
             --title "SiteScope Pro — свежая сборка" \
             --notes "Автоматическая сборка из ветки ${GITHUB_REF_NAME} (${GITHUB_SHA::7}). Установите APK на телефон (arm64)."

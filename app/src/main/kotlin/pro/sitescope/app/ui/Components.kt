@@ -158,13 +158,7 @@ fun BigField(value: String, onValue: (String) -> Unit, placeholder: String, modi
 
 @Composable
 fun ScreenHeader(title: String, subtitle: String? = null, actions: @Composable RowScope.() -> Unit = {}) {
-    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.headlineMedium)
-            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        actions()
-    }
+    AppHeader(title = title, subtitle = subtitle, actions = actions)
 }
 
 /** Раскрывающийся блок технических подробностей. */
@@ -235,14 +229,10 @@ fun TextDialog(title: String, initial: String, placeholder: String, onClose: () 
         dismissButton = { TextButton(onClick = onClose) { Text("Отмена") } })
 }
 
-/** Шапка экранов второго уровня: стрелка «назад» и заголовок. */
+/** Шапка экранов второго уровня: стрелка «назад» и заголовок на фирменном градиенте. */
 @Composable
 fun BackHeader(title: String, onBack: () -> Unit, actions: @Composable RowScope.() -> Unit = {}) {
-    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 6.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Назад") }
-        Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        actions()
-    }
+    AppHeader(title = title, onBack = onBack, actions = actions)
 }
 
 /**

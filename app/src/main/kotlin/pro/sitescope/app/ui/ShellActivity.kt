@@ -8,60 +8,82 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Language
-import androidx.compose.material.icons.rounded.LiveTv
-import androidx.compose.material.icons.rounded.MoreHoriz
-import androidx.compose.material.icons.rounded.Public
-import androidx.compose.material3.Icon
+import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.Checklist
+import androidx.compose.material.icons.rounded.Dashboard
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.ViewModel
-import pro.sitescope.app.HostsActivity
 import pro.sitescope.app.VpnStateRecovery
 import pro.sitescope.app.core.SmartInput
+import pro.sitescope.app.data.DataHub
 import pro.sitescope.app.ip.IpScreen
 import pro.sitescope.app.site.SiteScreen
 import pro.sitescope.app.tv.TvScreen
 
+/** Четыре вкладки нижней панели. Раздел, открытый из вкладки, не меняет подсвеченную вкладку. */
 enum class Tab(val title: String, val icon: ImageVector) {
-    HOME("Главная", Icons.Rounded.Home), SITE("Сайт", Icons.Rounded.Language), IP("IP", Icons.Rounded.Public),
-    TV("ТВ", Icons.Rounded.LiveTv), MORE("Ещё", Icons.Rounded.MoreHoriz)
+    HOME("Обзор", Icons.Rounded.Dashboard), TOOLS("Инструменты", Icons.Rounded.Build),
+    TASKS("Задачи", Icons.Rounded.Checklist), DATA("Данные", Icons.Rounded.Folder)
 }
 
-/** Общее состояние оболочки: активная вкладка и «поручения» экранам от умной строки. */
+/** Общее состояние оболочки: вкладка, открытый раздел и «поручения» экранам от умной строки. */
 class AppState : ViewModel() {
     var tab by mutableStateOf(Tab.HOME)
+    var route by mutableStateOf<String?>(null)
+    var routeTab by mutableIntStateOf(0)
+    var routeTargets by mutableStateOf<String?>(null)
+    var routeNonce by mutableIntStateOf(0)
+    var dataTab by mutableIntStateOf(0)
+    var dataNonce by mutableIntStateOf(0)
     var siteRequest by mutableStateOf<String?>(null)
     var ipRequest by mutableStateOf<String?>(null)
     var subnetRequest by mutableStateOf<String?>(null)
     var playlistRequest by mutableStateOf<String?>(null)
     var streamRequest by mutableStateOf<String?>(null)
 
+    fun selectTab(target: Tab) { route = null; tab = target }
+
+    /** Открывает раздел поверх текущей вкладки. «data» и «tasks» — это вкладки, а не разделы. */
+    fun openRoute(name: String, subTab: Int = 0, targets: String? = null) {
+        when (name) {
+            "data" -> { dataTab = subTab; dataNonce++; selectTab(Tab.DATA) }
+            "tasks" -> selectTab(Tab.TASKS)
+            else -> { routeTab = subTab; routeTargets = targets; routeNonce++; route = name }
+        }
+    }
+
+    fun closeRoute() { route = null }
+
     /** Открывает подходящий инструмент для введённого текста. Возвращает false, если текст пуст. */
     fun open(text: String): Boolean {
         val r = SmartInput.detect(text)
         when (r.kind) {
             SmartInput.Kind.EMPTY -> return false
-            SmartInput.Kind.URL, SmartInput.Kind.DOMAIN -> { siteRequest = r.value; tab = Tab.SITE }
-            SmartInput.Kind.IPV4, SmartInput.Kind.IPV6, SmartInput.Kind.ASN, SmartInput.Kind.TEXT -> { ipRequest = r.value; tab = Tab.IP }
-            SmartInput.Kind.CIDR -> { subnetRequest = r.value; tab = Tab.IP }
-            SmartInput.Kind.PLAYLIST -> { playlistRequest = r.value; tab = Tab.TV }
-            SmartInput.Kind.STREAM -> { streamRequest = r.value; tab = Tab.TV }
+            SmartInput.Kind.URL, SmartInput.Kind.DOMAIN -> { siteRequest = r.value; openRoute("site") }
+            SmartInput.Kind.IPV4, SmartInput.Kind.IPV6, SmartInput.Kind.ASN, SmartInput.Kind.TEXT -> { ipRequest = r.value; openRoute("ip") }
+            SmartInput.Kind.CIDR -> { subnetRequest = r.value; openRoute("ip") }
+            SmartInput.Kind.PLAYLIST -> { playlistRequest = r.value; openRoute("tv") }
+            SmartInput.Kind.STREAM -> { streamRequest = r.value; openRoute("tv") }
         }
         return true
     }
@@ -77,7 +99,7 @@ class ShellActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) handle(intent)
         setContent { AppTheme { Shell(state) } }
-        if (recovered) window.decorView.post { startActivity(Intent(this, ToolActivity::class.java).putExtra("screen", "vpn")) }
+        if (recovered) window.decorView.post { state.openRoute("vpn") }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -87,9 +109,12 @@ class ShellActivity : ComponentActivity() {
 
     private fun handle(intent: Intent?) {
         if (intent == null) return
+        // Старые значения «tab» из уведомлений и ярлыков сохраняются: ТВ, сайт, IP, «Ещё».
         when (intent.getStringExtra("tab")) {
-            "tv" -> state.tab = Tab.TV; "site" -> state.tab = Tab.SITE; "ip" -> state.tab = Tab.IP; "more" -> state.tab = Tab.MORE
+            "tv" -> state.openRoute("tv"); "site" -> state.openRoute("site"); "ip" -> state.openRoute("ip")
+            "more" -> state.selectTab(Tab.TOOLS); "tasks" -> state.selectTab(Tab.TASKS); "data" -> state.selectTab(Tab.DATA)
         }
+        intent.getStringExtra("route")?.let { state.openRoute(it, intent.getIntExtra("routeTab", 0), intent.getStringExtra("targets")) }
         if (intent.action == Intent.ACTION_SEND) intent.getStringExtra(Intent.EXTRA_TEXT)?.let { shared ->
             val candidate = shared.lineSequence().map { it.trim() }.firstOrNull { it.startsWith("http", true) } ?: shared.trim()
             state.open(candidate.take(2000))
@@ -99,28 +124,37 @@ class ShellActivity : ComponentActivity() {
 
 @Composable
 fun Shell(state: AppState) {
-    BackHandler(enabled = state.tab != Tab.HOME) { state.tab = Tab.HOME }
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
-                for (tab in Tab.entries) NavigationBarItem(
-                    selected = state.tab == tab, onClick = { state.tab = tab },
-                    icon = { Icon(tab.icon, contentDescription = tab.title) }, label = { Text(tab.title) }
-                )
-            }
-        }
-    ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-            Crossfade(targetState = state.tab, label = "tab") { tab ->
-                when (tab) {
-                    Tab.HOME -> HomeScreen(state)
-                    Tab.SITE -> SiteScreen(state)
-                    Tab.IP -> IpScreen(state)
-                    Tab.TV -> TvScreen(state)
-                    Tab.MORE -> MoreScreen()
+    val count = rememberActiveTaskCount()
+    val imeUp = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    BackHandler(enabled = state.route != null || state.tab != Tab.HOME) {
+        if (state.route != null) state.closeRoute() else state.tab = Tab.HOME
+    }
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).imePadding()) {
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            val route = state.route
+            if (route != null) {
+                CompositionLocalProvider(LocalBackAction provides { state.closeRoute() }) { RouteHost(state, route) }
+            } else {
+                Crossfade(targetState = state.tab, label = "tab") { tab ->
+                    when (tab) {
+                        Tab.HOME -> OverviewScreen(state)
+                        Tab.TOOLS -> ToolsScreen(state)
+                        Tab.TASKS -> TasksScreen(state)
+                        Tab.DATA -> key(state.dataNonce) { DataHub(state, state.dataTab) }
+                    }
                 }
             }
         }
+        if (!imeUp) BottomBar4(state.tab, count) { state.selectTab(it) }
+    }
+}
+
+@Composable
+private fun RouteHost(state: AppState, route: String) {
+    when (route) {
+        "site" -> SiteScreen(state)
+        "ip" -> IpScreen(state)
+        "tv" -> TvScreen(state)
+        else -> key(state.routeNonce) { ToolContent(route, state.routeTab, state.routeTargets) { state.closeRoute() } }
     }
 }

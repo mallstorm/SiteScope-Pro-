@@ -56,7 +56,7 @@ internal fun ReportsScreen() {
             scope.launch {
                 try {
                     withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri, "wt")?.use { output -> artifact.file.inputStream().use { it.copyTo(output) } } ?: error("output") }
-                    status = "Отчёт сохранён · ${artifact.result.rows} строк"
+                    ReportLog.add(context, "SiteScopePro-report-${artifact.result.startedAt}.$format", "Журнал приложения", format.uppercase(), artifact.file.length()); status = "Отчёт сохранён · ${artifact.result.rows} строк"
                 } catch (e: CancellationException) { throw e }
                 catch (e: Exception) { status = "Не удалось записать документ. В выбранном месте мог остаться неполный файл; повторите сохранение." }
                 finally { saving = false }

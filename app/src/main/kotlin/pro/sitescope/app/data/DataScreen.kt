@@ -68,6 +68,21 @@ fun DataScreen(startTab: Int = 0) {
     }
 }
 
+/** Вкладка «Данные» в оболочке: тёмная шапка, сегменты «Проекты / История / Отчёты» и содержимое с прокруткой внутри списка. */
+@Composable
+fun DataHub(state: AppState, startTab: Int = 0) {
+    var tab by remember { mutableIntStateOf(startTab.coerceIn(0, 2)) }
+    Column(Modifier.fillMaxSize()) {
+        AppHeader("Данные", "Проекты, история и отчёты", logo = true,
+            actions = { HeaderMenu(listOf("Настройки и резервная копия" to { state.openRoute("settings") })) }
+        ) { StatusPills(state) }
+        SegmentedTabs(listOf("Проекты", "История", "Отчёты"), tab, { tab = it }, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            when (tab) { 0 -> ProjectsTab(); 1 -> HistoryTab(); else -> ReportsScreen() }
+        }
+    }
+}
+
 // ------------------------------------------------------------------ Проекты
 
 @Composable

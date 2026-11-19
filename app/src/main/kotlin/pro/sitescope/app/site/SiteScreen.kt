@@ -103,7 +103,7 @@ private fun ReportView(vm: SiteViewModel, r: Report, state: AppState) {
     val context = LocalContext.current
     val saveHtml = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri ->
         if (uri != null) try {
-            context.contentResolver.openOutputStream(uri)?.use { it.write(SiteReportBuilder.toHtml(r).toByteArray()) }
+            val bytes = SiteReportBuilder.toHtml(r).toByteArray(); context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }; pro.sitescope.app.data.ReportLog.add(context, "sitescope-${r.host}.html", "SEO-аудит (${r.host})", "HTML", bytes.size.toLong())
             toast(context, "Отчёт сохранён")
         } catch (e: Exception) { toast(context, "Не удалось сохранить") }
     }
@@ -192,7 +192,7 @@ private fun ReportView(vm: SiteViewModel, r: Report, state: AppState) {
                 "Сравниваем текст страницы при каждой плановой проверке и сообщаем, если он поменялся") { vm.toggleWatchChanges(r.target) }
             ActionRow(Icons.Rounded.Download, "Сохранить отчёт", "Файл HTML — можно отправить клиенту или коллеге") { saveHtml.launch("sitescope-${r.host}.html") }
             ActionRow(Icons.Rounded.Dns, "Проверить список сайтов", "Пакетная проверка нескольких доменов сразу") { open(context, ToolActivity::class.java) { putExtra("screen", "batch") } }
-            if (r.host.isNotEmpty()) ActionRow(Icons.Rounded.Public, "Где размещён сайт", "Провайдер, страна и сеть сервера") { state.ipRequest = r.host; state.tab = Tab.IP }
+            if (r.host.isNotEmpty()) ActionRow(Icons.Rounded.Public, "Где размещён сайт", "Провайдер, страна и сеть сервера") { state.ipRequest = r.host; state.openRoute("ip") }
             ActionRow(Icons.Rounded.QueryStats, "Метрики поиска", "Скорость по Google, показы и клики, ИКС Яндекса") { open(context, ToolActivity::class.java) { putExtra("screen", "metrics"); putExtra("targets", r.target) } }
             ActionRow(Icons.Rounded.OpenInNew, "Открыть сайт", r.target) {
                 try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SiteExtras.normalize(r.target)))) } catch (e: Exception) { }
