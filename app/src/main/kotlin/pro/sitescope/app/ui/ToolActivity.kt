@@ -43,7 +43,7 @@ class ToolActivity : ComponentActivity() {
                 Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding()) {
                     when (screen) {
                         "data" -> { BackHeader("Мои данные", { finish() }); DataScreen(tab) }
-                        "vpn" -> { BackHeader("VPN и свои адреса", { finish() }); VpnScreen() }
+                        "vpn" -> { BackHeader("VPN и свои адреса", { finish() }); VpnScreen(initialTab = tab) }
                         "tls-inspector" -> { BackHeader("TLS Inspector", { finish() }); TlsInspectorScreen() }
                         "settings" -> { BackHeader("Настройки", { finish() }); SettingsScreen() }
                         "ipdb" -> { BackHeader("База адресов", { finish() }); IpDbScreen(tab) }
