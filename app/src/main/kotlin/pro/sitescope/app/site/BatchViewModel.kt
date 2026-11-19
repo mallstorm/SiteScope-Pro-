@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import pro.sitescope.app.core.TaskCenter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
@@ -34,6 +35,7 @@ class BatchViewModel(app: Application) : AndroidViewModel(app) {
         val list = targets.map { t -> BatchResult(t, try { java.net.URL(SiteExtras.normalize(t)).host } catch (e: Exception) { t }) }
         results.addAll(list)
         val doneCounter = AtomicInteger(0)
+        val taskId = TaskCenter.start(TaskCenter.Kind.BATCH, "Проверка списка сайтов", "Сайтов: ${list.size}") { cancel() }
         viewModelScope.launch(Dispatchers.IO) {
             val pool = Executors.newFixedThreadPool(8)
             try {
@@ -54,6 +56,7 @@ class BatchViewModel(app: Application) : AndroidViewModel(app) {
                             item.done = true
                             results[index] = item
                             done = doneCounter.incrementAndGet()
+                            TaskCenter.progress(taskId, done.toFloat() / total, "$done из $total")
                         }
                     }
                 }
@@ -62,6 +65,7 @@ class BatchViewModel(app: Application) : AndroidViewModel(app) {
                 try { pool.awaitTermination(10, java.util.concurrent.TimeUnit.MINUTES) } catch (e: InterruptedException) { }
             }
             running = false
+            TaskCenter.finish(taskId, if (cancelled.get()) TaskCenter.State.CANCELLED else TaskCenter.State.DONE, if (cancelled.get()) "Остановлено" else "Проверено: $done")
         }
     }
 

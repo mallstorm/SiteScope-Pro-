@@ -159,15 +159,18 @@ class TvViewModel(app: Application) : AndroidViewModel(app) {
     fun startCheck(list: List<Channel>) {
         if (checking || list.isEmpty()) return
         checking = true; checkDone = 0; checkTotal = list.size
+        val taskId = pro.sitescope.app.core.TaskCenter.start(pro.sitescope.app.core.TaskCenter.Kind.TV_CHECK, "Проверка потоков", "Каналов: ${list.size}") { batch?.cancel() }
         batch = StreamChecker.checkAll(list, threads, TvStore.timeoutMs, udpxy, { TvStore.localCheck(it) }, object : StreamChecker.BatchListener {
             override fun onChannel(channel: Channel, done: Int, total: Int) {
                 checkDone = done
+                pro.sitescope.app.core.TaskCenter.progress(taskId, if (total > 0) done.toFloat() / total else -1f, "$done из $total")
                 val now = System.currentTimeMillis()
                 if (now - lastTickAt > 350) { lastTickAt = now; tick++ }
             }
             override fun onFinished(cancelled: Boolean) {
                 TvStore.lastCheckAt = System.currentTimeMillis(); lastCheckAt = TvStore.lastCheckAt
                 persist(); TvStore.saveHistory(context)
+                pro.sitescope.app.core.TaskCenter.finish(taskId, if (cancelled) pro.sitescope.app.core.TaskCenter.State.CANCELLED else pro.sitescope.app.core.TaskCenter.State.DONE, if (cancelled) "Остановлено" else "Проверено: $checkDone")
                 checking = false; tick++
             }
         })

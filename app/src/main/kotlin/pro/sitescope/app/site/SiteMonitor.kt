@@ -15,10 +15,12 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import org.json.JSONArray
+import org.json.JSONObject
 import pro.sitescope.app.App
 import java.util.concurrent.TimeUnit
 
-/** Наблюдение за сайтами: дважды в сутки проверяет доступность и срок сертификата. */
+/** Наблюдение за сайтами: по выбранному интервалу проверяет доступность и срок сертификата и ведёт историю проверок. */
 object SiteMonitor {
     private const val PREFS = "site_monitor"
     private const val WORK = "site-monitor"
@@ -44,12 +46,48 @@ object SiteMonitor {
         prefs.edit().putStringSet("watch_changes", set).apply()
     }
 
+    /** Допустимые интервалы в минутах. Система не запускает фоновую работу чаще раза в 15 минут. */
+    val INTERVALS = listOf(15 to "15 мин", 60 to "1 час", 360 to "6 часов", 720 to "12 часов", 1440 to "Сутки")
+    const val DEFAULT_INTERVAL = 720
+
+    class Entry(val time: Long, val up: Boolean, val code: Int, val ms: Long, val certDays: Int)
+
+    fun interval(context: Context, target: String): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("interval:$target", DEFAULT_INTERVAL)
+
+    fun setInterval(context: Context, target: String, minutes: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt("interval:$target", minutes).apply()
+        schedule(context, targets(context).isNotEmpty())
+    }
+
+    /** История проверок сайта, новые сверху (последние 60). */
+    fun history(context: Context, target: String): List<Entry> {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("hist:$target", "[]") ?: "[]"
+        val array = try { JSONArray(raw) } catch (e: Exception) { JSONArray() }
+        val out = ArrayList<Entry>()
+        for (i in 0 until array.length()) {
+            val o = array.optJSONObject(i) ?: continue
+            out.add(Entry(o.optLong("t"), o.optBoolean("up"), o.optInt("c"), o.optLong("ms"), o.optInt("d", -1)))
+        }
+        return out
+    }
+
+    internal fun record(context: Context, target: String, entry: Entry) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val next = JSONArray()
+        next.put(JSONObject().put("t", entry.time).put("up", entry.up).put("c", entry.code).put("ms", entry.ms).put("d", entry.certDays))
+        val old = history(context, target)
+        for (e in old.take(59)) next.put(JSONObject().put("t", e.time).put("up", e.up).put("c", e.code).put("ms", e.ms).put("d", e.certDays))
+        prefs.edit().putString("hist:$target", next.toString()).putLong("last:$target", entry.time).apply()
+    }
+
     private fun schedule(context: Context, enabled: Boolean) {
         val manager = WorkManager.getInstance(context)
         if (!enabled) { manager.cancelUniqueWork(WORK); return }
-        val request = PeriodicWorkRequestBuilder<SiteMonitorWorker>(12, TimeUnit.HOURS)
+        val minutes = targets(context).minOfOrNull { interval(context, it) } ?: DEFAULT_INTERVAL
+        val request = PeriodicWorkRequestBuilder<SiteMonitorWorker>(maxOf(15, minutes).toLong(), TimeUnit.MINUTES)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
-        manager.enqueueUniquePeriodicWork(WORK, ExistingPeriodicWorkPolicy.KEEP, request)
+        manager.enqueueUniquePeriodicWork(WORK, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 
     fun reschedule(context: Context) = schedule(context, targets(context).isNotEmpty())
@@ -71,10 +109,14 @@ class SiteMonitorWorker(context: Context, params: WorkerParameters) : Worker(con
         val context = applicationContext
         val prefs = context.getSharedPreferences("site_monitor", Context.MODE_PRIVATE)
         for (target in SiteMonitor.targets(context)) {
+            // Один общий запуск обслуживает все сайты; у каждого свой интервал (допуск в минуту на неточность системы).
+            val last = prefs.getLong("last:$target", 0L)
+            if (System.currentTimeMillis() - last < SiteMonitor.interval(context, target) * 60_000L - 60_000L) continue
             val data = SiteExtras.collect(target, checkLinks = false)
             val host = try { java.net.URL(SiteExtras.normalize(target)).host } catch (e: Exception) { target }
             val code = data.chain.lastOrNull()?.code ?: 0
             val down = !data.reachable || code >= 500
+            SiteMonitor.record(context, target, SiteMonitor.Entry(System.currentTimeMillis(), !down, code, data.ttfbMs, data.tls?.takeIf { it.valid }?.daysLeft ?: -1))
             val wasDown = prefs.getBoolean("down:$target", false)
             if (down != wasDown) {
                 prefs.edit().putBoolean("down:$target", down).apply()

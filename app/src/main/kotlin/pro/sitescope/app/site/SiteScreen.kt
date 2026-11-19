@@ -110,11 +110,19 @@ private fun ColumnScope.ReportView(vm: SiteViewModel, r: Report, state: AppState
             toast(context, "Отчёт сохранён")
         } catch (e: Exception) { toast(context, "Не удалось сохранить") }
     }
+    val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        if (uri != null) try {
+            val buffer = java.io.ByteArrayOutputStream(); SitePdf.write(r, buffer)
+            context.contentResolver.openOutputStream(uri)?.use { it.write(buffer.toByteArray()) }
+            pro.sitescope.app.data.ReportLog.add(context, "sitescope-${r.host}.pdf", "SEO-аудит (${r.host})", "PDF", buffer.size().toLong())
+            toast(context, "PDF сохранён")
+        } catch (e: Exception) { toast(context, "Не удалось сохранить") }
+    }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(r.target) { vm.loadWatchChanges(r.target) }
     val shown = r.sections.filter { it.checks.isNotEmpty() }
-    val titles = listOf("Итог") + shown.map { it.title } + "Действия"
-    val icons = listOf<ImageVector>(Icons.Rounded.Dashboard) + shown.map { sectionIcon(it.key) } + Icons.Rounded.Bolt
+    val titles = listOf("Итог") + shown.map { it.title } + "Мониторинг" + "Действия"
+    val icons = listOf<ImageVector>(Icons.Rounded.Dashboard) + shown.map { sectionIcon(it.key) } + Icons.Rounded.NotificationsActive + Icons.Rounded.Bolt
     var tab by remember(r.target, r.timestamp) { mutableIntStateOf(0) }
 
     AppHeader(r.host.ifEmpty { "Отчёт" }, "Оценка ${r.grade} · ${whenText(r.timestamp)}", onBack = { vm.clear() }, actions = {
@@ -193,20 +201,57 @@ private fun ColumnScope.ReportView(vm: SiteViewModel, r: Report, state: AppState
                 items(order) { c -> SoftCard(padding = 10.dp) { CheckRow(c) } }
             }
         }
+        tab == shown.size + 1 -> {
+            val monitored = vm.monitored.contains(r.target)
+            var interval by remember(r.target) { mutableIntStateOf(SiteMonitor.interval(context, r.target)) }
+            var history by remember(r.target, monitored) { mutableStateOf(SiteMonitor.history(context, r.target)) }
+            LazyColumn(listModifier, contentPadding = padding, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    SoftCard(padding = 6.dp) {
+                        ActionRow(if (monitored) Icons.Rounded.NotificationsActive else Icons.Rounded.NotificationsNone,
+                            if (monitored) "Наблюдение включено" else "Следить за сайтом",
+                            if (monitored) "Сообщим, если сайт упадёт или сертификат начнёт истекать. Нажмите, чтобы выключить." else "Фоновые проверки и уведомления о проблемах") {
+                            if (!monitored && Build.VERSION.SDK_INT >= 33) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            vm.toggleMonitor(r.target)
+                        }
+                        if (monitored) ActionRow(Icons.Rounded.Rule,
+                            if (vm.watchChanges) "Следим за изменениями страницы" else "Сообщать об изменениях страницы",
+                            "Сравниваем текст страницы при каждой плановой проверке") { vm.toggleWatchChanges(r.target) }
+                    }
+                }
+                if (monitored) {
+                    item {
+                        SoftCard(padding = 12.dp) {
+                            Text("Как часто проверять", style = MaterialTheme.typography.titleSmall)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                                for ((minutes, label) in SiteMonitor.INTERVALS) FilterChip(selected = interval == minutes, onClick = { interval = minutes; SiteMonitor.setInterval(context, r.target, minutes) }, label = { Text(label) })
+                            }
+                            Text("Android запускает фоновую работу не чаще раза в 15 минут, точное время зависит от системы и экономии заряда.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+                        }
+                    }
+                    item { CompactTitle("История проверок", action = "Обновить") { history = SiteMonitor.history(context, r.target) } }
+                    if (history.isEmpty()) item { Text("Записей пока нет — первая появится после очередной фоновой проверки.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    items(history) { e ->
+                        SoftCard(padding = 10.dp) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(if (e.up) Icons.Rounded.CheckCircle else Icons.Rounded.Cancel, null, tint = if (e.up) tones.good else tones.bad, modifier = Modifier.size(22.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(whenText(e.time), style = MaterialTheme.typography.titleSmall)
+                                    Text((if (e.up) "Работает" else "Не отвечает") + (if (e.code > 0) " · код ${e.code}" else "") + " · ответ ${SiteReportBuilder.fmtMs(e.ms)}" + (if (e.certDays >= 0) " · сертификат ${e.certDays} дн." else ""),
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         else -> LazyColumn(listModifier, contentPadding = padding, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             item {
                 SoftCard(padding = 6.dp) {
-                    val monitored = vm.monitored.contains(r.target)
-                    ActionRow(if (monitored) Icons.Rounded.NotificationsActive else Icons.Rounded.NotificationsNone,
-                        if (monitored) "Наблюдение включено" else "Следить за сайтом",
-                        if (monitored) "Сообщим, если сайт упадёт или сертификат начнёт истекать. Нажмите, чтобы выключить." else "Проверять дважды в сутки и сообщать о проблемах") {
-                        if (!monitored && Build.VERSION.SDK_INT >= 33) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        vm.toggleMonitor(r.target)
-                    }
-                    if (monitored) ActionRow(Icons.Rounded.Rule,
-                        if (vm.watchChanges) "Следим за изменениями страницы" else "Сообщать об изменениях страницы",
-                        "Сравниваем текст страницы при каждой плановой проверке и сообщаем, если он поменялся") { vm.toggleWatchChanges(r.target) }
-                    ActionRow(Icons.Rounded.Download, "Сохранить отчёт", "Файл HTML — можно отправить клиенту или коллеге") { saveHtml.launch("sitescope-${r.host}.html") }
+                    ActionRow(Icons.Rounded.Download, "Сохранить отчёт HTML", "Файл можно отправить клиенту или коллеге") { saveHtml.launch("sitescope-${r.host}.html") }
+                    ActionRow(Icons.Rounded.PictureAsPdf, "Сохранить отчёт PDF", "Страницы A4 для печати и пересылки") { savePdf.launch("sitescope-${r.host}.pdf") }
                     ActionRow(Icons.Rounded.Dns, "Проверить список сайтов", "Пакетная проверка нескольких доменов сразу") { state.openRoute("batch") }
                     if (r.host.isNotEmpty()) ActionRow(Icons.Rounded.Public, "Где размещён сайт", "Провайдер, страна и сеть сервера") { state.ipRequest = r.host; state.openRoute("ip") }
                     ActionRow(Icons.Rounded.QueryStats, "Метрики поиска", "Скорость по Google, показы и клики, ИКС Яндекса") { state.openRoute("metrics", 0, r.target) }

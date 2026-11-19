@@ -118,6 +118,13 @@ object SiteReportBuilder {
             "Добавьте loading=\"lazy\" картинкам ниже первого экрана."))
         if (p.images >= 4 && p.imagesNoSize * 2 > p.images) c.add(Check("У картинок не заданы размеры", Level.WARN, "Страница может «прыгать» при загрузке.",
             "Укажите width и height у изображений.", "Без размеров: ${p.imagesNoSize} из ${p.images}"))
+        if (x.imgMeasured > 0) {
+            val saving = (x.imgLegacyBytes * 0.30).toLong()
+            val tech = "Измерено картинок: ${x.imgMeasured}; самая тяжёлая ${fmtBytes(x.imgHeaviestBytes.toInt())}: ${x.imgHeaviest}; оценка экономии — 30% веса JPEG/PNG"
+            if (saving >= 100_000) c.add(Check("Картинки можно облегчить", Level.WARN, "Картинки весят ${fmtBytes(x.imgBytes.toInt())}. Перевод JPEG и PNG в WebP или AVIF сэкономит примерно ${fmtBytes(saving.toInt())} (оценка).",
+                "Сохраняйте картинки в WebP/AVIF и подбирайте размер под экран.", tech))
+            else c.add(Check("Вес картинок в норме", Level.GOOD, "Измерено ${x.imgMeasured} картинок, вместе ${fmtBytes(x.imgBytes.toInt())}.", tech = tech))
+        }
         val cache = x.headers["cache-control"] ?: ""
         if (cache.isNotEmpty()) c.add(Check("Правила кеширования заданы", Level.INFO, "Браузеру сообщили, как хранить страницу.", tech = "Cache-Control: $cache"))
         c.add(Check("Состав страницы", Level.INFO, "Скриптов: ${p.scripts}, стилей: ${p.stylesheets}, картинок: ${p.images}."))

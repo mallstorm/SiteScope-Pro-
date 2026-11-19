@@ -44,6 +44,9 @@ object SiteExtras {
         val links = ArrayList<LinkCheck>()
         var linksChecked = 0
         var html = ""
+        /** Оценка картинок: сколько измерено, общий вес, вес JPEG/PNG (кандидаты на WebP/AVIF) и самая тяжёлая. */
+        var imgMeasured = 0; var imgBytes = 0L; var imgLegacyBytes = 0L; var imgLegacyCount = 0
+        var imgHeaviest = ""; var imgHeaviestBytes = 0L
     }
 
     fun normalize(raw: String): String {
@@ -67,6 +70,7 @@ object SiteExtras {
             d.page = parsePage(d.html, finalUrl.protocol == "https")
             d.securityTxt = exists(URL(finalUrl, "/.well-known/security.txt").toString(), "contact")
             if (checkLinks && !cancelled()) checkLinks(d, finalUrl, maxLinks, cancelled)
+            if (checkLinks && !cancelled()) measureImages(d, finalUrl)
             d.reachable = true
         } catch (e: Exception) {
             d.error = e.javaClass.simpleName + (e.message?.let { ": $it" } ?: "")
@@ -256,6 +260,37 @@ object SiteExtras {
             for (f in futures) try { val r = f.get(15, TimeUnit.SECONDS); if (r.code != 0) { d.linksChecked++; d.links.add(r) } } catch (e: Exception) { }
         } finally { pool.shutdownNow() }
     }
+
+    /** Измеряет до 24 картинок страницы запросами HEAD (Content-Length); вес по сети, а не оценка по коду страницы. */
+    private fun measureImages(d: Data, base: URL) {
+        val urls = LinkedHashSet<String>()
+        for (m in Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE).findAll(d.html)) {
+            val src = attr(m.value, "src").trim()
+            if (src.isEmpty() || src.startsWith("data:")) continue
+            try { urls.add(URL(base, src).toString()) } catch (e: Exception) { }
+            if (urls.size >= 24) break
+        }
+        if (urls.isEmpty()) return
+        val pool = Executors.newFixedThreadPool(6)
+        try {
+            val futures = urls.map { url -> pool.submit(Callable { headSize(url) }) }
+            for ((i, f) in futures.withIndex()) try {
+                val (bytes, type) = f.get(12, TimeUnit.SECONDS)
+                if (bytes <= 0) continue
+                d.imgMeasured++; d.imgBytes += bytes
+                if (bytes > d.imgHeaviestBytes) { d.imgHeaviestBytes = bytes; d.imgHeaviest = urls.elementAt(i) }
+                if (type.contains("jpeg") || type.contains("jpg") || type.contains("png")) { d.imgLegacyBytes += bytes; d.imgLegacyCount++ }
+            } catch (e: Exception) { }
+        } finally { pool.shutdownNow() }
+    }
+
+    private fun headSize(url: String): Pair<Long, String> = try {
+        val c = URL(url).openConnection() as HttpURLConnection
+        try {
+            c.connectTimeout = 5000; c.readTimeout = 5000; c.requestMethod = "HEAD"; c.setRequestProperty("User-Agent", UA)
+            if (c.responseCode in 200..299) c.contentLengthLong to (c.contentType ?: "").lowercase() else 0L to ""
+        } finally { c.disconnect() }
+    } catch (e: Exception) { 0L to "" }
 
     /** Код ответа: сначала HEAD, при отказе — GET. -1 — нет соединения. */
     fun status(url: String): Int {
