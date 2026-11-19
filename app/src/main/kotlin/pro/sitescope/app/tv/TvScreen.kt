@@ -70,11 +70,19 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
     val visible = remember(tick, vm.channels, vm.query, vm.group, vm.statusFilter) { vm.visible() }
 
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader("Телевидение", if (vm.channels.isEmpty()) "Плейлисты, проверка и просмотр" else "Каналов: ${vm.channels.size}") {
-            if (vm.channels.isNotEmpty()) {
-                IconButton(onClick = { addSheet = true }) { Icon(Icons.Rounded.Add, "Добавить плейлист") }
-                IconButton(onClick = { manageSheet = true }) { Icon(Icons.Rounded.Tune, "Источники и настройки") }
+        AppHeader("Телевидение", if (vm.channels.isEmpty()) "IPTV / M3U, udpxy, multicast, проверка и просмотр" else "Каналов: ${vm.channels.size}",
+            actions = {
+                if (vm.channels.isNotEmpty()) {
+                    IconButton(onClick = { addSheet = true }) { Icon(Icons.Rounded.Add, "Добавить плейлист") }
+                    IconButton(onClick = { manageSheet = true }) { Icon(Icons.Rounded.Tune, "Источники и настройки") }
+                }
             }
+        ) {
+            StatusPills(state)
+            Spacer(Modifier.height(8.dp))
+            HeaderChips(listOf("Каналы", "Источники", "ТВ в сети", "По маске"), 0, { index ->
+                when (index) { 1 -> manageSheet = true; 2 -> state.openRoute("tvlan"); 3 -> state.openRoute("tvmask") }
+            }, listOf(Icons.Rounded.LiveTv, Icons.Rounded.Cloud, Icons.Rounded.SettingsInputAntenna, Icons.Rounded.ManageSearch))
         }
         if (vm.busy.isNotEmpty()) Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { LoadingCard(vm.busy) }
 
@@ -83,7 +91,7 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
                 EmptyState(Icons.Rounded.LiveTv, "Добавьте свои каналы", "Вставьте ссылку на плейлист или выберите файл M3U. Мы проверим, какие каналы работают, и покажем программу передач.") {
                     Button(onClick = { addSheet = true }, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(8.dp)); Text("Добавить плейлист") }
                     Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = { open(context, ToolActivity::class.java) { putExtra("screen", "tvlan") } }) { Text("Найти IPTV в моей сети (udpxy, SAP)") }
+                    TextButton(onClick = { state.openRoute("tvlan") }) { Text("Найти IPTV в моей сети (udpxy, SAP)") }
                 }
             }
         } else if (vm.channels.isNotEmpty()) {

@@ -16,20 +16,17 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import pro.sitescope.app.anon.AnonScreen
 import pro.sitescope.app.data.DataScreen
-import pro.sitescope.app.dpi.DpiScreen
 import pro.sitescope.app.ip.IpDbScreen
 import pro.sitescope.app.net.NetworkScreen
 import pro.sitescope.app.site.BatchScreen
 import pro.sitescope.app.site.MetricsScreen
 import pro.sitescope.app.tv.MaskSearchScreen
 import pro.sitescope.app.tv.TvLanScreen
-import pro.sitescope.app.vpn.VpnScreen
-import pro.sitescope.app.vpn.TlsInspectorScreen
 import pro.sitescope.app.vpn.HttpsContentScreen
 import pro.sitescope.app.wifi.WifiScreen
 
@@ -64,22 +61,22 @@ fun ToolContent(screen: String, tab: Int, targets: String?, onBack: () -> Unit) 
             }
         }
     }
-    Column(Modifier.fillMaxSize()) {
+    CompositionLocalProvider(LocalBackAction provides onBack) { Column(Modifier.fillMaxSize()) {
         when (screen) {
             "data" -> { BackHeader("Мои данные", onBack); DataScreen(tab) }
-            "vpn" -> { BackHeader("Защита и доступ", onBack); VpnScreen(initialTab = tab) }
-            "tls-inspector" -> { BackHeader("TLS Inspector", onBack); TlsInspectorScreen() }
+            "vpn" -> ProtectScreen(0, tab)
+            "tls-inspector" -> ProtectScreen(3, 0)
             "https-content" -> { BackHeader("HTTPS · содержимое", onBack); HttpsContentScreen() }
             "settings" -> { BackHeader("Настройки", onBack); SettingsScreen() }
             "ipdb" -> { BackHeader("База адресов", onBack); IpDbScreen(tab) }
             "tvmask" -> { BackHeader("Поиск ТВ по маске ссылки", onBack); MaskSearchScreen() }
-            "dpi" -> { BackHeader("Обход блокировок (DPI)", onBack); DpiScreen() }
-            "anon" -> { BackHeader("Onion и I2P", onBack); AnonScreen() }
+            "dpi" -> ProtectScreen(1, 0)
+            "anon" -> ProtectScreen(2, 0)
             "tvlan" -> { BackHeader("ТВ в локальной сети", onBack); TvLanScreen() }
             "metrics" -> { BackHeader("Метрики поиска", onBack); MetricsScreen(targets) }
             "batch" -> { BackHeader("Проверка списка сайтов", onBack); BatchScreen() }
             "wifi" -> { BackHeader("Диагностика Wi-Fi", onBack); WifiScreen() }
-            else -> { BackHeader("Моя сеть", onBack); NetworkScreen(tab, targets) }
+            else -> NetworkScreen(tab, targets)
         }
-    }
+    } }
 }

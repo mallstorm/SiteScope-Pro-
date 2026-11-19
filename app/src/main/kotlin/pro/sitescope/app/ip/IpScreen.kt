@@ -44,7 +44,7 @@ import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.tan
 
-private val pages = listOf("Найти", "Подсети", "Мой адрес")
+private val pages = listOf("Найти", "Подсети", "Мой адрес", "База IP")
 
 @Composable
 fun IpScreen(state: AppState, vm: IpViewModel = viewModel()) {
@@ -58,18 +58,15 @@ fun IpScreen(state: AppState, vm: IpViewModel = viewModel()) {
         state.subnetRequest?.let { request -> state.subnetRequest = null; vm.page = 1; if (request.isNotBlank()) vm.subnetInput = request }
     }
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader("IP и сети", "Чей адрес, где он и как устроена сеть")
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(4.dp)) {
-            pages.forEachIndexed { index, title ->
-                val selected = vm.page == index
-                Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(if (selected) MaterialTheme.colorScheme.surfaceContainerLowest else Color.Transparent)
-                    .clickable { vm.page = index; if (index == 2) vm.loadMine() }.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-                    Text(title, style = MaterialTheme.typography.labelLarge, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+        AppHeader("IP и подсети", "Информация об IP, ASN, гео, CIDR: диапазоны, деление, агрегация") {
+            StatusPills(state)
+            Spacer(Modifier.height(8.dp))
+            HeaderChips(pages, vm.page, { index ->
+                if (index == 3) state.openRoute("ipdb") else { vm.page = index; if (index == 2) vm.loadMine() }
+            }, listOf(Icons.Rounded.Search, Icons.Rounded.Calculate, Icons.Rounded.MyLocation, Icons.Rounded.Storage))
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 24.dp)) {
-            when (vm.page) { 0 -> LookupPage(vm); 1 -> SubnetPage(vm); else -> MinePage(vm) }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 16.dp)) {
+            when (vm.page) { 0 -> LookupPage(vm, state); 1 -> SubnetPage(vm); else -> MinePage(vm) }
         }
     }
 }
@@ -77,7 +74,7 @@ fun IpScreen(state: AppState, vm: IpViewModel = viewModel()) {
 // ============ Поиск ============
 
 @Composable
-private fun LookupPage(vm: IpViewModel) {
+private fun LookupPage(vm: IpViewModel, state: AppState) {
     val context = LocalContext.current
     BigField(vm.query, { vm.query = it }, "IP, сайт, AS15169 или название провайдера", onGo = { vm.search() }, keyboard = KeyboardType.Text)
     Spacer(Modifier.height(10.dp))
@@ -115,7 +112,7 @@ private fun LookupPage(vm: IpViewModel) {
             for (q in listOf("8.8.8.8", "1.1.1.1", "yandex.ru", "AS13335")) SuggestionChip(onClick = { vm.search(q) }, label = { Text(q) })
         }
         Spacer(Modifier.height(12.dp))
-        SoftCard(onClick = { open(context, ToolActivity::class.java) { putExtra("screen", "ipdb") } }) {
+        SoftCard(onClick = { state.openRoute("ipdb") }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconBadge(Icons.Rounded.Storage, tones.ip, tones.ipSoft, 40.dp)
                 Spacer(Modifier.width(12.dp))

@@ -44,10 +44,9 @@ fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewMo
     LifecycleResumeEffect(vm) { vm.loadProfiles(); onPauseOrDispose { } }
     LaunchedEffect(startTargets) { if (!startTargets.isNullOrBlank()) vm.targets = startTargets }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Устройства", "Сканер", "Подключения", "Скорость", "Доступ извне", "Роутеры").forEachIndexed { i, title ->
-                FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title) })
-            }
+        AppHeader("Моя сеть", "Устройства, порты, подключения и диагностика") {
+            HeaderChips(listOf("Устройства", "Сканер", "Подключения", "Скорость", "Доступ извне", "Роутеры"), tab, { tab = it },
+                listOf(Icons.Rounded.Devices, Icons.Rounded.NetworkCheck, Icons.Rounded.Terminal, Icons.Rounded.Speed, Icons.Rounded.OpenInNew, Icons.Rounded.Router))
         }
         when (tab) {
             0 -> DevicesTab(vm)

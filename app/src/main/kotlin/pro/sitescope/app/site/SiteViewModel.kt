@@ -14,6 +14,7 @@ import pro.sitescope.app.AuditEngine
 import pro.sitescope.app.CrawlerEngine
 import pro.sitescope.app.DataStore
 import pro.sitescope.app.Models
+import pro.sitescope.app.core.TaskCenter
 
 class SiteHistoryItem(val target: String, val host: String, val score: Int, val time: Long, val full: Boolean)
 
@@ -31,6 +32,7 @@ class SiteViewModel(app: Application) : AndroidViewModel(app) {
 
     @Volatile private var cancelled = false
     private var job: Job? = null
+    @Volatile private var taskId = 0L
 
     init { refreshHistory(); monitored = SiteMonitor.targets(app) }
 
@@ -51,6 +53,8 @@ class SiteViewModel(app: Application) : AndroidViewModel(app) {
         input = text; running = true; cancelled = false; report = null
         stage = "Открываем сайт"; stageDetail = SiteExtras.normalize(text)
         val full = fullCrawl; val pages = maxPages
+        taskId = TaskCenter.start(if (full) TaskCenter.Kind.CRAWL else TaskCenter.Kind.SITE_AUDIT, if (full) "Обход сайта" else "Проверка сайта", text) { cancel() }
+        val myTask = taskId
         job = viewModelScope.launch(Dispatchers.IO) {
             val result = try {
                 val store = DataStore(getApplication<Application>())
@@ -79,14 +83,17 @@ class SiteViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Throwable) { null }
             withContext(Dispatchers.Main) {
                 running = false
-                if (!cancelled) { report = result; refreshHistory() }
+                if (!cancelled) {
+                    report = result; refreshHistory()
+                    if (result != null) TaskCenter.finish(myTask, TaskCenter.State.DONE, "Оценка ${result.score}") else TaskCenter.finish(myTask, TaskCenter.State.FAILED, "Не удалось выполнить проверку")
+                }
             }
         }
     }
 
-    private fun post(title: String, detail: String) { stage = title; stageDetail = detail }
+    private fun post(title: String, detail: String) { stage = title; stageDetail = detail; TaskCenter.progress(taskId, -1f, title) }
 
-    fun cancel() { cancelled = true; running = false; job?.cancel() }
+    fun cancel() { cancelled = true; running = false; job?.cancel(); TaskCenter.finish(taskId, TaskCenter.State.CANCELLED, "Остановлено") }
     fun clear() { report = null }
 
     fun toggleMonitor(target: String) {
