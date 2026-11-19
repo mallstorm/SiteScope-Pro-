@@ -124,6 +124,7 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             while (isActive) { poll(); delay(1000) }
         }
+        viewModelScope.launch { watchFailover() }
     }
 
     private suspend fun poll() = withContext(Dispatchers.IO) {
@@ -326,6 +327,40 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
             .put("packets", f.packets).put("sentBytes", f.sent).put("receivedBytes", f.received).put("lastAt", f.lastAt)
             .put("highlighted", highlightedHosts.any { h -> f.host.equals(h, true) || f.host.endsWith(".$h", true) || f.remote == h }))
         return org.json.JSONObject().put("capturedAt", System.currentTimeMillis()).put("flows", array).toString(2)
+    }
+
+    // ---------- резервный сервер и автопереключение ----------
+    private val failoverPrefs get() = context.getSharedPreferences("vpn_failover", Context.MODE_PRIVATE)
+    var reserveServer by mutableStateOf(failoverPrefs.getString("reserve", "") ?: ""); private set
+    var autoFailover by mutableStateOf(failoverPrefs.getBoolean("auto", false)); private set
+    var failoverNote by mutableStateOf(""); private set
+    private var failoverSwitches = 0
+    private var errorSince = 0L
+
+    fun setReserve(id: String) {
+        reserveServer = if (reserveServer == id) "" else id
+        failoverPrefs.edit().putString("reserve", reserveServer).apply()
+    }
+
+    fun setAutoFailover(on: Boolean) { autoFailover = on; failoverPrefs.edit().putBoolean("auto", on).apply() }
+
+    /** Если подключение через сервер закончилось ошибкой, включает резервный сервер; не больше двух переключений за серию ошибок. */
+    private suspend fun watchFailover() {
+        while (viewModelScope.isActive) {
+            delay(3000)
+            if (lifecycle == HostsVpnService.STATE_ACTIVE) { failoverSwitches = 0; errorSince = 0; continue }
+            if (lifecycle != HostsVpnService.STATE_ERROR || !autoFailover || mode != VpnMode.SERVER) { errorSince = 0; continue }
+            if (errorSince == 0L) errorSince = System.currentTimeMillis()
+            if (System.currentTimeMillis() - errorSince < 4000 || failoverSwitches >= 2) continue
+            val reserve = serverList.firstOrNull { it.id == reserveServer && it.id != selectedServer } ?: continue
+            val failed = serverList.firstOrNull { it.id == selectedServer }
+            failoverSwitches++; errorSince = 0
+            withContext(Dispatchers.IO) { servers.select(reserve.id); reloadData() }
+            reserveServer = failed?.id ?: ""
+            failoverPrefs.edit().putString("reserve", reserveServer).apply()
+            failoverNote = "Сервер «${failed?.name?.ifEmpty { failed.endpoint } ?: "—"}» не подключился — включён резервный «${reserve.name.ifEmpty { reserve.endpoint }}»"
+            mode = VpnMode.SERVER; start()
+        }
     }
 
     // ---------- скорость серверов ----------
@@ -540,6 +575,16 @@ private fun ServersTab(vm: VpnViewModel) {
             if (vm.serverPings.isNotEmpty()) OutlinedButton(onClick = { vm.switchToFastest() }) { Text("На быстрый") }
         }
     }
+    if (vm.serverList.size > 1) {
+        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Автопереключение на резервный", style = MaterialTheme.typography.titleSmall)
+                Text(if (vm.reserveServer.isEmpty()) "Выберите резервный сервер в меню «⋮» у сервера" else "Если подключение не удалось, включим резервный сервер", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = vm.autoFailover, onCheckedChange = { vm.setAutoFailover(it) }, enabled = vm.reserveServer.isNotEmpty())
+        }
+        if (vm.failoverNote.isNotEmpty()) Text(vm.failoverNote, style = MaterialTheme.typography.bodySmall, color = t.warn, modifier = Modifier.padding(bottom = 8.dp))
+    }
     if (vm.serverList.isEmpty()) SoftCard { Text("Серверов пока нет. Добавьте ссылку вида vless://… или готовую конфигурацию.", style = MaterialTheme.typography.bodyMedium) }
     vm.serverList.forEach { s ->
         val selected = s.id == vm.selectedServer
@@ -553,6 +598,7 @@ private fun ServersTab(vm: VpnViewModel) {
                     Text(s.type.uppercase() + " · " + s.endpoint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (ping != null) Pill(if (ping >= 0) "$ping мс" else "нет ответа", if (ping in 0..150) t.good else if (ping < 0) t.bad else t.warn, if (ping in 0..150) t.goodSoft else if (ping < 0) t.badSoft else t.warnSoft)
+                if (vm.reserveServer == s.id) Pill("Резерв", t.info, t.infoSoft)
                 if (running) Pill("Работает", t.good, t.goodSoft)
                 IconButton(onClick = { menu = s }) { Icon(Icons.Rounded.MoreVert, "Ещё") }
             }
@@ -579,7 +625,12 @@ private fun ServersTab(vm: VpnViewModel) {
         }
     }
     menu?.let { s ->
-        AlertDialog(onDismissRequest = { menu = null }, title = { Text(s.name.ifEmpty { s.endpoint }) }, text = { Text(s.type.uppercase() + " · " + s.endpoint) },
+        AlertDialog(onDismissRequest = { menu = null }, title = { Text(s.name.ifEmpty { s.endpoint }) }, text = {
+            Column {
+                Text(s.type.uppercase() + " · " + s.endpoint)
+                if (s.id != vm.selectedServer) TextButton(onClick = { vm.setReserve(s.id); menu = null }) { Text(if (vm.reserveServer == s.id) "Убрать из резерва" else "Сделать резервным") }
+            }
+        },
             confirmButton = { TextButton(onClick = { rename = s; menu = null }) { Text("Переименовать") } },
             dismissButton = { TextButton(onClick = { vm.deleteServer(s.id); menu = null }, colors = ButtonDefaults.textButtonColors(contentColor = t.bad)) { Text("Удалить") } })
     }
