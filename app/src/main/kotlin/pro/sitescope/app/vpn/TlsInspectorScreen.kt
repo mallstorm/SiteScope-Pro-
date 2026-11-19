@@ -84,7 +84,7 @@ fun TlsInspectorScreen() {
         Spacer(Modifier.height(10.dp))
         SoftCard {
             Text("Расшифровка HTTPS", style = MaterialTheme.typography.titleMedium)
-            Text("Xray MITM с TLS-ключами в PCAPNG. Содержимое HTTPS затем можно исследовать в Wireshark — не в этом списке рукопожатий.",
+            Text("Xray MITM записывает ключи TLS в PCAPNG. Поддерживаемые HTTP/1.1-запросы можно открыть непосредственно в приложении.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(6.dp))
             Text("MITM: " + if (mitmEnabled) "включён" else "выключен", style = MaterialTheme.typography.bodySmall)
@@ -101,7 +101,15 @@ fun TlsInspectorScreen() {
                 Spacer(Modifier.width(8.dp))
                 Text("Настроить MITM и запись HTTPS")
             }
-            Text("Для расшифровки требуется доверие приложения к сертификату SiteScope. QUIC Initial виден без MITM, но тела HTTP/3 в этом режиме не расшифровываются.",
+            OutlinedButton(onClick = {
+                context.startActivity(Intent(context, ToolActivity::class.java)
+                    .putExtra("screen", "https-content"))
+            }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.Article, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Открыть содержимое HTTPS")
+            }
+            Text("Нужен MITM-сертификат, доверенный клиентом. Сейчас просмотр поддерживает TLS 1.3 и HTTP/1.1; HTTP/2 и HTTP/3 останутся зашифрованными в этом просмотрщике.",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(10.dp))
