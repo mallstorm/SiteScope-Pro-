@@ -24,6 +24,7 @@ import pro.sitescope.app.tv.MaskSearchScreen
 import pro.sitescope.app.tv.TvLanScreen
 import pro.sitescope.app.vpn.VpnScreen
 import pro.sitescope.app.vpn.TlsInspectorScreen
+import pro.sitescope.app.vpn.HttpsContentScreen
 import pro.sitescope.app.wifi.WifiScreen
 
 /** Экраны второго уровня из раздела «Ещё»: сеть, мои данные, настройки. */
@@ -45,6 +46,7 @@ class ToolActivity : ComponentActivity() {
                         "data" -> { BackHeader("Мои данные", { finish() }); DataScreen(tab) }
                         "vpn" -> { BackHeader("VPN и свои адреса", { finish() }); VpnScreen(initialTab = tab) }
                         "tls-inspector" -> { BackHeader("TLS Inspector", { finish() }); TlsInspectorScreen() }
+                        "https-content" -> { BackHeader("HTTPS · содержимое", { finish() }); HttpsContentScreen() }
                         "settings" -> { BackHeader("Настройки", { finish() }); SettingsScreen() }
                         "ipdb" -> { BackHeader("База адресов", { finish() }); IpDbScreen(tab) }
                         "tvmask" -> { BackHeader("Поиск ТВ по маске ссылки", { finish() }); MaskSearchScreen() }
