@@ -23,6 +23,7 @@ import pro.sitescope.app.site.MetricsScreen
 import pro.sitescope.app.tv.MaskSearchScreen
 import pro.sitescope.app.tv.TvLanScreen
 import pro.sitescope.app.vpn.VpnScreen
+import pro.sitescope.app.vpn.TlsInspectorScreen
 import pro.sitescope.app.wifi.WifiScreen
 
 /** Экраны второго уровня из раздела «Ещё»: сеть, мои данные, настройки. */
@@ -43,6 +44,7 @@ class ToolActivity : ComponentActivity() {
                     when (screen) {
                         "data" -> { BackHeader("Мои данные", { finish() }); DataScreen(tab) }
                         "vpn" -> { BackHeader("VPN и свои адреса", { finish() }); VpnScreen() }
+                        "tls-inspector" -> { BackHeader("TLS Inspector", { finish() }); TlsInspectorScreen() }
                         "settings" -> { BackHeader("Настройки", { finish() }); SettingsScreen() }
                         "ipdb" -> { BackHeader("База адресов", { finish() }); IpDbScreen(tab) }
                         "tvmask" -> { BackHeader("Поиск ТВ по маске ссылки", { finish() }); MaskSearchScreen() }
