@@ -102,7 +102,7 @@ private fun Start(vm: SiteViewModel, state: AppState) {
 }
 
 @Composable
-private fun ReportView(vm: SiteViewModel, r: Report, state: AppState) {
+private fun ColumnScope.ReportView(vm: SiteViewModel, r: Report, state: AppState) {
     val context = LocalContext.current
     val saveHtml = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri ->
         if (uri != null) try {

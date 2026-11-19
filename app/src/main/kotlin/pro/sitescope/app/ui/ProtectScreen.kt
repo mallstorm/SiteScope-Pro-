@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import pro.sitescope.app.anon.AnonScreen
 import pro.sitescope.app.dpi.DpiScreen
 import pro.sitescope.app.vpn.TlsInspectorScreen
