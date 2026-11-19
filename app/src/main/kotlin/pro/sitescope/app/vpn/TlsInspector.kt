@@ -12,7 +12,8 @@ data class TlsFingerprint(
 )
 data class TlsHandshake(
     val timestamp: Long, val source: String, val sourcePort: Int,
-    val remote: String, val remotePort: Int, val fingerprint: TlsFingerprint
+    val remote: String, val remotePort: Int, val fingerprint: TlsFingerprint,
+    val transport: String = "TCP/TLS", val quicVersion: String = ""
 )
 
 /** Bounded decoder for the plaintext TLS ClientHello handshake message, not encrypted application data. */
@@ -122,7 +123,7 @@ object TlsClientHelloParser {
 /**
  * Passive in-memory TCP ClientHello observer. Works on outgoing raw IP frames from TunTee.
  * Payloads are discarded after extracting metadata; max 96 pending streams, 300 events.
- * IP fragmentation, IPv6 extension chains and QUIC are intentionally outside v1 scope.
+ * IPv4 fragmentation and IPv6 extension chains are intentionally unsupported.
  */
 object TlsInspectorHub {
     private const val MAX_BYTES = 131072
@@ -135,14 +136,15 @@ object TlsInspectorHub {
     @JvmStatic @Synchronized fun setEnabled(value: Boolean) {
         enabled = value
         pending.clear()
+        QuicHandshakeReassembler.clear()
     }
-    @JvmStatic @Synchronized fun clear() { pending.clear(); results.clear() }
+    @JvmStatic @Synchronized fun clear() { pending.clear(); QuicHandshakeReassembler.clear(); results.clear() }
     @JvmStatic @Synchronized fun snapshot(): List<TlsHandshake> = results.toList().asReversed()
 
     @JvmStatic @Synchronized fun observe(p: ByteArray, len: Int, at: Long = System.currentTimeMillis()) {
         if (!enabled || len > p.size || len < 40) return
         val info = PacketInfo.parse(p, len) ?: return
-        if (info.protocol != 6 || !(info.src.startsWith("10.10.14.") ||
+        if (!(info.src.startsWith("10.10.14.") ||
                     info.src.startsWith("10.203.0.") || info.src.startsWith("fc00:"))) return
         val l4 = when (info.version) {
             4 -> {
@@ -152,7 +154,22 @@ object TlsInspectorHub {
             6 -> { if ((p[6].toInt() and 255) != 6) return; 40 }
             else -> return
         }
-        if (l4 + 20 > len || info.payloadOffset <= l4 || info.payloadOffset > len) return
+        if (info.protocol == 17) {
+            if (l4 + 8 > len || info.payloadOffset != l4 + 8) return
+            val udpLength = PacketInfo.u16(p, l4 + 4)
+            if (udpLength < 8 || udpLength > len - l4) return
+            val udpSize = udpLength - 8
+            val packet = p.copyOfRange(info.payloadOffset, info.payloadOffset + udpSize)
+            val initial = QuicInitialParser.decode(packet, packet.size) ?: return
+            val key = info.src + ":" + info.srcPort + ">" + info.dst + ":" + info.dstPort +
+                "/" + initial.version + "/" + initial.dcid
+            val hello = QuicHandshakeReassembler.accept(key, initial, at) ?: return
+            results.addLast(TlsHandshake(at, info.src, info.srcPort, info.dst, info.dstPort, hello,
+                "UDP/QUIC", initial.version))
+            if (results.size > 300) results.removeFirst()
+            return
+        }
+        if (info.protocol != 6 || l4 + 20 > len || info.payloadOffset <= l4 || info.payloadOffset > len) return
         val size = len - info.payloadOffset
         if (size <= 0) return
         val key = info.src + ":" + info.srcPort + ">" + info.dst + ":" + info.dstPort
