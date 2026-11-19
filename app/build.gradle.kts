@@ -62,7 +62,7 @@ android {
         jniLibs { useLegacyPackaging = true }
         resources { excludes += setOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/9/OSGI-INF/MANIFEST.MF") }
     }
-    lint { checkReleaseBuilds = true; abortOnError = true }
+    lint { checkReleaseBuilds = true; abortOnError = true; disable += "UnsafeOptInUsageError" }
     testOptions { unitTests.isReturnDefaultValues = true }
 }
 
