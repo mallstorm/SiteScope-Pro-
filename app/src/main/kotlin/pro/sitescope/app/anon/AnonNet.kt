@@ -26,16 +26,9 @@ import java.util.concurrent.TimeUnit
 
 /** Настройки Onion/I2P. */
 data class AnonSettings(
-    val embeddedTor: Boolean = true,
-    val torHost: String = "127.0.0.1",
-    val torPort: Int = 9050,
     val torTransport: AnonTransport = AnonTransport.AUTO,
     val torProxy: String = "",
     val torBridges: String = "",
-    val embeddedI2p: Boolean = true,
-    val i2pHost: String = "127.0.0.1",
-    val i2pPort: Int = 4444,
-    val i2pSocks: Boolean = false,
     val i2pTransport: AnonTransport = AnonTransport.AUTO,
     val i2pProxy: String = "",
     val i2pReseedFile: String = "",
@@ -50,8 +43,7 @@ data class AnonState(
 )
 
 /**
- * Tor и I2P для встроенного браузера: встроенные движки (Tor — процесс libtor.so, I2P — i2pd в процессе :i2pcore)
- * или внешние (Orbot, Tor Browser, I2P/i2pd). Локальный прокси-маршрутизатор направляет .onion в Tor, .i2p в I2P, остальное — напрямую или через byedpi.
+ * Tor и I2P для встроенного браузера: только встроенные движки (Tor — процесс libtor.so, I2P — i2pd в процессе :i2pcore). Локальный прокси-маршрутизатор направляет .onion в Tor, .i2p в I2P, остальное — напрямую или через byedpi.
  */
 object AnonNet {
     private const val PREFS = "anon_net"
@@ -87,9 +79,7 @@ object AnonNet {
     fun save(value: AnonSettings) {
         settings = value
         app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean("embedded", value.embeddedTor).putString("torHost", value.torHost).putInt("torPort", value.torPort)
             .putString("torTransport", value.torTransport.key).putString("torProxy", value.torProxy).putString("torBridges", value.torBridges)
-            .putBoolean("embeddedI2p", value.embeddedI2p).putString("i2pHost", value.i2pHost).putInt("i2pPort", value.i2pPort).putBoolean("i2pSocks", value.i2pSocks)
             .putString("i2pTransport", value.i2pTransport.key).putString("i2pProxy", value.i2pProxy).putString("i2pReseedFile", value.i2pReseedFile)
             .putBoolean("torAll", value.torForAll).apply()
     }
@@ -98,10 +88,8 @@ object AnonNet {
         val p = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val d = AnonSettings()
         return AnonSettings(
-            embeddedTor = p.getBoolean("embedded", d.embeddedTor), torHost = p.getString("torHost", d.torHost) ?: d.torHost, torPort = p.getInt("torPort", d.torPort),
             torTransport = AnonTransport.from(p.getString("torTransport", null)), torProxy = p.getString("torProxy", "") ?: "", torBridges = p.getString("torBridges", "") ?: "",
-            embeddedI2p = p.getBoolean("embeddedI2p", d.embeddedI2p), i2pHost = p.getString("i2pHost", d.i2pHost) ?: d.i2pHost, i2pPort = p.getInt("i2pPort", d.i2pPort),
-            i2pSocks = p.getBoolean("i2pSocks", d.i2pSocks), i2pTransport = AnonTransport.from(p.getString("i2pTransport", null)),
+            i2pTransport = AnonTransport.from(p.getString("i2pTransport", null)),
             i2pProxy = p.getString("i2pProxy", "") ?: "", i2pReseedFile = p.getString("i2pReseedFile", "") ?: "", torForAll = p.getBoolean("torAll", d.torForAll),
         )
     }
@@ -109,15 +97,11 @@ object AnonNet {
     private inline fun update(change: (AnonState) -> AnonState) { synchronized(this) { _state.value = change(_state.value) } }
 
     private fun torUpstream(): Upstream? {
-        val s = settings
-        if (!s.embeddedTor) return Upstream.Socks5(s.torHost, s.torPort)
         val t = _state.value.tor
         return if (t.ready) Upstream.Socks5("127.0.0.1", t.port) else null
     }
 
     private fun i2pUpstream(): Upstream {
-        val s = settings
-        if (!s.embeddedI2p) return if (s.i2pSocks) Upstream.Socks5(s.i2pHost, s.i2pPort) else Upstream.Http(s.i2pHost, s.i2pPort)
         val i = _state.value.i2p
         return Upstream.Http("127.0.0.1", if (i.ready) i.httpPort else I2pConf.DEFAULT_HTTP)
     }
@@ -248,12 +232,6 @@ object AnonNet {
         Socket().use { it.connect(InetSocketAddress(host, port), timeoutMs); true }
     } catch (_: Exception) { false }
 
-    fun probeTorExternal(): Boolean = reachable(settings.torHost, settings.torPort)
-    fun probeI2p(): Boolean = reachable(settings.i2pHost, settings.i2pPort)
-
-    /** Порты, на которых обычно слушает внешний Tor: Orbot 9050, Tor Browser 9150. */
-    fun detectExternalTorPort(): Int? = listOf(9050, 9150).firstOrNull { reachable("127.0.0.1", it, 800) }
-
     /** Через Tor запрашивает check.torproject.org: подтверждает, что трафик действительно идёт через Tor. Блокирующий вызов. */
     fun checkTor(): String {
         val up = torUpstream() as? Upstream.Socks5 ?: return "Tor не запущен."
@@ -317,16 +295,9 @@ object AnonNet {
     private fun post(block: () -> Unit) { main.post(block) }
 
     private fun hint(error: String?, bypass: Boolean): String =
-        (error ?: "неизвестная ошибка") + if (bypass) "\n\nОткройте «Ещё → Onion и I2P» и выберите способ «Обход DPI» или «SOCKS5»." else ""
+        (error ?: "неизвестная ошибка") + if (bypass) "\n\nОткройте «Защита и доступ → Onion · I2P» и выберите способ «Обход DPI» или «SOCKS5»." else ""
 
     private fun waitForTor(listener: Listener) {
-        val s = settings
-        if (!s.embeddedTor) {
-            post { listener.status("Проверяю Tor-прокси ${s.torHost}:${s.torPort}…") }
-            if (!probeTorExternal()) throw IllegalStateException(
-                "Tor-прокси ${s.torHost}:${s.torPort} не отвечает.\n\nЗапустите Orbot (или Tor Browser для порта 9150) либо переключитесь на встроенный Tor в разделе «Onion и I2P».")
-            return
-        }
         if (!_state.value.tor.phase.active) startTor()
         val started = System.currentTimeMillis()
         while (true) {
@@ -341,13 +312,6 @@ object AnonNet {
     }
 
     private fun waitForI2p(listener: Listener) {
-        val s = settings
-        if (!s.embeddedI2p) {
-            post { listener.status("Проверяю I2P-роутер ${s.i2pHost}:${s.i2pPort}…") }
-            if (!probeI2p()) throw IllegalStateException(
-                "I2P-роутер не отвечает на ${s.i2pHost}:${s.i2pPort}.\n\nЗапустите приложение I2P или i2pd и включите HTTP-прокси, либо переключитесь на встроенный I2P в разделе «Onion и I2P».")
-            return
-        }
         if (!_state.value.i2p.phase.active && !i2pRestarting) startI2p()
         val started = System.currentTimeMillis()
         while (true) {

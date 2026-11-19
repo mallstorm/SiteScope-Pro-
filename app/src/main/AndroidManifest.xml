@@ -107,7 +107,7 @@
         <activity android:name=".ConnectionsActivity" android:exported="false" android:screenOrientation="unspecified" />
         <activity android:name=".InventoryActivity" android:exported="false" android:screenOrientation="unspecified" />
         <activity android:name=".ServiceActionActivity" android:exported="false" android:screenOrientation="unspecified" />
-        <activity android:name=".WebClientActivity" android:exported="false" android:screenOrientation="unspecified" />
+        <activity android:name=".WebClientActivity" android:exported="false" android:screenOrientation="unspecified" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|uiMode|density|fontScale" />
         <activity android:name=".SshClientActivity" android:exported="false" android:screenOrientation="unspecified" />
         <activity android:name=".NativeFileClientActivity" android:exported="false" android:screenOrientation="unspecified" />
         <activity android:name=".VncClientActivity" android:exported="false" android:screenOrientation="unspecified" />
