@@ -91,7 +91,8 @@ object HttpsCaptureDecoder {
         private val key = hkdf(secret, "key", if (suite == 0x1301) 16 else 32, algorithm)
         private val iv = hkdf(secret, "iv", 12, algorithm)
         var sequence = 0L
-        fun decrypt(header: ByteArray, payload: ByteArray): ByteArray? = try {
+        fun decrypt(header: ByteArray, payload: ByteArray): ByteArray? {
+            return try {
             val nonce = iv.copyOf()
             for (i in 0..7) {
                 val p = nonce.size - 1 - i
@@ -109,7 +110,8 @@ object HttpsCaptureDecoder {
             sequence++
             if ((plaintext[last].toInt() and 255) == 23) plaintext.copyOfRange(0, last)
             else ByteArray(0) // post-handshake messages do not contain HTTP
-        } catch (_: Exception) { null }
+            } catch (_: Exception) { null }
+        }
     }
 
     /** Per-direction ordered TCP byte stream: duplicate retransmissions are ignored. */
