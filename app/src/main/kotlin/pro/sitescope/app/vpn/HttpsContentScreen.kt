@@ -88,7 +88,7 @@ fun HttpsContentScreen() {
         report?.let { result ->
             Spacer(Modifier.height(12.dp))
             Text("Содержимое · " + selected, style = MaterialTheme.typography.titleMedium)
-            Text(result.notice, style = MaterialTheme.typography.bodySmall,
+            Text(result.note, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Расшифрованных TLS-сеансов: " + result.decryptedConnections +
                 " · HTTP/1.1-сообщений: " + result.entries.size,
