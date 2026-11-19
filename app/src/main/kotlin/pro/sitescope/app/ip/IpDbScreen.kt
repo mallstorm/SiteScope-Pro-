@@ -201,10 +201,10 @@ fun IpDbScreen(startTab: Int = 0) {
     val context = LocalContext.current
     LaunchedEffect(Unit) { IpDbWork.refresh(context) }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("База", "По месту", "По провайдеру").forEachIndexed { i, title -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title) }) }
         }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 28.dp)) {
             when (tab) { 0 -> DatabaseTab(); 1 -> PlaceTab(); else -> ProviderTab() }
         }
     }

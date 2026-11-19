@@ -33,6 +33,7 @@ import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.VerifiedUser
@@ -73,6 +74,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import pro.sitescope.app.HostsVpnService
+
+/** Запуск QR-сканера; задаётся оболочкой, пока null — значок сканирования не показывается. */
+val LocalQrScan = compositionLocalOf<(() -> Unit)?> { null }
 
 /** Кнопка «назад», которую оболочка передаёт экранам раздела; шапки показывают её автоматически. */
 val LocalBackAction = compositionLocalOf<(() -> Unit)?> { null }
@@ -215,7 +219,8 @@ fun SegmentedTabs(items: List<String>, selected: Int, onSelect: (Int) -> Unit, i
 
 /** Умная строка: сайт, IP, сеть, ASN, плейлист или поток. Справа — вставка из буфера и запуск. Высота 44 dp. */
 @Composable
-fun SmartSearchBar(value: String, onValue: (String) -> Unit, placeholder: String, onGo: () -> Unit, modifier: Modifier = Modifier, onPaste: (() -> Unit)? = null) {
+fun SmartSearchBar(value: String, onValue: (String) -> Unit, placeholder: String, onGo: () -> Unit, modifier: Modifier = Modifier, onPaste: (() -> Unit)? = null, scan: Boolean = false) {
+    val scanner = if (scan) LocalQrScan.current else null
     Row(
         modifier.fillMaxWidth().height(44.dp).shadow(2.dp, RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(start = 12.dp, end = 4.dp),
@@ -235,6 +240,10 @@ fun SmartSearchBar(value: String, onValue: (String) -> Unit, placeholder: String
         }
         if (value.isNotEmpty()) IconButton(onClick = { onValue("") }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.Clear, "Очистить", modifier = Modifier.size(18.dp)) }
         else if (onPaste != null) IconButton(onClick = onPaste, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.ContentPaste, "Вставить из буфера", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+        if (scanner != null) {
+            Box(Modifier.padding(horizontal = 2.dp).width(1.dp).height(22.dp).background(MaterialTheme.colorScheme.outlineVariant))
+            IconButton(onClick = scanner, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.QrCodeScanner, "Сканировать QR", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) }
+        }
         Box(
             Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primary).clickable(onClick = onGo),
             contentAlignment = Alignment.Center
@@ -371,5 +380,21 @@ fun BottomBar4(selected: Tab, taskCount: Int, onSelect: (Tab) -> Unit) {
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
             }
         }
+    }
+}
+
+/** Компактная плашка-фильтр высотой 28 dp (группы каналов, статусы). Необязательная цветная точка слева. */
+@Composable
+fun MiniChip(text: String, selected: Boolean, modifier: Modifier = Modifier, dot: Color? = null, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    val fg = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    Row(
+        modifier.height(28.dp).clip(shape)
+            .then(if (selected) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier.background(MaterialTheme.colorScheme.surfaceContainerLowest).border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape))
+            .clickable(onClick = onClick).padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (dot != null) { Box(Modifier.size(8.dp).clip(shape).background(dot)); Spacer(Modifier.width(5.dp)) }
+        Text(text, style = MaterialTheme.typography.labelLarge, color = fg, maxLines = 1)
     }
 }

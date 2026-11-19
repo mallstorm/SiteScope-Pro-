@@ -12,6 +12,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -25,6 +26,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -92,7 +94,7 @@ fun Dot(color: Color, size: Dp = 10.dp) = Box(Modifier.size(size).clip(CircleSha
 
 @Composable
 fun SoftCard(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, color: Color = MaterialTheme.colorScheme.surfaceContainerLowest,
-             padding: Dp = 16.dp, content: @Composable ColumnScope.() -> Unit) {
+             padding: Dp = 12.dp, content: @Composable ColumnScope.() -> Unit) {
     val shape = MaterialTheme.shapes.large
     val colors = CardDefaults.cardColors(containerColor = color)
     val elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -109,7 +111,7 @@ fun IconBadge(icon: ImageVector, color: Color, soft: Color, size: Dp = 44.dp) {
 
 @Composable
 fun SectionTitle(title: String, modifier: Modifier = Modifier, action: String? = null, onAction: (() -> Unit)? = null) {
-    Row(modifier.fillMaxWidth().padding(top = 20.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().padding(top = 10.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
         if (action != null && onAction != null) TextButton(onClick = onAction, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(action) }
     }
@@ -120,21 +122,21 @@ fun SectionTitle(title: String, modifier: Modifier = Modifier, action: String? =
 fun InfoRow(label: String, value: String, mono: Boolean = false, copyable: Boolean = true) {
     if (value.isBlank()) return
     val context = LocalContext.current
-    Row(Modifier.fillMaxWidth().clickable(enabled = copyable) { copyText(context, value) }.padding(vertical = 7.dp), verticalAlignment = Alignment.Top) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(132.dp))
+    Row(Modifier.fillMaxWidth().clickable(enabled = copyable) { copyText(context, value) }.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(120.dp))
         Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = if (mono) FontFamily.Monospace else null, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
     }
 }
 
 @Composable
 fun EmptyState(icon: ImageVector, title: String, text: String, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit = {}) {
-    Column(modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        IconBadge(icon, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primaryContainer, 76.dp)
-        Spacer(Modifier.height(16.dp))
-        Text(title, style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(6.dp))
+    Column(modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        IconBadge(icon, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primaryContainer, 52.dp)
+        Spacer(Modifier.height(10.dp))
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(4.dp))
         Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(10.dp))
         content()
     }
 }
@@ -142,18 +144,28 @@ fun EmptyState(icon: ImageVector, title: String, text: String, modifier: Modifie
 @Composable
 fun BigField(value: String, onValue: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier, onGo: () -> Unit = {},
              leading: ImageVector = Icons.Rounded.Search, keyboard: KeyboardType = KeyboardType.Uri, singleLine: Boolean = true, minLines: Int = 1, mono: Boolean = false) {
-    OutlinedTextField(
-        value = value, onValueChange = onValue, modifier = modifier.fillMaxWidth(), singleLine = singleLine, minLines = minLines,
-        placeholder = { Text(placeholder, maxLines = if (singleLine) 1 else 4, overflow = TextOverflow.Ellipsis) },
-        leadingIcon = if (singleLine) ({ Icon(leading, null) }) else null,
-        trailingIcon = if (value.isNotEmpty() && singleLine) ({ IconButton(onClick = { onValue("") }) { Icon(Icons.Rounded.Clear, "Очистить") } }) else null,
-        shape = RoundedCornerShape(18.dp),
-        textStyle = if (mono) LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace) else LocalTextStyle.current,
-        keyboardOptions = KeyboardOptions(keyboardType = keyboard, imeAction = if (singleLine) ImeAction.Go else ImeAction.Default, autoCorrectEnabled = false),
-        keyboardActions = KeyboardActions(onGo = { onGo() }),
-        colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest, focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant)
-    )
+    val shape = RoundedCornerShape(14.dp)
+    var focused by remember { mutableStateOf(false) }
+    val style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface, fontFamily = if (mono) FontFamily.Monospace else null)
+    Row(
+        modifier.fillMaxWidth().heightIn(min = if (singleLine) 40.dp else 0.dp).clip(shape).background(MaterialTheme.colorScheme.surfaceContainerLowest)
+            .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, shape)
+            .padding(start = 10.dp, end = if (singleLine) 2.dp else 10.dp, top = if (singleLine) 0.dp else 8.dp, bottom = if (singleLine) 0.dp else 8.dp),
+        verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top
+    ) {
+        if (singleLine) { Icon(leading, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)) }
+        Box(Modifier.weight(1f), contentAlignment = if (singleLine) Alignment.CenterStart else Alignment.TopStart) {
+            if (value.isEmpty()) Text(placeholder, style = style.copy(color = MaterialTheme.colorScheme.onSurfaceVariant), maxLines = if (singleLine) 1 else 3, overflow = TextOverflow.Ellipsis)
+            androidx.compose.foundation.text.BasicTextField(
+                value = value, onValueChange = onValue, singleLine = singleLine, minLines = minLines, textStyle = style,
+                modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = KeyboardOptions(keyboardType = keyboard, imeAction = if (singleLine) ImeAction.Go else ImeAction.Default, autoCorrectEnabled = false),
+                keyboardActions = KeyboardActions(onGo = { onGo() })
+            )
+        }
+        if (value.isNotEmpty() && singleLine) IconButton(onClick = { onValue("") }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Clear, "Очистить", modifier = Modifier.size(16.dp)) }
+    }
 }
 
 @Composable

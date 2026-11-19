@@ -71,7 +71,7 @@ fun AnonScreen() {
         }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SoftCard {
             Text("Открыть адрес", style = MaterialTheme.typography.titleMedium)
             Text("Адреса .onion идут через Tor, .i2p — через I2P. Остальное открывается как обычно.", style = MaterialTheme.typography.bodySmall,

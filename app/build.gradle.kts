@@ -118,6 +118,10 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("cz.adaptech.tesseract4android:tesseract4android:4.9.0")   // OCR эмблемы канала (данные rus.traineddata в assets)
 
+    implementation("androidx.camera:camera-camera2:1.4.1")                    // QR-сканер: камера
+    implementation("androidx.camera:camera-lifecycle:1.4.1")
+    implementation("androidx.camera:camera-view:1.4.1")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")                // QR-сканер: распознавание на устройстве, без Google Play Services
     implementation("androidx.webkit:webkit:1.12.1")                           // ProxyController: WebView через локальный прокси Onion/I2P
 
     val media3 = "1.6.1"

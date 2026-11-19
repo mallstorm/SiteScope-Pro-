@@ -85,7 +85,7 @@ internal fun ReportsScreen() {
         }
     }
     val locked = busy || saving || picker
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SoftCard {
             Text("Отчёт по сохранённым данным", style = MaterialTheme.typography.titleMedium)
             Text("CSV для таблиц, JSON для обработки, HTML для просмотра. Каждый результат содержит время и источник. Пароли, токены, баннеры и сырые ответы API не экспортируются.", style = MaterialTheme.typography.bodySmall)

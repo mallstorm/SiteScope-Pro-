@@ -116,7 +116,7 @@ private fun phaseTitle(p: SpeedEngine.Phase) = when (p) {
 fun SpeedScreen(vm: SpeedViewModel = viewModel()) {
     var showSettings by remember { mutableStateOf(false) }
     val s = vm.settings
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp)) {
         // Сервер и тип сети
         SoftCard(Modifier.clickable(enabled = !vm.running) { showSettings = true }) {
             Row(verticalAlignment = Alignment.CenterVertically) {

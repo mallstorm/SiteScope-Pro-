@@ -83,7 +83,7 @@ fun DpiScreen(vm: DpiViewModel = viewModel()) {
     )
 
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             tabs.forEachIndexed { i, t -> FilterChip(tab == i, { tab = i }, label = { Text(t) }) }
         }
         when (tab) {
@@ -100,7 +100,7 @@ fun DpiScreen(vm: DpiViewModel = viewModel()) {
 private fun RunTab(vm: DpiViewModel, state: DpiState, onToggle: () -> Unit) {
     val context = LocalContext.current
     val cfg = vm.cfg
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SoftCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -253,7 +253,7 @@ private fun SearchTab(vm: DpiViewModel) {
 private fun StrategyTab(vm: DpiViewModel) {
     val cfg = vm.cfg
     var raw by remember(cfg.line) { mutableStateOf(cfg.line) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SoftCard {
             Text("Стратегия", style = MaterialTheme.typography.titleMedium)
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -363,7 +363,7 @@ private fun AppsTab(vm: DpiViewModel) {
 @Composable
 private fun LogTab(state: DpiState) {
     val context = LocalContext.current
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SoftCard {
             Text("Журнал byedpi", style = MaterialTheme.typography.titleMedium)
             val text = state.log.joinToString("\n").ifBlank { "Пока пусто. Движок пишет сюда только ошибки." }

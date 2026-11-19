@@ -21,7 +21,13 @@ import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import pro.sitescope.app.scan.QrScannerDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -60,6 +66,8 @@ class AppState : ViewModel() {
     var subnetRequest by mutableStateOf<String?>(null)
     var playlistRequest by mutableStateOf<String?>(null)
     var streamRequest by mutableStateOf<String?>(null)
+    /** Ссылка сервера (vless://… и др.) из QR-кода: экран VPN добавит её и сбросит поле. */
+    var serverRequest by mutableStateOf<String?>(null)
 
     fun selectTab(target: Tab) { route = null; tab = target }
 
@@ -76,6 +84,8 @@ class AppState : ViewModel() {
 
     /** Открывает подходящий инструмент для введённого текста. Возвращает false, если текст пуст. */
     fun open(text: String): Boolean {
+        val trimmed = text.trim()
+        if (SERVER_SCHEMES.any { trimmed.startsWith(it, ignoreCase = true) }) { serverRequest = trimmed; openRoute("vpn", 1); return true }
         val r = SmartInput.detect(text)
         when (r.kind) {
             SmartInput.Kind.EMPTY -> return false
@@ -88,6 +98,8 @@ class AppState : ViewModel() {
         return true
     }
 }
+
+private val SERVER_SCHEMES = listOf("vless://", "vmess://", "trojan://", "ss://", "hysteria2://", "hy2://")
 
 class ShellActivity : ComponentActivity() {
     private val state: AppState by viewModels()
@@ -129,6 +141,22 @@ fun Shell(state: AppState) {
     BackHandler(enabled = state.route != null || state.tab != Tab.HOME) {
         if (state.route != null) state.closeRoute() else state.tab = Tab.HOME
     }
+    var scanning by remember { mutableStateOf(false) }
+    var wifiQr by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    if (scanning) QrScannerDialog(onClose = { scanning = false }, onResult = { text ->
+        scanning = false
+        if (text.startsWith("WIFI:", ignoreCase = true)) wifiQr = text else if (!state.open(text)) toast(context, "Пустой QR-код")
+    })
+    wifiQr?.let { raw ->
+        fun field(key: String) = Regex("(?:^|;|:)$key:((?:\\\\.|[^;])*)").find(raw.removePrefix("WIFI:"))?.groupValues?.get(1)?.replace(Regex("\\\\(.)"), "$1").orEmpty()
+        val ssid = field("S"); val password = field("P")
+        AlertDialog(onDismissRequest = { wifiQr = null }, title = { Text("Wi-Fi из QR-кода") },
+            text = { Text("Сеть: " + ssid.ifEmpty { "—" } + "\nПароль: " + password.ifEmpty { "нет" }) },
+            confirmButton = { TextButton(onClick = { if (password.isNotEmpty()) copyText(context, password, "Пароль скопирован"); wifiQr = null }) { Text(if (password.isNotEmpty()) "Копировать пароль" else "Закрыть") } },
+            dismissButton = { TextButton(onClick = { wifiQr = null }) { Text("Закрыть") } })
+    }
+    CompositionLocalProvider(LocalQrScan provides { scanning = true }) {
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).imePadding()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val route = state.route
@@ -147,6 +175,7 @@ fun Shell(state: AppState) {
         }
         if (!imeUp) BottomBar4(state.tab, count) { state.selectTab(it) }
     }
+    }
 }
 
 @Composable
@@ -155,6 +184,6 @@ private fun RouteHost(state: AppState, route: String) {
         "site" -> SiteScreen(state)
         "ip" -> IpScreen(state)
         "tv" -> TvScreen(state)
-        else -> key(state.routeNonce) { ToolContent(route, state.routeTab, state.routeTargets) { state.closeRoute() } }
+        else -> key(state.routeNonce) { ToolContent(route, state.routeTab, state.routeTargets, state) { state.closeRoute() } }
     }
 }

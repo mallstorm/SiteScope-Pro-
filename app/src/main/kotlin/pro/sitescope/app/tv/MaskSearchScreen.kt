@@ -316,7 +316,7 @@ fun MaskSearchScreen(vm: MaskViewModel = viewModel()) {
     val cfg = vm.config()
     val toCheck = MaskSearch.limit(parsed, cfg)
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 28.dp)) {
         RecognitionWindow(vm.latest, vm.running, vm)
 
         SectionTitle("Маска из импортированного плейлиста")

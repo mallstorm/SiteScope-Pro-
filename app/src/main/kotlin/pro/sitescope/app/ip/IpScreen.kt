@@ -59,14 +59,15 @@ fun IpScreen(state: AppState, vm: IpViewModel = viewModel()) {
     }
     Column(Modifier.fillMaxSize()) {
         AppHeader("IP и подсети", "Информация об IP, ASN, гео, CIDR: диапазоны, деление, агрегация") {
-            StatusPills(state)
-            Spacer(Modifier.height(8.dp))
             HeaderChips(pages, vm.page, { index ->
                 if (index == 3) state.openRoute("ipdb") else { vm.page = index; if (index == 2) vm.loadMine() }
             }, listOf(Icons.Rounded.Search, Icons.Rounded.Calculate, Icons.Rounded.MyLocation, Icons.Rounded.Storage))
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 16.dp)) {
-            when (vm.page) { 0 -> LookupPage(vm, state); 1 -> SubnetPage(vm); else -> MinePage(vm) }
+        Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp).padding(top = 8.dp)) {
+            if (vm.page == 0) { SmartSearchBar(vm.query, { vm.query = it }, "IP, сайт, AS15169 или название провайдера", onGo = { vm.search() }, scan = true); Spacer(Modifier.height(8.dp)) }
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) {
+                when (vm.page) { 0 -> LookupPage(vm, state); 1 -> SubnetPage(vm); else -> MinePage(vm) }
+            }
         }
     }
 }
@@ -76,10 +77,6 @@ fun IpScreen(state: AppState, vm: IpViewModel = viewModel()) {
 @Composable
 private fun LookupPage(vm: IpViewModel, state: AppState) {
     val context = LocalContext.current
-    BigField(vm.query, { vm.query = it }, "IP, сайт, AS15169 или название провайдера", onGo = { vm.search() }, keyboard = KeyboardType.Text)
-    Spacer(Modifier.height(10.dp))
-    Button(onClick = { vm.search() }, enabled = !vm.searching && vm.query.isNotBlank(), modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) { Text("Найти") }
-    Spacer(Modifier.height(12.dp))
     if (vm.searching) LoadingCard("Ищем сведения", "Локальная база · RIPE · RDAP")
     if (vm.searchError.isNotEmpty()) ErrorCard(vm.searchError)
 
@@ -103,15 +100,15 @@ private fun LookupPage(vm: IpViewModel, state: AppState) {
     else if (!vm.searching && vm.hits.isEmpty()) {
         if (vm.recent.isNotEmpty()) {
             SectionTitle("Недавние запросы")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                for (q in vm.recent) AssistChip(onClick = { vm.search(q) }, label = { Text(q, maxLines = 1) }, leadingIcon = { Icon(Icons.Rounded.History, null, Modifier.size(16.dp)) })
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (q in vm.recent) MiniChip(q, false) { vm.search(q) }
             }
         }
         SectionTitle("Примеры")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            for (q in listOf("8.8.8.8", "1.1.1.1", "yandex.ru", "AS13335")) SuggestionChip(onClick = { vm.search(q) }, label = { Text(q) })
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (q in listOf("8.8.8.8", "1.1.1.1", "yandex.ru", "AS13335")) MiniChip(q, false) { vm.search(q) }
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
         SoftCard(onClick = { state.openRoute("ipdb") }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconBadge(Icons.Rounded.Storage, tones.ip, tones.ipSoft, 40.dp)
@@ -149,10 +146,10 @@ private fun InfoView(vm: IpViewModel, info: IpInfo) {
             if (info.announced) Pill("Виден в интернете", tones.good, tones.goodSoft)
         }
     }
-    if (info.error.isNotEmpty()) { Spacer(Modifier.height(10.dp)); ErrorCard("Онлайн-справочники не ответили. Показано то, что известно локально.") }
+    if (info.error.isNotEmpty()) { Spacer(Modifier.height(6.dp)); ErrorCard("Онлайн-справочники не ответили. Показано то, что известно локально.") }
 
     if (info.hasGeo) {
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
         MapCard(info)
     }
 
@@ -249,9 +246,9 @@ private fun ToolCard(icon: androidx.compose.ui.graphics.vector.ImageVector, titl
             if (running) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 3.dp)
             else FilledTonalButton(onClick = onRun, contentPadding = PaddingValues(horizontal = 14.dp)) { Text(if (hasResult && actionTitle == "Запустить") "Ещё раз" else actionTitle) }
         }
-        if (hasResult) { Spacer(Modifier.height(10.dp)); content() }
+        if (hasResult) { Spacer(Modifier.height(6.dp)); content() }
     }
-    Spacer(Modifier.height(10.dp))
+    Spacer(Modifier.height(6.dp))
 }
 
 @Composable
@@ -308,7 +305,7 @@ private fun MinePage(vm: IpViewModel) {
     val m = vm.mine
     if (vm.mineLoading && m == null) { LoadingCard("Определяем ваш адрес"); return }
     if (m == null) return
-    if (m.error.isNotEmpty()) { ErrorCard(m.error); Spacer(Modifier.height(10.dp)) }
+    if (m.error.isNotEmpty()) { ErrorCard(m.error); Spacer(Modifier.height(6.dp)) }
     SoftCard {
         Text("Ваш адрес в интернете", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(m.ipv4.ifEmpty { m.ipv6.ifEmpty { "—" } }, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Monospace,
@@ -347,9 +344,9 @@ private fun SubnetPage(vm: IpViewModel) {
     var mode by remember { mutableIntStateOf(0) }
     LaunchedEffect(vm.aclInput) { if (vm.aclInput.isNotEmpty()) mode = 4 }
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        subnetModes.forEachIndexed { i, title -> FilterChip(selected = mode == i, onClick = { mode = i }, label = { Text(title) }) }
+        subnetModes.forEachIndexed { i, title -> MiniChip(title, mode == i) { mode = i } }
     }
-    Spacer(Modifier.height(10.dp))
+    Spacer(Modifier.height(6.dp))
     when (mode) { 0 -> Calculator(vm); 1 -> Splitter(vm); 2 -> Vlsm(vm); 3 -> Summarizer(vm); else -> AclBuilder(vm) }
 }
 
@@ -361,7 +358,7 @@ private fun Calculator(vm: IpViewModel) {
     if (input.contains(':')) {
         val v6 = remember(input) { runCatching { Subnet.v6(input) } }
         val s6 = v6.getOrNull()
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
         if (s6 != null) SoftCard {
             Text("Сеть IPv6 /${s6.prefix}", style = MaterialTheme.typography.titleMedium)
             InfoRow("Тип", s6.kind); InfoRow("Кратко", s6.compressed, mono = true); InfoRow("Полностью", s6.expanded, mono = true)
@@ -371,9 +368,9 @@ private fun Calculator(vm: IpViewModel) {
     }
     val parsed = remember(input) { runCatching { Subnet.parse(input) } }
     val net = parsed.getOrNull()
-    if (net == null) { if (input.isNotEmpty()) { Spacer(Modifier.height(10.dp)); ErrorCard(parsed.exceptionOrNull()?.message ?: "Не удалось разобрать адрес") }; return }
+    if (net == null) { if (input.isNotEmpty()) { Spacer(Modifier.height(6.dp)); ErrorCard(parsed.exceptionOrNull()?.message ?: "Не удалось разобрать адрес") }; return }
 
-    Spacer(Modifier.height(12.dp))
+    Spacer(Modifier.height(8.dp))
     SoftCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Маска /${net.prefix}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
@@ -386,12 +383,12 @@ private fun Calculator(vm: IpViewModel) {
             Text("узлы", style = MaterialTheme.typography.labelSmall, color = tones.warn)
         }
     }
-    Spacer(Modifier.height(12.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Spacer(Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         StatTile("Адресов для устройств", grouped(net.usable.toString()), Modifier.weight(1f))
         StatTile("Всего адресов", grouped(net.total.toString()), Modifier.weight(1f))
     }
-    Spacer(Modifier.height(12.dp))
+    Spacer(Modifier.height(8.dp))
     SoftCard {
         InfoRow("Сеть", net.cidr, mono = true)
         InfoRow("Маска", net.mask, mono = true)
@@ -450,10 +447,10 @@ private fun Splitter(vm: IpViewModel) {
     val context = LocalContext.current
     BigField(vm.subnetInput, { vm.subnetInput = it }, "Сеть, например 10.0.0.0/16", leading = Icons.Rounded.CallSplit, keyboard = KeyboardType.Text, mono = true)
     val net = remember(vm.subnetInput) { runCatching { Subnet.parse(vm.subnetInput.trim()).normalized() }.getOrNull() }
-    if (net == null) { Spacer(Modifier.height(10.dp)); ErrorCard("Введите сеть IPv4 с маской"); return }
+    if (net == null) { Spacer(Modifier.height(6.dp)); ErrorCard("Введите сеть IPv4 с маской"); return }
     var newPrefix by remember(net) { mutableIntStateOf(minOf(32, net.prefix + 1)) }
-    if (net.prefix == 32) { Spacer(Modifier.height(10.dp)); ErrorCard("Один адрес разделить нельзя"); return }
-    Spacer(Modifier.height(12.dp))
+    if (net.prefix == 32) { Spacer(Modifier.height(6.dp)); ErrorCard("Один адрес разделить нельзя"); return }
+    Spacer(Modifier.height(8.dp))
     val count = Subnet.splitCount(net, newPrefix)
     val each = Subnet.V4(0, newPrefix)
     SoftCard {
@@ -481,12 +478,12 @@ private fun Vlsm(vm: IpViewModel) {
     val context = LocalContext.current
     var needs by remember { mutableStateOf("Офис: 100\nСклад: 50\nСерверы: 12\nСвязь: 2") }
     BigField(vm.subnetInput, { vm.subnetInput = it }, "Общая сеть, например 192.168.0.0/24", leading = Icons.Rounded.AccountTree, keyboard = KeyboardType.Text, mono = true)
-    Spacer(Modifier.height(10.dp))
+    Spacer(Modifier.height(6.dp))
     Text("Сколько устройств в каждой части (по строке на часть)", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(6.dp))
     BigField(needs, { needs = it }, "Название: число устройств", singleLine = false, minLines = 4, keyboard = KeyboardType.Text)
     val net = runCatching { Subnet.parse(vm.subnetInput.trim()).normalized() }.getOrNull()
-    if (net == null) { Spacer(Modifier.height(10.dp)); ErrorCard("Введите общую сеть IPv4 с маской"); return }
+    if (net == null) { Spacer(Modifier.height(6.dp)); ErrorCard("Введите общую сеть IPv4 с маской"); return }
     val parsed = needs.lines().mapNotNull { line ->
         val count = Regex("(\\d+)\\s*$").find(line.trim())?.groupValues?.get(1)?.toIntOrNull() ?: return@mapNotNull null
         val name = line.substringBeforeLast(count.toString()).trim().trimEnd(':', '-', '—', '=').trim().ifEmpty { "Часть" }
@@ -495,7 +492,7 @@ private fun Vlsm(vm: IpViewModel) {
     if (parsed.isEmpty()) return
     val result = remember(net, needs) { runCatching { Subnet.vlsm(net, parsed) } }
     val allocations = result.getOrNull()
-    if (allocations == null) { Spacer(Modifier.height(10.dp)); ErrorCard(result.exceptionOrNull()?.message ?: "Не удалось распределить"); return }
+    if (allocations == null) { Spacer(Modifier.height(6.dp)); ErrorCard(result.exceptionOrNull()?.message ?: "Не удалось распределить"); return }
     val used = allocations.sumOf { it.net?.total ?: 0L }
     SectionTitle("Распределение", action = "Копировать", onAction = {
         copyText(context, allocations.joinToString("\n") { a -> a.name + ": " + (a.net?.let { "${it.cidr} (${Subnet.toIp(it.firstHost)} – ${Subnet.toIp(it.lastHost)}, маска ${it.mask})" } ?: "не поместилась") })
@@ -528,13 +525,13 @@ private fun Summarizer(vm: IpViewModel) {
     BigField(text, { text = it }, "10.0.0.0/24\n10.0.1.0-10.0.1.255", singleLine = false, minLines = 5, keyboard = KeyboardType.Text, mono = true)
     val parsed = remember(text) { runCatching { Subnet.parseList(text) } }
     val nets = parsed.getOrNull()
-    if (nets == null) { Spacer(Modifier.height(10.dp)); ErrorCard(parsed.exceptionOrNull()?.message ?: "Проверьте список"); return }
+    if (nets == null) { Spacer(Modifier.height(6.dp)); ErrorCard(parsed.exceptionOrNull()?.message ?: "Проверьте список"); return }
     if (nets.isEmpty()) return
     val summary = remember(nets) { Subnet.summarize(nets) }
     val supernet = remember(nets) { Subnet.supernet(nets) }
     SectionTitle("Было ${nets.size} → стало ${summary.size}", action = "Копировать", onAction = { copyText(context, summary.joinToString("\n") { it.cidr }) })
     MonoBlock(summary.take(300).joinToString("\n") { it.cidr })
-    Spacer(Modifier.height(12.dp))
+    Spacer(Modifier.height(8.dp))
     SoftCard {
         InfoRow("Общая надсеть", supernet.cidr, mono = true)
         InfoRow("Адресов в списке", grouped(summary.sumOf { it.total }.toString()))
@@ -565,7 +562,7 @@ private fun AclBuilder(vm: IpViewModel) {
     if (vm.aclInput.isBlank()) return
     val parsed = remember(vm.aclInput) { runCatching { Subnet.summarize(Subnet.parseList(vm.aclInput)) } }
     val nets = parsed.getOrNull()
-    if (nets == null) { Spacer(Modifier.height(10.dp)); ErrorCard(parsed.exceptionOrNull()?.message ?: "Проверьте список (только IPv4)"); return }
+    if (nets == null) { Spacer(Modifier.height(6.dp)); ErrorCard(parsed.exceptionOrNull()?.message ?: "Проверьте список (только IPv4)"); return }
     val output = remember(nets, format, allow, name) { Subnet.acl(format, nets.take(2000), name, allow) }
     SectionTitle("Готово: ${nets.size} правил")
     MonoBlock(if (output.length > 6000) output.take(6000) + "\n…" else output)

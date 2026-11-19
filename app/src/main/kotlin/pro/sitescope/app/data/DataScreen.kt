@@ -59,7 +59,7 @@ private fun typeTitle(type: String) = when (type) { "IP" -> "Сеть"; "IPTV" -
 fun DataScreen(startTab: Int = 0) {
     var tab by remember { mutableIntStateOf(startTab) }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("Проекты") })
             FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("История") })
             FilterChip(selected = tab == 2, onClick = { tab = 2 }, label = { Text("Отчёты") })
@@ -76,7 +76,7 @@ fun DataHub(state: AppState, startTab: Int = 0) {
         AppHeader("Данные", "Проекты, история и отчёты", logo = true,
             actions = { HeaderMenu(listOf("Настройки и резервная копия" to { state.openRoute("settings") })) }
         ) { StatusPills(state) }
-        SegmentedTabs(listOf("Проекты", "История", "Отчёты"), tab, { tab = it }, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+        SegmentedTabs(listOf("Проекты", "История", "Отчёты"), tab, { tab = it }, modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp))
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (tab) { 0 -> ProjectsTab(); 1 -> HistoryTab(); else -> ReportsScreen() }
         }

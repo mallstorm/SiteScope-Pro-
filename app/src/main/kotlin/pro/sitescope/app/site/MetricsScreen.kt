@@ -71,7 +71,7 @@ fun MetricsScreen(startUrl: String? = null) {
         if (result == null) toast(context, "Не удалось получить данные: проверьте интернет")
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 28.dp)) {
         Spacer(Modifier.height(8.dp))
         BigField(url, { url = it }, "Адрес сайта: example.ru", onGo = { if (!running && url.isNotBlank()) run() }, leading = Icons.Rounded.Language)
         Button(onClick = { run() }, enabled = !running && url.isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text(if (running) "Получаем данные…" else "Получить метрики") }

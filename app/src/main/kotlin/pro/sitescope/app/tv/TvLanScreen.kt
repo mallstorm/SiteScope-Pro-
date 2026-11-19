@@ -102,7 +102,7 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
         toast(context, "Добавлено каналов: $count. Они появились на вкладке «ТВ».")
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 28.dp)) {
         Text("Локальные и разрешённые публичные IPTV-источники. SAP/UDP-мультикаст работает только внутри сети провайдера, а HTTP/HTTPS можно проверять через поиск по маске.", style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
 

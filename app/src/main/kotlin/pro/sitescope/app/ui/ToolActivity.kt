@@ -50,7 +50,7 @@ class ToolActivity : ComponentActivity() {
 
 /** Содержимое экрана инструмента с шапкой «назад»; общее для ToolActivity и оболочки. */
 @Composable
-fun ToolContent(screen: String, tab: Int, targets: String?, onBack: () -> Unit) {
+fun ToolContent(screen: String, tab: Int, targets: String?, state: AppState? = null, onBack: () -> Unit) {
     val context = LocalContext.current
     // Сканер работает в фоне с уведомлением о ходе проверки.
     if (screen == "network" && Build.VERSION.SDK_INT >= 33) {
@@ -64,14 +64,15 @@ fun ToolContent(screen: String, tab: Int, targets: String?, onBack: () -> Unit) 
     CompositionLocalProvider(LocalBackAction provides onBack) { Column(Modifier.fillMaxSize()) {
         when (screen) {
             "data" -> { BackHeader("Мои данные", onBack); DataScreen(tab) }
-            "vpn" -> ProtectScreen(0, tab)
-            "tls-inspector" -> ProtectScreen(3, 0)
+            "protect" -> ProtectScreen(-1, 0, state)
+            "vpn" -> ProtectScreen(0, tab, state)
+            "tls-inspector" -> ProtectScreen(3, 0, state)
             "https-content" -> { BackHeader("HTTPS · содержимое", onBack); HttpsContentScreen() }
             "settings" -> { BackHeader("Настройки", onBack); SettingsScreen() }
             "ipdb" -> { BackHeader("База адресов", onBack); IpDbScreen(tab) }
             "tvmask" -> { BackHeader("Поиск ТВ по маске ссылки", onBack); MaskSearchScreen() }
-            "dpi" -> ProtectScreen(1, 0)
-            "anon" -> ProtectScreen(2, 0)
+            "dpi" -> ProtectScreen(1, 0, state)
+            "anon" -> ProtectScreen(2, 0, state)
             "tvlan" -> { BackHeader("ТВ в локальной сети", onBack); TvLanScreen() }
             "metrics" -> { BackHeader("Метрики поиска", onBack); MetricsScreen(targets) }
             "batch" -> { BackHeader("Проверка списка сайтов", onBack); BatchScreen() }

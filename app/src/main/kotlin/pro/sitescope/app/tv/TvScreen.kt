@@ -26,6 +26,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -70,43 +71,39 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
     val visible = remember(tick, vm.channels, vm.query, vm.group, vm.statusFilter) { vm.visible() }
 
     Column(Modifier.fillMaxSize()) {
-        AppHeader("Телевидение", if (vm.channels.isEmpty()) "IPTV / M3U, udpxy, multicast, проверка и просмотр" else "Каналов: ${vm.channels.size}",
+        AppHeader("Телевидение", if (vm.channels.isEmpty()) "IPTV / M3U, udpxy, multicast, проверка и просмотр" else "Каналы, источники и диагностика · ${vm.channels.size}",
             actions = {
                 if (vm.channels.isNotEmpty()) {
-                    IconButton(onClick = { addSheet = true }) { Icon(Icons.Rounded.Add, "Добавить плейлист") }
-                    IconButton(onClick = { manageSheet = true }) { Icon(Icons.Rounded.Tune, "Источники и настройки") }
+                    IconButton(onClick = { addSheet = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.Add, "Добавить плейлист") }
+                    IconButton(onClick = { manageSheet = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.Tune, "Источники и настройки") }
                 }
             }
         ) {
-            StatusPills(state)
-            Spacer(Modifier.height(8.dp))
             HeaderChips(listOf("Каналы", "Источники", "ТВ в сети", "По маске"), 0, { index ->
                 when (index) { 1 -> manageSheet = true; 2 -> state.openRoute("tvlan"); 3 -> state.openRoute("tvmask") }
             }, listOf(Icons.Rounded.LiveTv, Icons.Rounded.Cloud, Icons.Rounded.SettingsInputAntenna, Icons.Rounded.ManageSearch))
         }
-        if (vm.busy.isNotEmpty()) Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { LoadingCard(vm.busy) }
+        if (vm.busy.isNotEmpty()) Box(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) { LoadingCard(vm.busy) }
 
         if (vm.loaded && vm.channels.isEmpty()) {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 EmptyState(Icons.Rounded.LiveTv, "Добавьте свои каналы", "Вставьте ссылку на плейлист или выберите файл M3U. Мы проверим, какие каналы работают, и покажем программу передач.") {
-                    Button(onClick = { addSheet = true }, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(8.dp)); Text("Добавить плейлист") }
-                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { addSheet = true }, modifier = Modifier.fillMaxWidth().height(44.dp), shape = RoundedCornerShape(14.dp)) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(8.dp)); Text("Добавить плейлист") }
+                    Spacer(Modifier.height(4.dp))
                     TextButton(onClick = { state.openRoute("tvlan") }) { Text("Найти IPTV в моей сети (udpxy, SAP)") }
                 }
             }
         } else if (vm.channels.isNotEmpty()) {
-            Column(Modifier.padding(horizontal = 16.dp)) {
-                BigField(vm.query, { vm.query = it }, "Найти канал", keyboard = KeyboardType.Text)
-                Spacer(Modifier.height(8.dp))
+            Column(Modifier.padding(horizontal = 12.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SmartSearchBar(vm.query, { vm.query = it }, "Найти канал", onGo = { }, scan = true)
                 CheckPanel(vm, visible)
-            }
-            // Группы
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GroupChip("Все", vm.group == TvViewModel.ALL) { vm.group = TvViewModel.ALL }
-                GroupChip("★ Избранное", vm.group == TvViewModel.FAVORITES) { vm.group = TvViewModel.FAVORITES }
-                GroupChip("Недавние", vm.group == TvViewModel.RECENT) { vm.group = TvViewModel.RECENT }
-                val groups = remember(vm.channels) { vm.groups() }
-                for (g in groups.take(60)) GroupChip(g, vm.group == g) { vm.group = g }
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MiniChip("Все", vm.group == TvViewModel.ALL) { vm.group = TvViewModel.ALL }
+                    MiniChip("★ Избранное", vm.group == TvViewModel.FAVORITES) { vm.group = TvViewModel.FAVORITES }
+                    MiniChip("Недавние", vm.group == TvViewModel.RECENT) { vm.group = TvViewModel.RECENT }
+                    val groups = remember(vm.channels) { vm.groups() }
+                    for (g in groups.take(60)) MiniChip(g, vm.group == g) { vm.group = g }
+                }
             }
             if (visible.isEmpty()) {
                 EmptyState(Icons.Rounded.SearchOff, "Ничего не нашлось", when {
@@ -114,7 +111,7 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
                     vm.group == TvViewModel.RECENT -> "Здесь появятся каналы, которые вы смотрели."
                     else -> "Попробуйте другой запрос или фильтр."
                 })
-            } else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp, top = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            } else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(visible, key = { it.id + it.sourceId + it.number }) { channel ->
                     ChannelRow(channel, tick, onClick = { vm.markWatched(channel); play(context, visible, visible.indexOf(channel)) }, onLong = { details = channel })
                 }
@@ -128,21 +125,17 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
 }
 
 @Composable
-private fun GroupChip(title: String, selected: Boolean, onClick: () -> Unit) =
-    FilterChip(selected = selected, onClick = onClick, label = { Text(title, maxLines = 1) })
-
-@Composable
 private fun CheckPanel(vm: TvViewModel, visible: List<Channel>) {
     val tick = vm.tick
-    SoftCard(padding = 14.dp) {
+    Column(Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(horizontal = 10.dp, vertical = 8.dp)) {
         if (vm.checking) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Проверяем: ${vm.checkDone} из ${vm.checkTotal}", style = MaterialTheme.typography.titleSmall)
-                    LinearProgressIndicator(progress = { if (vm.checkTotal == 0) 0f else vm.checkDone.toFloat() / vm.checkTotal }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(6.dp).clip(RoundedCornerShape(3.dp)))
+                    LinearProgressIndicator(progress = { if (vm.checkTotal == 0) 0f else vm.checkDone.toFloat() / vm.checkTotal }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(5.dp).clip(RoundedCornerShape(3.dp)))
                 }
-                Spacer(Modifier.width(12.dp))
-                FilledTonalButton(onClick = { vm.stopCheck() }) { Text("Стоп") }
+                Spacer(Modifier.width(10.dp))
+                FilledTonalButton(onClick = { vm.stopCheck() }, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("Стоп") }
             }
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -151,16 +144,17 @@ private fun CheckPanel(vm: TvViewModel, visible: List<Channel>) {
                     Text(if (vm.lastCheckAt == 0L) "Узнайте, какие каналы работают" else "Последняя: " + SimpleDateFormat("d MMM, HH:mm", Locale("ru")).format(Date(vm.lastCheckAt)),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Button(onClick = { vm.startCheck(visible) }, enabled = visible.isNotEmpty()) { Text(if (visible.size == vm.channels.size) "Проверить все" else "Проверить ${visible.size}") }
+                Button(onClick = { vm.startCheck(visible) }, enabled = visible.isNotEmpty(), contentPadding = PaddingValues(horizontal = 14.dp)) {
+                    Text(if (visible.size == vm.channels.size) "Проверить все" else "Проверить ${visible.size}")
+                }
             }
         }
         val counts = remember(tick, vm.channels) { StreamStatus.entries.associateWith { s -> vm.channels.count { it.status == s } } }
         if (counts.any { it.key != StreamStatus.UNKNOWN && it.value > 0 }) {
-            FlowRow(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (s in listOf(StreamStatus.OK, StreamStatus.SLOW, StreamStatus.BLOCKED, StreamStatus.AUTH, StreamStatus.DEAD)) {
                     val n = counts[s] ?: 0
-                    if (n > 0) FilterChip(selected = vm.statusFilter == s, onClick = { vm.statusFilter = if (vm.statusFilter == s) null else s },
-                        label = { Text("${s.title} $n") }, leadingIcon = { Dot(statusColor(s)) })
+                    if (n > 0) MiniChip("${s.title} $n", vm.statusFilter == s, dot = statusColor(s)) { vm.statusFilter = if (vm.statusFilter == s) null else s }
                 }
             }
         }
@@ -172,39 +166,49 @@ private fun Logo(channel: Channel, size: androidx.compose.ui.unit.Dp) {
     Box(Modifier.size(size).clip(RoundedCornerShape(size / 3.4f)).background(tones.tvSoft), contentAlignment = Alignment.Center) {
         Text(channel.name.trim().take(1).uppercase(), color = tones.tv, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
         if (channel.logo.startsWith("http")) AsyncImage(model = channel.logo, contentDescription = null, contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(4.dp))
+            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(3.dp))
     }
 }
 
 @Composable
 private fun ChannelRow(channel: Channel, tick: Int, onClick: () -> Unit, onLong: () -> Unit) {
     val now = remember(tick, channel.id) { Epg.now(channel) }
-    Card(shape = MaterialTheme.shapes.medium, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
-        modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).combinedClickable(onClick = onClick, onLongClick = onLong)) {
-        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Logo(channel, 48.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(channel.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    if (channel.favorite) Icon(Icons.Rounded.Star, null, tint = tones.warn, modifier = Modifier.padding(start = 4.dp).size(16.dp))
-                }
-                if (now != null) {
-                    Text(now.title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    LinearProgressIndicator(progress = { now.progress(System.currentTimeMillis()) }, modifier = Modifier.fillMaxWidth(0.7f).padding(top = 4.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
-                        color = tones.tv, trackColor = MaterialTheme.colorScheme.surfaceContainerHigh)
-                } else {
-                    val sub = when {
-                        channel.status != StreamStatus.UNKNOWN && channel.status != StreamStatus.OK -> channel.detail
-                        channel.group.isNotEmpty() -> channel.group
-                        else -> ""
-                    }
-                    if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+    Row(
+        Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest)
+            .combinedClickable(onClick = onClick, onLongClick = onLong).padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Logo(channel, 38.dp)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(channel.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (channel.favorite) Icon(Icons.Rounded.Star, null, tint = tones.warn, modifier = Modifier.padding(start = 4.dp).size(14.dp))
             }
-            Spacer(Modifier.width(8.dp))
-            if (channel.quality.isNotEmpty()) { Pill(channel.quality, tones.tv, tones.tvSoft); Spacer(Modifier.width(8.dp)) }
-            Dot(statusColor(channel.status), 12.dp)
+            if (now != null) {
+                Text(now.title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                LinearProgressIndicator(progress = { now.progress(System.currentTimeMillis()) }, modifier = Modifier.fillMaxWidth(0.7f).padding(top = 3.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
+                    color = tones.tv, trackColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+            } else {
+                val sub = when {
+                    channel.status != StreamStatus.UNKNOWN && channel.status != StreamStatus.OK -> channel.detail
+                    channel.group.isNotEmpty() -> channel.group
+                    else -> ""
+                }
+                if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Spacer(Modifier.width(6.dp))
+        if (channel.uptimePercent >= 0) Column(horizontalAlignment = Alignment.End) {
+            Text("${channel.uptimePercent}%", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            Text("аптайм", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (channel.quality.isNotEmpty()) { Spacer(Modifier.width(6.dp)); Pill(channel.quality, tones.tv, tones.tvSoft) }
+        Spacer(Modifier.width(8.dp))
+        Dot(statusColor(channel.status), 10.dp)
+        Spacer(Modifier.width(6.dp))
+        Box(Modifier.size(30.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.primary).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.PlayArrow, "Смотреть", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
         }
     }
 }

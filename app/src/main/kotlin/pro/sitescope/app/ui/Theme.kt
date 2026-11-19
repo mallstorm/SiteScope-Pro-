@@ -99,9 +99,15 @@ fun AppTheme(dark: Boolean = when (ThemePrefs.mode) { 1 -> false; 2 -> true; els
         // Шапка тёмная в обеих темах, поэтому значки строки состояния всегда светлые.
         if (window != null) androidx.core.view.WindowCompat.getInsetsController(window, view).apply { isAppearanceLightStatusBars = false; isAppearanceLightNavigationBars = !dark }
     }
-    CompositionLocalProvider(LocalTones provides if (dark) DarkTones else LightTones) {
+    // Плотность как на макетах: все dp уменьшены на 14 %, а текст (sp) оставлен прежним, чтобы он не падал ниже 11 sp.
+    val base = androidx.compose.ui.platform.LocalDensity.current
+    val dense = androidx.compose.ui.unit.Density(base.density * UiScale, base.fontScale / UiScale)
+    CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides dense, LocalTones provides if (dark) DarkTones else LightTones) {
         MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, shapes = AppShapes, typography = AppTypography, content = content)
     }
 }
+
+/** Масштаб размеров интерфейса относительно стандартного dp. */
+const val UiScale = 0.86f
 
 val tones: Tones @Composable get() = LocalTones.current

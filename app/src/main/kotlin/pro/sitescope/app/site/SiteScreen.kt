@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -55,44 +56,44 @@ fun SiteScreen(state: AppState, vm: SiteViewModel = viewModel()) {
 
 @Composable
 private fun Start(vm: SiteViewModel, state: AppState) {
-    AppHeader("Сайты и SEO", "Аудит, доступность, SEO, заголовки, скорость, индексация") { StatusPills(state) }
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SoftCard {
-            BigField(vm.input, { vm.input = it }, "Адрес сайта, например example.com", leading = Icons.Rounded.Language, onGo = { vm.run() })
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = !vm.fullCrawl, onClick = { vm.fullCrawl = false }, label = { Text("Одна страница") }, leadingIcon = { Icon(Icons.Rounded.Bolt, null, Modifier.size(18.dp)) })
-                FilterChip(selected = vm.fullCrawl, onClick = { vm.fullCrawl = true }, label = { Text("Весь сайт") }, leadingIcon = { Icon(Icons.Rounded.AccountTree, null, Modifier.size(18.dp)) })
+    AppHeader("Сайты и SEO", "Аудит, метрики и мониторинг") { }
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BigField(vm.input, { vm.input = it }, "Адрес сайта, например example.com", modifier = Modifier.weight(1f), leading = Icons.Rounded.Language, onGo = { vm.run() })
+            Button(onClick = { vm.run() }, enabled = !vm.running && vm.input.isNotBlank(), contentPadding = PaddingValues(horizontal = 12.dp), modifier = Modifier.height(40.dp)) {
+                Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(2.dp)); Text("Проверить")
             }
-            AnimatedVisibility(vm.fullCrawl) {
-                Column {
-                    Text("Обойти до ${vm.maxPages} страниц · учитываем robots.txt", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
-                    AppSlider(value = vm.maxPages.toFloat(), onValueChange = { vm.maxPages = it.toInt() }, valueRange = 5f..200f)
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            Button(onClick = { vm.run() }, enabled = !vm.running && vm.input.isNotBlank(), modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp)) {
-                Icon(Icons.Rounded.Search, null); Spacer(Modifier.width(8.dp)); Text("Проверить")
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MiniChip("⚡ Быстрый аудит", !vm.fullCrawl) { vm.fullCrawl = false }
+            MiniChip("Полный обход", vm.fullCrawl) { vm.fullCrawl = true }
+            MiniChip("Метрики", false) { state.openRoute("metrics", targets = vm.input.trim().ifEmpty { null }) }
+            MiniChip("Пакетная проверка", false) { state.openRoute("batch") }
+        }
+        AnimatedVisibility(vm.fullCrawl) {
+            Column {
+                Text("Обойти до ${vm.maxPages} страниц · учитываем robots.txt", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                AppSlider(value = vm.maxPages.toFloat(), onValueChange = { vm.maxPages = it.toInt() }, valueRange = 5f..200f)
             }
         }
         if (vm.running) LoadingCard(vm.stage, vm.stageDetail, onCancel = { vm.cancel() })
         if (vm.history.isNotEmpty()) {
             CompactTitle("Вы проверяли")
             LazyColumn(
-                Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest),
-                contentPadding = PaddingValues(6.dp)
+                Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest),
+                contentPadding = PaddingValues(4.dp)
             ) {
                 itemsIndexed(vm.history) { index, item ->
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable(enabled = !vm.running) { vm.fullCrawl = item.full; vm.run(item.target) }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        ScoreRing(item.score, size = 40.dp, stroke = 5.dp)
-                        Spacer(Modifier.width(12.dp))
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = !vm.running) { vm.fullCrawl = item.full; vm.run(item.target) }.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ScoreRing(item.score, size = 34.dp, stroke = 4.dp)
+                        Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(item.host, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(whenText(item.time) + if (item.full) " · весь сайт" else "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        if (vm.monitored.contains(item.target)) Icon(Icons.Rounded.NotificationsActive, "Под наблюдением", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        if (vm.monitored.contains(item.target)) Icon(Icons.Rounded.NotificationsActive, "Под наблюдением", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                     }
-                    if (index < vm.history.size - 1) HorizontalDivider(Modifier.padding(start = 60.dp, end = 12.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    if (index < vm.history.size - 1) HorizontalDivider(Modifier.padding(start = 52.dp, end = 12.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 }
             }
         } else if (!vm.running) {

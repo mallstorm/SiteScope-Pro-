@@ -3,7 +3,9 @@
 package pro.sitescope.app.net
 
 import androidx.activity.compose.LocalActivity
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -14,6 +16,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,51 +36,52 @@ internal fun DevicesTab(vm: NetViewModel) {
     var wol by remember { mutableStateOf(false) }
     var history by remember { mutableStateOf(false) }
     val t = tones
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item {
-            SoftCard(color = t.netSoft) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Мои устройства: ${vm.cardCount}", style = MaterialTheme.typography.titleMedium)
-                        Text(if (vm.discovering) "${vm.discoveryStatus} · ответов: ${vm.live.size}" else "Поиск, открытые сервисы и подключения в постоянных карточках", style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (vm.discovering) OutlinedButton(onClick = vm::stopDiscovery) { Text("Стоп") }
-                    else Button(onClick = vm::startDiscovery) { Icon(Icons.Rounded.Radar, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Найти") }
-                }
-                if (vm.discovering || vm.cardsLoading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
+    val subnet = remember { vm.localSubnet() }
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SmartSearchBar(vm.cardQuery, vm::searchCards, "Найти устройство, IP, MAC или сервис", onGo = { }, scan = true)
+        MetricStrip(listOf(
+            Metric(Icons.Rounded.Wifi, "Текущая сеть", subnet.ifEmpty { "—" }),
+            Metric(Icons.Rounded.Devices, "Найдено устройств", vm.cardCount.toString()),
+            Metric(Icons.Rounded.Radar, "Ответили сейчас", vm.live.size.toString())
+        ))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Устройства (${vm.cardCount})", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            IconButton(onClick = { history = true }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.History, "История изменений", tint = MaterialTheme.colorScheme.primary) }
+            IconButton(onClick = { wol = true }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.PowerSettingsNew, "Включить по сети", tint = MaterialTheme.colorScheme.primary) }
+            Spacer(Modifier.width(4.dp))
+            if (vm.discovering) OutlinedButton(onClick = vm::stopDiscovery, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("Стоп") }
+            else Button(onClick = vm::startDiscovery, contentPadding = PaddingValues(horizontal = 12.dp)) { Icon(Icons.Rounded.Radar, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Найти") }
+        }
+        if (vm.discovering) Text("${vm.discoveryStatus} · ответов: ${vm.live.size}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (vm.discovering || vm.cardsLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (vm.discoveryError.isNotBlank()) ErrorCard(vm.discoveryError)
+        if (vm.cardsError.isNotBlank()) ErrorCard(vm.cardsError)
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (vm.cards.isEmpty() && !vm.cardsLoading) item {
+                EmptyState(Icons.Rounded.Devices, if (vm.cardCount == 0) "Пока пусто" else "Ничего не найдено",
+                    "Нажмите «Найти», проверьте порты или сохраните подключение. Карточки сохраняются между запусками.")
             }
-        }
-        item { OutlinedButton(onClick = { history = true }) { Text("История изменений") } }
-        if (vm.discoveryError.isNotBlank()) item { ErrorCard(vm.discoveryError) }
-        if (vm.cardsError.isNotBlank()) item { ErrorCard(vm.cardsError) }
-        item {
-            OutlinedTextField(vm.cardQuery, vm::searchCards, Modifier.fillMaxWidth(), singleLine = true,
-                label = { Text("Имя, адрес, модель или протокол") }, leadingIcon = { Icon(Icons.Rounded.Search, null) })
-        }
-        if (vm.cards.isEmpty() && !vm.cardsLoading) item {
-            EmptyState(Icons.Rounded.Devices, if (vm.cardCount == 0) "Пока пусто" else "Ничего не найдено",
-                "Запустите поиск, проверьте порты или сохраните подключение. Карточки сохраняются между запусками.")
-        }
-        items(vm.cards, key = { it.id }) { card ->
-            SoftCard(onClick = { vm.showCard(card.id) }, padding = 14.dp) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconBadge(Icons.Rounded.Devices, t.net, t.netSoft, 42.dp)
-                    Spacer(Modifier.width(12.dp))
+            items(vm.cards, key = { it.id }) { card ->
+                Row(
+                    Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest)
+                        .clickable { vm.showCard(card.id) }.padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ToolIcon(Icons.Rounded.Devices, size = 34.dp)
+                    Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(card.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(card.addresses, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("${card.protocols} · записей: ${card.memberCount}", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("Обновлено: ${cardTime(card.updatedAt)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                        Text(card.addresses, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${card.protocols} · записей: ${card.memberCount} · ${cardTime(card.updatedAt)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    Icon(Icons.Rounded.ChevronRight, null)
+                    Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.outline)
                 }
             }
+            if (vm.cards.size >= vm.cardLimit) item { TextButton(onClick = vm::moreCards) { Text("Показать ещё") } }
+            item {
+                Text("Без устойчивого ID карточка относится к адресу и сервису. Одинаковые названия не доказывают, что это одно устройство.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
-        if (vm.cards.size >= vm.cardLimit) item { TextButton(onClick = vm::moreCards) { Text("Показать ещё") } }
-        item {
-            Text("Без устойчивого ID карточка относится к адресу и сервису. Одинаковые названия не доказывают, что это одно устройство. Данные поиска не подтверждают текущую доступность.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        item { OutlinedButton(onClick = { wol = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.PowerSettingsNew, null); Spacer(Modifier.width(6.dp)); Text("Включить по сети") } }
     }
     vm.selectedCard?.let { DeviceCardSheet(vm, it) }
     if (wol) WolSheet(vm) { wol = false }

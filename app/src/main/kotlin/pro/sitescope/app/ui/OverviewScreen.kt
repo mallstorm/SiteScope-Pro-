@@ -144,7 +144,7 @@ fun OverviewScreen(state: AppState) {
         ) { StatusPills(state) }
 
         Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp).padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SmartSearchBar(input, { input = it }, "Сайт, IP, сеть, M3U или поток", onGo = { go() },
+            SmartSearchBar(input, { input = it }, "Сайт, IP, сеть, M3U или поток", onGo = { go() }, scan = true,
                 onPaste = { clipboard.getText()?.text?.let { input = it.trim().take(500) } })
             MetricStrip(listOf(
                 Metric(Icons.Rounded.Wifi, "Сеть", data.subnet.ifEmpty { net.text }),
@@ -160,7 +160,7 @@ fun OverviewScreen(state: AppState) {
                 StatTile(Icons.Rounded.LiveTv, "Телевидение", if (data.channels > 0) "Каналов: ${data.channels} · живых: ${data.working}" else "Плейлистов: ${data.playlists}", Modifier.weight(1f)) { state.openRoute("tv") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatTile(Icons.Rounded.Shield, "Защита и доступ", protect, Modifier.weight(1f)) { state.openRoute("vpn") }
+                StatTile(Icons.Rounded.Shield, "Защита и доступ", protect, Modifier.weight(1f)) { state.openRoute("protect") }
                 StatTile(Icons.Rounded.NotificationsActive, "Мониторинг", if (watched > 0) "Сайтов под наблюдением: $watched" else "Сайты не отслеживаются", Modifier.weight(1f)) { state.openRoute("site") }
             }
             CompactTitle("Недавние результаты", action = "История") { state.openRoute("data", 1) }

@@ -13,6 +13,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -396,7 +397,7 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 @Composable
-fun VpnScreen(initialTab: Int = 0, vm: VpnViewModel = viewModel()) {
+fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () -> Unit = {}, vm: VpnViewModel = viewModel()) {
     val context = LocalContext.current
     var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 5)) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -407,26 +408,36 @@ fun VpnScreen(initialTab: Int = 0, vm: VpnViewModel = viewModel()) {
         val prepare = try { VpnService.prepare(context) } catch (e: Exception) { null }
         if (prepare != null) permission.launch(prepare) else vm.start()
     }
+    // Ссылка сервера из QR-кода: добавляем и показываем вкладку «Серверы».
+    LaunchedEffect(importLink) {
+        if (!importLink.isNullOrBlank()) {
+            tab = 1
+            vm.addServer(importLink) { error -> toast(context, error ?: "Сервер добавлен из QR-кода") }
+            onImportDone()
+        }
+    }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        Spacer(Modifier.height(8.dp))
         StatusCard(vm, onConnect = { connect() }, onReason = { tab = 5 })
         if (vm.appliedNote.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { vm.appliedNote = "" }.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Bolt, null, tint = tones.good, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { vm.appliedNote = "" }.padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Bolt, null, tint = tones.good, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
                 Text(vm.appliedNote, style = MaterialTheme.typography.bodySmall, color = tones.good)
             }
         }
-        FlowRow(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("Адреса", "Серверы", "DNS", "Маршруты", "Запись", "Журнал").forEachIndexed { i, title -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title) }) }
         }
-        when (tab) {
-            0 -> HostsTab(vm)
-            1 -> ServersTab(vm)
-            2 -> DnsTab(vm)
-            3 -> RoutesTab(vm)
-            4 -> CaptureTab(vm)
-            else -> LogTab(vm)
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) {
+            when (tab) {
+                0 -> HostsTab(vm)
+                1 -> ServersTab(vm)
+                2 -> DnsTab(vm)
+                3 -> RoutesTab(vm)
+                4 -> CaptureTab(vm)
+                else -> LogTab(vm)
+            }
         }
     }
 }
@@ -445,26 +456,26 @@ private fun StatusCard(vm: VpnViewModel, onConnect: () -> Unit, onReason: () -> 
         error -> "Не удалось подключиться"
         else -> "VPN выключен"
     }
-    SoftCard(color = when { vm.active -> t.goodSoft; error -> t.badSoft; else -> MaterialTheme.colorScheme.surfaceContainerLowest }) {
+    SoftCard(color = when { vm.active -> t.goodSoft; error -> t.badSoft; else -> MaterialTheme.colorScheme.surfaceContainerLowest }, padding = 10.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconBadge(if (vm.active) Icons.Rounded.Shield else Icons.Rounded.ShieldMoon, if (vm.active) t.good else if (error) t.bad else MaterialTheme.colorScheme.outline,
-                MaterialTheme.colorScheme.surfaceContainerLowest, 52.dp)
-            Spacer(Modifier.width(14.dp))
+                MaterialTheme.colorScheme.surfaceContainerLow, 38.dp)
+            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleLarge)
-                if (vm.serverActive && vm.runningProfile.isNotEmpty()) Text(vm.runningProfile, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (vm.message.isNotEmpty()) Text(vm.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val sub = if (vm.serverActive && vm.runningProfile.isNotEmpty()) vm.runningProfile else vm.message
+                if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            Spacer(Modifier.width(8.dp))
+            if (vm.active || vm.busy) Button(onClick = { vm.stop() }, colors = ButtonDefaults.buttonColors(containerColor = t.bad), contentPadding = PaddingValues(horizontal = 14.dp)) { Text(if (vm.busy) "Отмена" else "Выключить") }
+            else Button(onClick = onConnect, contentPadding = PaddingValues(horizontal = 14.dp)) { Icon(Icons.Rounded.PowerSettingsNew, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Включить") }
         }
         if (!vm.active && !vm.busy) {
-            FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 VpnMode.entries.forEach { m -> FilterChip(selected = vm.mode == m, onClick = { vm.mode = m }, label = { Text(m.title) }) }
             }
-            Text(vm.mode.text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(vm.mode.text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
         }
-        Spacer(Modifier.height(12.dp))
-        if (vm.active || vm.busy) Button(onClick = { vm.stop() }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = t.bad)) { Text(if (vm.busy) "Отменить" else "Выключить") }
-        else Button(onClick = onConnect, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.PowerSettingsNew, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Включить") }
         if (error) TextButton(onClick = onReason) { Text("Показать причину сбоя") }
         if (error && vm.message.contains("VPN", true)) TextButton(onClick = {
             try { context.startActivity(VpnNetworkCoordinator.settingsIntent()) } catch (e: Exception) { toast(context, "Откройте Настройки → VPN") }

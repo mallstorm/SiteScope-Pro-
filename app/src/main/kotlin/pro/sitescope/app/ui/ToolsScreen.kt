@@ -113,7 +113,7 @@ fun ToolsScreen(state: AppState) {
         ) { StatusPills(state) }
 
         Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp).padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SmartSearchBar(query, { query = it }, "Найти инструмент",
+            SmartSearchBar(query, { query = it }, "Найти инструмент", scan = true,
                 onGo = { groups.firstOrNull()?.tools?.firstOrNull()?.let { launch(it) } })
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (c in ToolCategory.entries) {

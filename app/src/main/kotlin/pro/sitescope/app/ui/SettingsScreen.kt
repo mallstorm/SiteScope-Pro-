@@ -68,7 +68,7 @@ fun SettingsScreen() {
         }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 28.dp)) {
         SectionTitle("Оформление")
         SoftCard {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
