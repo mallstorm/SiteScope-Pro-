@@ -98,21 +98,21 @@ fun AppHeader(
             val band = Path().apply { moveTo(w * 0.60f, 0f); lineTo(w * 0.88f, 0f); lineTo(w * 0.72f, h); lineTo(w * 0.44f, h); close() }
             drawPath(band, Brush.linearGradient(listOf(Color.White.copy(alpha = 0f), Color.White.copy(alpha = 0.07f), Color.White.copy(alpha = 0f))))
         }
-        Column(Modifier.statusBarsPadding().padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 12.dp)) {
+        Column(Modifier.statusBarsPadding().padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (back != null) {
-                    IconButton(onClick = back) { Icon(Icons.Rounded.ArrowBack, "Назад", tint = Color.White) }
+                    IconButton(onClick = back, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.ArrowBack, "Назад", tint = Color.White) }
                 } else if (logo) {
-                    Icon(Icons.Rounded.Layers, null, tint = t.aqua, modifier = Modifier.size(34.dp))
-                    Spacer(Modifier.width(10.dp))
+                    Icon(Icons.Rounded.Layers, null, tint = t.aqua, modifier = Modifier.size(26.dp))
+                    Spacer(Modifier.width(8.dp))
                 }
-                Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
+                Column(Modifier.weight(1f).padding(vertical = 2.dp)) {
                     Text(title, color = Color.White, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (subtitle != null) Text(subtitle, color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 CompositionLocalProvider(LocalContentColor provides Color.White) { actions() }
             }
-            if (content != null) { Spacer(Modifier.height(8.dp)); Column(Modifier.padding(end = 10.dp), content = content) }
+            if (content != null) { Spacer(Modifier.height(4.dp)); Column(Modifier.padding(end = 10.dp), content = content) }
         }
     }
 }
@@ -122,7 +122,7 @@ fun AppHeader(
 fun HeaderMenu(items: List<Pair<String, () -> Unit>>) {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { open = true }) { Icon(Icons.Rounded.MoreVert, "Меню", tint = Color.White) }
+        IconButton(onClick = { open = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.MoreVert, "Меню", tint = Color.White) }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             for ((label, action) in items) DropdownMenuItem(text = { Text(label) }, onClick = { open = false; action() })
         }
@@ -135,14 +135,14 @@ fun HeaderPill(text: String, icon: ImageVector, active: Boolean, modifier: Modif
     val t = tones
     val color = if (active) t.aqua else Color.White
     val shape = RoundedCornerShape(50)
-    Box(modifier.heightIn(min = 44.dp).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+    Box(modifier.heightIn(min = 34.dp).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         Row(
-            Modifier.fillMaxWidth().height(36.dp).clip(shape).border(1.dp, if (active) t.aqua else Color.White.copy(alpha = 0.35f), shape)
+            Modifier.fillMaxWidth().height(28.dp).clip(shape).border(1.dp, if (active) t.aqua else Color.White.copy(alpha = 0.35f), shape)
                 .background(Color.White.copy(alpha = 0.06f)).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center
         ) {
-            Icon(icon, null, tint = color, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(5.dp))
+            Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(4.dp))
             Text(text, color = color, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -177,14 +177,14 @@ fun HeaderChips(items: List<String>, selected: Int, onSelect: (Int) -> Unit, ico
         items.forEachIndexed { index, label ->
             val on = index == selected
             val shape = RoundedCornerShape(50)
-            Box(Modifier.heightIn(min = 44.dp).clip(shape).clickable { onSelect(index) }, contentAlignment = Alignment.Center) {
+            Box(Modifier.heightIn(min = 34.dp).clip(shape).clickable { onSelect(index) }, contentAlignment = Alignment.Center) {
                 Row(
-                    Modifier.height(36.dp).clip(shape).then(if (on) Modifier.background(t.aqua) else Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), shape))
+                    Modifier.height(28.dp).clip(shape).then(if (on) Modifier.background(t.aqua) else Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), shape))
                         .padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val icon = icons?.getOrNull(index)
-                    if (icon != null) { Icon(icon, null, tint = if (on) t.onAqua else Color.White, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)) }
+                    if (icon != null) { Icon(icon, null, tint = if (on) t.onAqua else Color.White, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(4.dp)) }
                     Text(label, color = if (on) t.onAqua else Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 }
             }
@@ -195,51 +195,50 @@ fun HeaderChips(items: List<String>, selected: Int, onSelect: (Int) -> Unit, ico
 /** Сегментированные вкладки на светлом фоне: белая панель, выбранный сегмент залит бирюзой. */
 @Composable
 fun SegmentedTabs(items: List<String>, selected: Int, onSelect: (Int) -> Unit, icons: List<ImageVector>? = null, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth().shadow(2.dp, RoundedCornerShape(22.dp)).clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(4.dp)) {
+    Row(modifier.fillMaxWidth().shadow(2.dp, RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(3.dp)) {
         items.forEachIndexed { index, label ->
             val on = index == selected
             val color = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
             Row(
-                Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(18.dp))
+                Modifier.weight(1f).height(32.dp).clip(RoundedCornerShape(13.dp))
                     .then(if (on) Modifier.background(Brush.linearGradient(listOf(tones.heroStart, tones.heroEnd))) else Modifier)
                     .clickable { onSelect(index) },
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center
             ) {
                 val icon = icons?.getOrNull(index)
-                if (icon != null) { Icon(icon, null, tint = color, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)) }
-                Text(label, color = color, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                if (icon != null) { Icon(icon, null, tint = color, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)) }
+                Text(label, color = color, style = MaterialTheme.typography.labelLarge, maxLines = 1)
             }
         }
     }
 }
 
-/** Умная строка: сайт, IP, сеть, ASN, плейлист или поток. Справа — вставка из буфера и запуск. */
+/** Умная строка: сайт, IP, сеть, ASN, плейлист или поток. Справа — вставка из буфера и запуск. Высота 44 dp. */
 @Composable
 fun SmartSearchBar(value: String, onValue: (String) -> Unit, placeholder: String, onGo: () -> Unit, modifier: Modifier = Modifier, onPaste: (() -> Unit)? = null) {
-    val transparent = Color.Transparent
     Row(
-        modifier.fillMaxWidth().shadow(2.dp, RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(end = 6.dp),
+        modifier.fillMaxWidth().height(44.dp).shadow(2.dp, RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        TextField(
-            value = value, onValueChange = onValue, modifier = Modifier.weight(1f), singleLine = true,
-            placeholder = { Text(placeholder, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium) },
-            leadingIcon = { Icon(Icons.Rounded.Search, null, tint = MaterialTheme.colorScheme.primary) },
-            trailingIcon = if (value.isNotEmpty()) ({ IconButton(onClick = { onValue("") }) { Icon(Icons.Rounded.Clear, "Очистить") } }) else null,
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = transparent, unfocusedContainerColor = transparent, disabledContainerColor = transparent,
-                focusedIndicatorColor = transparent, unfocusedIndicatorColor = transparent, disabledIndicatorColor = transparent
-            ),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go, autoCorrectEnabled = false),
-            keyboardActions = KeyboardActions(onGo = { onGo() })
-        )
-        if (onPaste != null && value.isEmpty()) {
-            IconButton(onClick = onPaste) { Icon(Icons.Rounded.ContentPaste, "Вставить из буфера", tint = MaterialTheme.colorScheme.primary) }
+        Icon(Icons.Rounded.Search, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            if (value.isEmpty()) Text(placeholder, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            androidx.compose.foundation.text.BasicTextField(
+                value = value, onValueChange = onValue, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go, autoCorrectEnabled = false),
+                keyboardActions = KeyboardActions(onGo = { onGo() })
+            )
         }
+        if (value.isNotEmpty()) IconButton(onClick = { onValue("") }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.Clear, "Очистить", modifier = Modifier.size(18.dp)) }
+        else if (onPaste != null) IconButton(onClick = onPaste, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.ContentPaste, "Вставить из буфера", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
         Box(
-            Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.primary).clickable(onClick = onGo),
+            Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primary).clickable(onClick = onGo),
             contentAlignment = Alignment.Center
-        ) { Icon(Icons.Rounded.PlayArrow, "Запустить", tint = MaterialTheme.colorScheme.onPrimary) }
+        ) { Icon(Icons.Rounded.PlayArrow, "Запустить", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp)) }
     }
 }
 
@@ -276,15 +275,15 @@ class Metric(val icon: ImageVector, val label: String, val value: String)
 @Composable
 fun MetricStrip(items: List<Metric>, modifier: Modifier = Modifier) {
     Row(
-        modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow).padding(horizontal = 6.dp, vertical = 8.dp),
+        modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow).padding(horizontal = 6.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         items.forEachIndexed { index, item ->
-            if (index > 0) Box(Modifier.width(1.dp).height(28.dp).background(MaterialTheme.colorScheme.outlineVariant))
+            if (index > 0) Box(Modifier.width(1.dp).height(24.dp).background(MaterialTheme.colorScheme.outlineVariant))
             Row(Modifier.weight(1f).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(item.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(6.dp))
+                Icon(item.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(5.dp))
                 Column {
                     Text(item.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(item.value, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -326,12 +325,12 @@ fun CompactTitle(title: String, modifier: Modifier = Modifier, action: String? =
 @Composable
 fun HubCard(icon: ImageVector, title: String, subtitle: String, stats: List<Pair<ImageVector, String>>, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Row(
-        modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp),
+        modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest).clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ToolIcon(icon, size = 48.dp)
-        Spacer(Modifier.width(12.dp))
+        ToolIcon(icon, size = 34.dp)
+        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1.25f)) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -353,22 +352,22 @@ fun HubCard(icon: ImageVector, title: String, subtitle: String, stats: List<Pair
 fun BottomBar4(selected: Tab, taskCount: Int, onSelect: (Tab) -> Unit) {
     val t = tones
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
-            .background(Brush.linearGradient(listOf(t.headerStart, t.headerEnd))).navigationBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
+            .background(Brush.linearGradient(listOf(t.headerStart, t.headerEnd))).navigationBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         for (tab in Tab.entries) {
             val on = tab == selected
             Column(
-                Modifier.weight(1f).heightIn(min = 56.dp).clip(RoundedCornerShape(18.dp))
+                Modifier.weight(1f).heightIn(min = 46.dp).clip(RoundedCornerShape(16.dp))
                     .then(if (on) Modifier.background(Brush.linearGradient(listOf(Color(0xFF0F8F99), Color(0xFF0B6B75)))) else Modifier)
-                    .clickable { onSelect(tab) }.padding(vertical = 6.dp),
+                    .clickable { onSelect(tab) }.padding(vertical = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
             ) {
                 if (tab == Tab.TASKS && taskCount > 0) {
-                    BadgedBox(badge = { Badge { Text(taskCount.toString()) } }) { Icon(tab.icon, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
-                } else Icon(tab.icon, null, tint = if (on) Color.White else Color.White.copy(alpha = 0.78f), modifier = Modifier.size(24.dp))
-                Text(tab.title, color = if (on) Color.White else Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.labelMedium,
+                    BadgedBox(badge = { Badge { Text(taskCount.toString()) } }) { Icon(tab.icon, null, tint = Color.White, modifier = Modifier.size(21.dp)) }
+                } else Icon(tab.icon, null, tint = if (on) Color.White else Color.White.copy(alpha = 0.78f), modifier = Modifier.size(21.dp))
+                Text(tab.title, color = if (on) Color.White else Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.labelSmall,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
             }
         }

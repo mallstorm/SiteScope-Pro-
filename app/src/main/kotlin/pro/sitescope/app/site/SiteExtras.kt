@@ -19,7 +19,7 @@ object SiteExtras {
     class Hop(val url: String, val code: Int, val ms: Long)
     class TlsInfo {
         var valid = false; var protocol = ""; var cipher = ""; var subject = ""; var issuer = ""
-        var notAfter = 0L; var daysLeft = 0; var error = ""
+        var notAfter = 0L; var daysLeft = 0; var error = ""; var sha256 = ""
     }
     class PageInfo {
         var viewport = false; var lang = ""; var charset = false
@@ -170,6 +170,7 @@ object SiteExtras {
                     info.subject = cn(cert.subjectX500Principal.name)
                     info.issuer = cn(cert.issuerX500Principal.name)
                     info.notAfter = cert.notAfter.time
+                    info.sha256 = java.security.MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString(":") { "%02X".format(it) }
                     info.daysLeft = ((cert.notAfter.time - System.currentTimeMillis()) / 86_400_000L).toInt()
                 }
                 val verifier = javax.net.ssl.HttpsURLConnection.getDefaultHostnameVerifier()
