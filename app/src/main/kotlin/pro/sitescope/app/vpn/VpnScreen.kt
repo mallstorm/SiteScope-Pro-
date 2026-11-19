@@ -361,9 +361,9 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 @Composable
-fun VpnScreen(vm: VpnViewModel = viewModel()) {
+fun VpnScreen(initialTab: Int = 0, vm: VpnViewModel = viewModel()) {
     val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 5)) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) vm.start() else toast(context, "Без разрешения VPN включить нельзя")
     }
