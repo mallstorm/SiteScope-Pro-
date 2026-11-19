@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Lan
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.LiveTv
