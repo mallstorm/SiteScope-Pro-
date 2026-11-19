@@ -72,7 +72,8 @@ internal object QuicInitialParser {
     }
 
     /** Parses the first client Initial packet in an outgoing UDP datagram. */
-    fun decode(datagram: ByteArray, size: Int): Initial? = try {
+    fun decode(datagram: ByteArray, size: Int): Initial? {
+        return try {
         if (size !in 40..65535 || size > datagram.size) return null
         val data = datagram.copyOf(size)
         val cursor = Cursor(data)
@@ -144,7 +145,8 @@ internal object QuicInitialParser {
             }
         }
         if (parts.isEmpty()) null else Initial(if (version == V1) "QUIC v1" else "QUIC v2", hexOf(dcid), parts)
-    } catch (_: Exception) { null }
+        } catch (_: Exception) { null }
+    }
 }
 
 /** Reassembles authenticated QUIC Initial CRYPTO frames by stream offset. */
