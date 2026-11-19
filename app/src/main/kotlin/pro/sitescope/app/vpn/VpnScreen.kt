@@ -342,7 +342,7 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
         failoverPrefs.edit().putString("reserve", reserveServer).apply()
     }
 
-    fun setAutoFailover(on: Boolean) { autoFailover = on; failoverPrefs.edit().putBoolean("auto", on).apply() }
+    fun enableAutoFailover(on: Boolean) { autoFailover = on; failoverPrefs.edit().putBoolean("auto", on).apply() }
 
     /** Если подключение через сервер закончилось ошибкой, включает резервный сервер; не больше двух переключений за серию ошибок. */
     private suspend fun watchFailover() {
@@ -581,7 +581,7 @@ private fun ServersTab(vm: VpnViewModel) {
                 Text("Автопереключение на резервный", style = MaterialTheme.typography.titleSmall)
                 Text(if (vm.reserveServer.isEmpty()) "Выберите резервный сервер в меню «⋮» у сервера" else "Если подключение не удалось, включим резервный сервер", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Switch(checked = vm.autoFailover, onCheckedChange = { vm.setAutoFailover(it) }, enabled = vm.reserveServer.isNotEmpty())
+            Switch(checked = vm.autoFailover, onCheckedChange = { vm.enableAutoFailover(it) }, enabled = vm.reserveServer.isNotEmpty())
         }
         if (vm.failoverNote.isNotEmpty()) Text(vm.failoverNote, style = MaterialTheme.typography.bodySmall, color = t.warn, modifier = Modifier.padding(bottom = 8.dp))
     }
