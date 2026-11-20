@@ -547,6 +547,7 @@ public final class HostsVpnService extends VpnService {
         config.json = pro.sitescope.app.vpn.Mitm.apply(this, config.json);
         if (!direct) config.json = pro.sitescope.app.vpn.SplitRules.apply(this, config.json);
         config.json = pro.sitescope.app.vpn.BlockRules.apply(this, config.json);
+        config.json = pro.sitescope.app.vpn.VpnShare.apply(this, config.json);
         int dpiPort = pro.sitescope.app.dpi.DpiChain.ensure(this);
         if (dpiPort > 0) {
             config.json = pro.sitescope.app.dpi.DpiChainConfig.apply(config.json, dpiPort);

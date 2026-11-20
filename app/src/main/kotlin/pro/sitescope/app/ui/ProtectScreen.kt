@@ -34,15 +34,15 @@ import pro.sitescope.app.vpn.VpnScreen
 @Composable
 fun ProtectScreen(section: Int, vpnTab: Int, state: AppState? = null) {
     var current by remember(section) { mutableIntStateOf((section + 1).coerceIn(0, 4)) }
-    var vpnStart by remember(vpnTab) { mutableIntStateOf(vpnTab.coerceIn(0, 5)) }
+    var vpnStart by remember(vpnTab) { mutableIntStateOf(vpnTab.coerceIn(0, 7)) }
     // Порядок вкладок как в макете; число — индекс вкладки внутри VpnScreen.
-    val chips = listOf("Адреса" to 0, "Серверы" to 1, "Маршруты" to 3, "DNS" to 2, "Запись" to 4, "Журнал" to 5)
+    val chips = listOf("Адреса" to 0, "Серверы" to 1, "Маршруты" to 3, "DNS" to 2, "Запись" to 4, "Журнал" to 5, "Ротация" to 6, "Раздача" to 7)
     BackHandler(enabled = current != 0) { current = 0 }
     Column(Modifier.fillMaxSize()) {
         AppHeader("Защита и доступ", "VPN, Hosts/Xray, DPI, Tor / I2P", onBack = if (current != 0) ({ current = 0 }) else null) {
             if (state != null) { StatusPills(state); Spacer(Modifier.height(8.dp)) }
             HeaderChips(chips.map { it.first }, if (current == 1) chips.indexOfFirst { it.second == vpnStart } else -1, { i -> vpnStart = chips[i].second; current = 1 },
-                listOf(Icons.Rounded.Link, Icons.Rounded.Storage, Icons.Rounded.AccountTree, Icons.Rounded.Dns, Icons.Rounded.RadioButtonChecked, Icons.Rounded.Description))
+                listOf(Icons.Rounded.Link, Icons.Rounded.Storage, Icons.Rounded.AccountTree, Icons.Rounded.Dns, Icons.Rounded.RadioButtonChecked, Icons.Rounded.Description, Icons.Rounded.Autorenew, Icons.Rounded.WifiTethering))
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (current) {

@@ -120,6 +120,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
+    implementation("com.google.zxing:core:3.5.3")                             // QR-коды для раздачи VPN
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("cz.adaptech.tesseract4android:tesseract4android:4.9.0")   // OCR эмблемы канала (данные rus.traineddata в assets)
 

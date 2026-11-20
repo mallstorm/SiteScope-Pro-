@@ -399,7 +399,7 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
 @Composable
 fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () -> Unit = {}, showTabs: Boolean = true, vm: VpnViewModel = viewModel()) {
     val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 5)) }
+    var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 7)) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) vm.start() else toast(context, "Без разрешения VPN включить нельзя")
     }
@@ -427,7 +427,7 @@ fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () 
             }
         }
         if (showTabs) Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("Адреса", "Серверы", "DNS", "Маршруты", "Запись", "Журнал").forEachIndexed { i, title -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title) }) }
+            listOf("Адреса", "Серверы", "DNS", "Маршруты", "Запись", "Журнал", "Ротация", "Раздача").forEachIndexed { i, title -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title) }) }
         }
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) {
             when (tab) {
@@ -436,6 +436,8 @@ fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () 
                 2 -> DnsTab(vm)
                 3 -> RoutesTab(vm)
                 4 -> CaptureTab(vm)
+                6 -> RotationTab(vm)
+                7 -> ShareTab(vm)
                 else -> LogTab(vm)
             }
         }
