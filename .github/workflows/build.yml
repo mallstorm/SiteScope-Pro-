@@ -56,6 +56,20 @@ jobs:
             build.log
           if-no-files-found: warn
 
+      - name: Verify APK (apksigner, aapt2, zipalign)
+        if: always()
+        run: |
+          apk=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -n 1)
+          bt=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)
+          {
+            echo "apk=$apk build-tools=$bt"
+            if [ -n "$apk" ] && [ -n "$bt" ]; then
+              echo "--- apksigner verify"; "$bt/apksigner" verify --verbose --print-certs "$apk" 2>&1 | head -n 30
+              echo "--- zipalign"; "$bt/zipalign" -c -P 16 -v 4 "$apk" 2>&1 | tail -n 5
+              echo "--- aapt2 badging"; "$bt/aapt2" dump badging "$apk" 2>&1 | grep -E "^package|sdkVersion|targetSdk|native-code|uses-permission" | head -n 40
+            fi
+          } > "$GITHUB_WORKSPACE/apk-check.txt" 2>&1 || true
+
       - name: Publish build log
         if: always()
         env:
@@ -65,6 +79,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/build.log" build.log 2>/dev/null || echo "no log" > build.log
           grep -nE "^e: |^w: .*error|error:|FAILED|What went wrong|Unresolved|Exception" -A4 build.log | head -n 600 > errors.log || true
           tail -n 250 build.log > tail.log
+          cp "$GITHUB_WORKSPACE/apk-check.txt" apk-check.txt 2>/dev/null || true
           echo "$GITHUB_SHA ${{ job.status }}" > status.txt
           rm -f build.log
           git init -q && git checkout -q -b "$LOGS_BRANCH"

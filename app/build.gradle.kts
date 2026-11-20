@@ -17,7 +17,8 @@ android {
         applicationId = "pro.sitescope.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1_000_100
+        // Номер сборки CI добавляется к коду версии: каждая новая сборка выше предыдущей, обновление ставится поверх без конфликтов.
+        versionCode = 1_000_100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
         versionName = "2.0.0-alpha1"
         ndk { abiFilters += "arm64-v8a" }
     }
@@ -27,6 +28,7 @@ android {
             storeFile = rootProject.file("signing/beta.keystore")
             storePassword = "sitescope-beta"; keyAlias = "beta"; keyPassword = "sitescope-beta"
             storeType = "PKCS12"
+            enableV1Signing = true; enableV2Signing = true; enableV3Signing = true
         }
         if (originalKey != null) create("original") {
             storeFile = file(originalKey)
@@ -34,6 +36,7 @@ android {
             keyAlias = System.getenv("SITESCOPE_KEY_ALIAS")?.takeIf { it.isNotBlank() } ?: "unifiedcore"
             keyPassword = System.getenv("SITESCOPE_KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: System.getenv("SITESCOPE_KEYSTORE_PASSWORD")
             storeType = "PKCS12"
+            enableV1Signing = true; enableV2Signing = true; enableV3Signing = true
         }
     }
 
@@ -58,6 +61,8 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    // Модели ML Kit (tflite) читаются прямо из APK и не должны быть сжаты.
+    androidResources { noCompress += listOf("tflite", "lite") }
     packaging {
         jniLibs { useLegacyPackaging = true }
         resources { excludes += setOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/9/OSGI-INF/MANIFEST.MF") }
