@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.Executors
 
 class AppRow(val pkg: String, val label: String, val system: Boolean)
 
@@ -29,12 +30,56 @@ class DpiViewModel(private val app: Application) : AndroidViewModel(app) {
     var requestStart by mutableStateOf(false)
     var apps by mutableStateOf<List<AppRow>>(emptyList()); private set
     var appsLoading by mutableStateOf(false); private set
+    var health by mutableStateOf<List<DpiProbe.Result>>(emptyList()); private set
+    var checking by mutableStateOf(false); private set
     val search = DpiSearch(app)
     private var job: Job? = null
 
     fun update(n: DpiConfig) { cfg = n; DpiStore.save(app, n) }
 
-    fun applyLine(line: String) { cfg = DpiStore.applyLine(app, line); note = "Стратегия применена" }
+    /** Делает строку активной; если обход уже работает — сразу перезапускает движок с ней. */
+    fun applyLine(line: String) {
+        cfg = DpiStore.applyLine(app, line)
+        note = if (DpiRuntime.running) { DpiRuntime.reload(app); "Стратегия применена, обход перезапущен" } else "Стратегия применена"
+    }
+
+    fun applyPreset(p: DpiPresets.Preset) = applyLine(p.line)
+
+    /** Применяет изменённые настройки (строка, SNI, список доменов) к уже работающему обходу. */
+    fun restartNow() {
+        if (DpiRuntime.running) { DpiRuntime.reload(app); note = "Обход перезапущен с новыми настройками" } else note = "Обход не запущен — настройки применятся при запуске"
+    }
+
+    /** Проверка «работает ли сейчас»: открывает выбранные сайты через запущенный обход и показывает результат по каждому. */
+    fun runHealth() {
+        if (checking) return
+        val port = DpiRuntime.port
+        if (port <= 0) { note = "Сначала запустите обход"; return }
+        val chosen = (DpiSites.domainsOf(groups) + DpiSites.parse(custom)).distinct()
+        val sites = DpiScoring.sample(chosen, 8) + DpiSites.control.first()
+        checking = true
+        health = emptyList()
+        viewModelScope.launch {
+            health = withContext(Dispatchers.IO) {
+                val pool = Executors.newFixedThreadPool(sites.size.coerceAtLeast(1))
+                try { sites.map { h -> pool.submit<DpiProbe.Result> { DpiProbe.https(h, port, 6000) } }.map { it.get() } } finally { pool.shutdownNow() }
+            }
+            checking = false
+        }
+    }
+
+    /** Пробный запуск движка с текущей строкой: ловит неверные ключи до реального включения. */
+    fun validateLine() {
+        val line = cfg.effectiveLine()
+        note = "Проверяю строку…"
+        viewModelScope.launch {
+            val err = withContext(Dispatchers.IO) {
+                val e = DpiEngine(app)
+                try { e.start(DpiArgs.build(line, DpiEngine.freePort(), cfg.sni), 1500) } finally { e.stop() }
+            }
+            note = err ?: "Строка принята byedpi"
+        }
+    }
 
     fun startSearch(autoApply: Boolean) {
         if (searching) return

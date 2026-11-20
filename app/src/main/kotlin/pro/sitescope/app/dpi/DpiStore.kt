@@ -10,7 +10,7 @@ data class DpiConfig(
     val mode: String = "proxy",
     val apps: Set<String> = emptySet(),
     val port: Int = 1080,
-    val line: String = "-r1+s -s1+s",
+    val line: String = DpiConfig.SAFE_LINE,
     val useSimple: Boolean = false,
     val simple: DpiSimple = DpiSimple(),
     val sni: String = "google.com",
@@ -22,8 +22,17 @@ data class DpiConfig(
     val chainXray: Boolean = false,
     val browserViaDpi: Boolean = false,
     val history: List<String> = emptyList(),
+    /** Наблюдатель: периодически проверяет сайты из последнего подбора и при потере доступа сам переключает стратегию. */
+    val watchdog: Boolean = true,
+    /** Сайты, по которым вёлся последний подбор (через пробел): наблюдатель проверяет именно их. */
+    val searchSites: String = "",
 ) {
     val isVpn get() = mode.startsWith("vpn")
+
+    companion object {
+        /** Мягкая стратегия, с которой обход стартует, если введённая строка не принята движком. */
+        const val SAFE_LINE = "-r1+s -s1+s"
+    }
 
     /** Строка стратегии с учётом конструктора и списка доменов. */
     fun effectiveLine(): String {
@@ -64,6 +73,7 @@ object DpiStore {
             hostsOnly = p.getBoolean("hostsOnly", d.hostsOnly), hosts = p.getString("hosts", "") ?: "",
             dns = p.getString("dns", d.dns) ?: d.dns, ipv6 = p.getBoolean("ipv6", d.ipv6), autostart = p.getBoolean("autostart", d.autostart),
             chainXray = p.getBoolean("chainXray", d.chainXray), browserViaDpi = p.getBoolean("browserViaDpi", d.browserViaDpi), history = history,
+            watchdog = p.getBoolean("watchdog", d.watchdog), searchSites = p.getString("searchSites", "") ?: "",
         )
     }
 
@@ -79,6 +89,7 @@ object DpiStore {
             .putBoolean("useSimple", c.useSimple).putString("simple", simple.toString()).putString("sni", c.sni)
             .putBoolean("hostsOnly", c.hostsOnly).putString("hosts", c.hosts).putString("dns", c.dns).putBoolean("ipv6", c.ipv6)
             .putBoolean("autostart", c.autostart).putBoolean("chainXray", c.chainXray).putBoolean("browserViaDpi", c.browserViaDpi)
+            .putBoolean("watchdog", c.watchdog).putString("searchSites", c.searchSites)
             .putString("history", JSONArray(c.history.take(15)).toString()).apply()
     }
 

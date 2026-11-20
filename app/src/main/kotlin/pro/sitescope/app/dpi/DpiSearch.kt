@@ -103,6 +103,8 @@ class DpiSearch(private val context: Context) {
             val targets = DpiScoring.targetSites(config.sites, baseFailed)
             val blockedCount = config.sites.count { it in baseFailed }
             post { it.copy(baselineBlocked = blockedCount, baselineTotal = config.sites.size) }
+            // Запоминаем заблокированные сайты: по ним наблюдатель потом проверяет, что обход всё ещё работает.
+            if (blockedCount > 0) context.getSharedPreferences("dpi_bypass", Context.MODE_PRIVATE).edit().putString("searchSites", targets.joinToString(" ")).apply()
             if (blockedCount == 0) {
                 post { it.copy(running = false, finished = true, message = "Все выбранные сайты открываются без обхода. Подбор не нужен — выберите другие сайты или проверьте сети провайдера.") }
                 return@coroutineScope

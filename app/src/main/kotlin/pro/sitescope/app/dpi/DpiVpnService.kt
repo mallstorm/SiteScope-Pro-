@@ -8,7 +8,7 @@ import com.v2ray.ang.service.TProxyService
 
 /** Режимы VPN: byedpi + tun2socks (HEV). Трафик выбранных приложений (или всех) идёт в TUN → SOCKS5 byedpi. */
 class DpiVpnService : VpnService() {
-    private var tun: ParcelFileDescriptor? = null
+    @Volatile private var tun: ParcelFileDescriptor? = null
     private var bridge: TProxyService? = null
     @Volatile private var starting = false
 
@@ -46,6 +46,18 @@ class DpiVpnService : VpnService() {
         val b = TProxyService(this, fd, port)
         b.startTun2Socks()
         bridge = b
+        // Если движок окончательно упал, VPN нельзя оставлять включённым: весь трафик ушёл бы в «пустоту». Выключаем VPN и сообщаем причину.
+        Thread({
+            while (tun != null) {
+                try { Thread.sleep(2000) } catch (_: InterruptedException) { break }
+                val st = DpiRuntime.state.value
+                if (tun != null && st.phase == DpiPhase.ERROR) {
+                    DpiRuntimeFail.set("Обход остановился: " + st.message)
+                    shutdown()
+                    break
+                }
+            }
+        }, "dpi-vpn-watch").apply { isDaemon = true }.start()
         getSystemService(Context.NOTIFICATION_SERVICE).let { (it as android.app.NotificationManager).notify(DpiService.NOTIFICATION_ID, dpiNotification(this, "VPN активен · " + modeTitle(cfg))) }
     }
 

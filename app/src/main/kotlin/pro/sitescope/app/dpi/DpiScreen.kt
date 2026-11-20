@@ -35,7 +35,7 @@ import kotlinx.coroutines.delay
 import pro.sitescope.app.HostsVpnService
 import pro.sitescope.app.ui.*
 
-private val tabs = listOf("Запуск", "Подбор", "Стратегия", "Приложения", "Журнал")
+private val tabs = listOf("Старт", "Подбор", "Стратегия", "Приложения", "Журнал")
 
 @Composable
 fun DpiScreen(vm: DpiViewModel = viewModel()) {
@@ -83,8 +83,8 @@ fun DpiScreen(vm: DpiViewModel = viewModel()) {
     )
 
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            tabs.forEachIndexed { i, t -> FilterChip(tab == i, { tab = i }, label = { Text(t) }) }
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            tabs.forEachIndexed { i, t -> MiniChip(t, tab == i) { tab = i } }
         }
         when (tab) {
             0 -> RunTab(vm, state, onToggle = { if (state.phase == DpiPhase.STOPPED || state.phase == DpiPhase.ERROR) begin() else DpiRuntime.stopService(context) })
@@ -100,7 +100,13 @@ fun DpiScreen(vm: DpiViewModel = viewModel()) {
 private fun RunTab(vm: DpiViewModel, state: DpiState, onToggle: () -> Unit) {
     val context = LocalContext.current
     val cfg = vm.cfg
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val progress by vm.search.progress.collectAsState()
+    var help by remember { mutableStateOf(false) }
+    val running = state.phase == DpiPhase.RUNNING
+    val shownPort = if (running) state.port else cfg.port
+    val activeLine = state.line.ifBlank { cfg.effectiveLine() }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // ───── статус ─────
         SoftCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -108,10 +114,10 @@ private fun RunTab(vm: DpiViewModel, state: DpiState, onToggle: () -> Unit) {
                     Text(
                         when (state.phase) {
                             DpiPhase.RUNNING -> state.message.ifBlank { "Работает" } + " · порт ${state.port}"
-                            DpiPhase.STARTING -> state.message
-                            DpiPhase.ERROR -> state.message
+                            DpiPhase.STARTING, DpiPhase.ERROR -> state.message
                             else -> if (!DpiEngine.available(context)) "Движок недоступен на этом устройстве" else "Выключен"
-                        }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp),
+                        }, style = MaterialTheme.typography.bodySmall, color = if (state.phase == DpiPhase.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
                     )
                 }
                 val (label, c, s) = when (state.phase) {
@@ -122,57 +128,123 @@ private fun RunTab(vm: DpiViewModel, state: DpiState, onToggle: () -> Unit) {
                 }
                 Pill(label, c, s)
             }
-            Button(onToggle, Modifier.fillMaxWidth().padding(top = 12.dp), enabled = DpiEngine.available(context) && state.phase != DpiPhase.STARTING) {
-                Text(if (state.phase == DpiPhase.RUNNING) "Остановить" else "Запустить")
+            Text("Стратегия: " + DpiPresets.titleOf(activeLine), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp))
+            if (running && state.lastCheck.isNotBlank()) Text("Проверка наблюдателя: ${state.lastCheck}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (running && state.switches > 0) Text("Стратегия менялась автоматически: ${state.switches}", style = MaterialTheme.typography.bodySmall, color = tones.warn)
+            Button(onToggle, Modifier.fillMaxWidth().padding(top = 8.dp).height(44.dp), enabled = DpiEngine.available(context) && state.phase != DpiPhase.STARTING) {
+                Text(if (running) "Остановить" else "Запустить")
             }
-            if (vm.note.isNotBlank()) Text(vm.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
-            if (DpiRuntimeFail.last.isNotBlank() && state.phase != DpiPhase.RUNNING) Text("Сбой VPN: " + DpiRuntimeFail.last, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
+            if (vm.note.isNotBlank()) Text(vm.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
+            if (DpiRuntimeFail.last.isNotBlank() && !running) Text("Сбой VPN: " + DpiRuntimeFail.last, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
         }
 
+        // ───── автонастройка и проверка ─────
+        SoftCard {
+            Text("Автонастройка", style = MaterialTheme.typography.titleMedium)
+            Text("Не знаете, что выбрать? Отметьте сайты и нажмите «Подобрать и включить»: приложение проверит, что у вас реально заблокировано, найдёт рабочую стратегию и включит обход.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, bottom = 6.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                DpiSites.groups.forEach { g -> MiniChip(g.title, g.id in vm.groups) { if (!vm.searching) vm.groups = if (g.id in vm.groups) vm.groups - g.id else vm.groups + g.id } }
+            }
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (vm.searching) Button({ vm.stopSearch() }, Modifier.weight(1f).height(40.dp)) { Text("Остановить подбор") }
+                else Button({ vm.startSearch(true) }, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Подобрать и включить") }
+                OutlinedButton({ vm.runHealth() }, Modifier.weight(1f).height(40.dp), enabled = running && !vm.checking, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(if (vm.checking) "Проверяю…" else "Проверить сейчас") }
+            }
+            if (progress.running || progress.finished) {
+                Text(progress.phase.ifBlank { if (progress.finished) "Готово" else "" }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                if (progress.running && progress.total > 0) LinearProgressIndicator(progress = { progress.done.toFloat() / progress.total }, Modifier.fillMaxWidth().padding(vertical = 4.dp))
+                if (progress.baselineBlocked >= 0) Text("Без обхода недоступно: ${progress.baselineBlocked} из ${progress.baselineTotal}", style = MaterialTheme.typography.bodySmall)
+                if (progress.message.isNotBlank()) Text(progress.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (vm.health.isNotEmpty()) {
+                val opened = vm.health.count { it.ok }
+                Text("Через обход открылось: $opened из ${vm.health.size}", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                vm.health.forEach { r ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 1.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (r.ok) "✓" else "✕", color = if (r.ok) tones.good else tones.bad, modifier = Modifier.width(18.dp))
+                        Text(r.host, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (r.ok) "${r.ms} мс" else r.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    }
+                }
+            }
+        }
+
+        // ───── профили ─────
+        SoftCard {
+            Text("Готовые профили", style = MaterialTheme.typography.titleMedium)
+            val current = DpiPresets.byLine(cfg.line)
+            FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                DpiPresets.all.forEach { p -> MiniChip(p.title, !cfg.useSimple && current?.id == p.id) { vm.applyPreset(p) } }
+            }
+            Text(if (cfg.useSimple) "Сейчас используется конструктор (вкладка «Стратегия»)." else current?.hint ?: "Сейчас задана своя строка ключей (вкладка «Стратегия»). Профиль заменит её.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+        }
+
+        // ───── способ подключения ─────
         SoftCard {
             Text("Как подключить", style = MaterialTheme.typography.titleMedium)
             val modes = listOf(
-                Triple("proxy", "Прокси без VPN", "Сервис работает постоянно: SOCKS5 127.0.0.1:${cfg.port}. Подходит для приложений с настройкой прокси (Telegram и др.) и для встроенного браузера. VPN-слот остаётся свободным."),
-                Triple("vpn_only", "VPN: только выбранные приложения", "Через обход идут только отмеченные приложения, остальные работают напрямую. Занимает VPN-слот."),
-                Triple("vpn_except", "VPN: все, кроме выбранных", "Всё в обходе, кроме отмеченных приложений (банки, игры)."),
+                Triple("proxy", "Прокси без VPN", "SOCKS5 127.0.0.1:${cfg.port}. Для встроенного браузера и приложений с настройкой прокси (Telegram). VPN-слот свободен."),
+                Triple("vpn_only", "VPN: только выбранные", "Через обход идут только отмеченные приложения (вкладка «Приложения»)."),
+                Triple("vpn_except", "VPN: все, кроме выбранных", "Всё в обходе, кроме отмеченных (банки, игры)."),
                 Triple("vpn_all", "VPN: все приложения", "Весь трафик телефона через обход."),
             )
             modes.forEach { (id, title, text) ->
-                Row(Modifier.fillMaxWidth().clickable { vm.update(cfg.copy(mode = id)) }.padding(vertical = 6.dp), verticalAlignment = Alignment.Top) {
-                    RadioButton(cfg.mode == id, { vm.update(cfg.copy(mode = id)) })
-                    Column(Modifier.padding(top = 10.dp)) {
+                Row(Modifier.fillMaxWidth().clickable { vm.update(cfg.copy(mode = id)) }.padding(vertical = 2.dp), verticalAlignment = Alignment.Top) {
+                    RadioButton(cfg.mode == id, { vm.update(cfg.copy(mode = id)) }, Modifier.size(36.dp))
+                    Column(Modifier.padding(top = 8.dp)) {
                         Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                         Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
-            if (cfg.mode == "vpn_only" || cfg.mode == "vpn_except") Text("Выбрано приложений: ${cfg.apps.size} — вкладка «Приложения».", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+            if (running && cfg.mode != state.mode) Text("Режим изменён — остановите и запустите обход заново.", style = MaterialTheme.typography.bodySmall, color = tones.warn)
         }
 
         if (!cfg.isVpn) SoftCard {
             Text("Использовать прокси", style = MaterialTheme.typography.titleMedium)
-            Text("Без VPN приложение может ходить через обход только если умеет работать с SOCKS5-прокси. Адрес: 127.0.0.1, порт ${if (state.phase == DpiPhase.RUNNING) state.port else cfg.port}.", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, bottom = 8.dp))
+            Text("Адрес: 127.0.0.1, порт $shownPort. Приложение пойдёт через обход, только если умеет работать с SOCKS5.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, bottom = 6.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton({
-                    val p = if (state.phase == DpiPhase.RUNNING) state.port else cfg.port
-                    try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("tg://socks?server=127.0.0.1&port=$p")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("tg://socks?server=127.0.0.1&port=$shownPort")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                     catch (e: Exception) { toast(context, "Telegram не установлен") }
-                }) { Text("Добавить в Telegram") }
-                OutlinedButton({ copyText(context, "127.0.0.1:${if (state.phase == DpiPhase.RUNNING) state.port else cfg.port}") }) { Text("Копировать адрес") }
+                }, Modifier.height(36.dp)) { Text("Добавить в Telegram") }
+                OutlinedButton({ copyText(context, "127.0.0.1:$shownPort") }, Modifier.height(36.dp)) { Text("Копировать адрес") }
             }
             SwitchLine("Встроенный браузер SiteScope — через обход", "Обычные сайты в браузере приложения идут через byedpi", cfg.browserViaDpi) { vm.update(cfg.copy(browserViaDpi = it)) }
         }
 
         SoftCard {
             Text("Дополнительно", style = MaterialTheme.typography.titleMedium)
+            SwitchLine("Следить и менять стратегию сам", "Раз в ~75 с открываю заблокированные сайты через обход; если перестали — перехожу на следующую лучшую стратегию из подбора", cfg.watchdog) { vm.update(cfg.copy(watchdog = it)) }
             SwitchLine("Запускать при включении телефона", "VPN-режимы — только если разрешение VPN уже выдано", cfg.autostart) { vm.update(cfg.copy(autostart = it)) }
             SwitchLine("Обход внутри VPN SiteScope (Xray)", "Xray выходит в сеть через byedpi: сервер VPN подключается в обход блокировки. Экспериментально", cfg.chainXray) { vm.update(cfg.copy(chainXray = it)) }
-            Text("Движок: byedpi (hufrea, MIT) — отдельный процесс. Стратегия: ${cfg.effectiveLine().take(90)}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+            Text("Движок: byedpi (hufrea, MIT), отдельный процесс. Строка: ${activeLine.take(90)}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+        }
+
+        // ───── справка ─────
+        SoftCard(onClick = { help = !help }) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Как это работает и как пользоваться", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Icon(if (help) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+            }
+            if (help) Text(DPI_HELP, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
         }
     }
 }
+
+private const val DPI_HELP = "Что это. Многие провайдеры блокируют сайты не по адресу, а по «отпечатку» первого пакета защищённого соединения: в нём открытым текстом написано имя сайта (SNI). Это называется DPI. " +
+    "byedpi — маленькая программа внутри приложения: она слегка ломает этот первый пакет (режет на куски, меняет порядок, добавляет фальшивый пакет), чтобы фильтр его не узнал, а сайт всё равно понял.\n\n" +
+    "Это не VPN: трафик не шифруется дополнительно и ваш IP не меняется. Обход помогает, если блокировка идёт по имени сайта. Если сайт закрыт по IP целиком — нужен VPN-сервер (раздел VPN).\n\n" +
+    "Как пользоваться:\n1. Выключите VPN. Отметьте сайты и нажмите «Подобрать и включить» — приложение само найдёт стратегию и запустит обход.\n" +
+    "2. Выберите способ подключения. «Прокси» — для встроенного браузера SiteScope (включите переключатель) и приложений с настройкой SOCKS5, например Telegram. «VPN» — чтобы направить через обход выбранные или все приложения.\n" +
+    "3. Нажмите «Проверить сейчас»: увидите, какие сайты открываются через обход.\n" +
+    "4. Если сайты вдруг перестали открываться, наблюдатель сам переключит стратегию; можно и вручную выбрать профиль или повторить подбор.\n\n" +
+    "Важно. Рабочая стратегия зависит от провайдера и сети: при смене Wi-Fi/мобильной сети подбор лучше повторить. " +
+    "UDP/QUIC (часть YouTube, голос Discord) byedpi не обходит — в браузере отключите QUIC. Если строка стратегии неверна, обход запустится с базовой."
 
 @Composable
 private fun SwitchLine(title: String, text: String, checked: Boolean, onChange: (Boolean) -> Unit) {
@@ -270,6 +342,11 @@ private fun StrategyTab(vm: DpiViewModel) {
                         modifier = Modifier.fillMaxWidth().clickable { vm.applyLine(h) }.padding(vertical = 4.dp)) }
                 }
             } else SimpleBuilder(vm)
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton({ vm.validateLine() }, Modifier.weight(1f).height(38.dp), contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Проверить строку") }
+                Button({ vm.restartNow() }, Modifier.weight(1f).height(38.dp), contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Применить сейчас") }
+            }
+            if (vm.note.isNotBlank()) Text(vm.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
             Text("Итог: ${cfg.effectiveLine()}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
         }
         SoftCard {
