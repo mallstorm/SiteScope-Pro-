@@ -44,12 +44,15 @@ fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewMo
     LifecycleResumeEffect(vm) { vm.loadProfiles(); onPauseOrDispose { } }
     LaunchedEffect(startTargets) { if (!startTargets.isNullOrBlank()) vm.targets = startTargets }
     Column(Modifier.fillMaxSize()) {
-        AppHeader("Моя сеть", "Устройства, порты, подключения и диагностика") {
-            HeaderChips(listOf("Устройства", "Сканер", "Подключения", "Скорость", "Доступ извне", "Роутеры"), tab, { tab = it },
-                listOf(Icons.Rounded.Devices, Icons.Rounded.NetworkCheck, Icons.Rounded.Terminal, Icons.Rounded.Speed, Icons.Rounded.OpenInNew, Icons.Rounded.Router))
+        AppHeader("Моя сеть", "LAN, сервисы и подключения") {
+            HeaderChips(listOf("Устройства", "Сканер", "Подключения"), if (tab < 3) tab else -1, { tab = it },
+                listOf(Icons.Rounded.Devices, Icons.Rounded.NetworkCheck, Icons.Rounded.Link))
+            Spacer(Modifier.height(6.dp))
+            HeaderChips(listOf("Скорость", "Доступ извне", "Роутеры"), if (tab >= 3) tab - 3 else -1, { tab = it + 3 },
+                listOf(Icons.Rounded.Speed, Icons.Rounded.Public, Icons.Rounded.Router))
         }
         when (tab) {
-            0 -> DevicesTab(vm)
+            0 -> DevicesTab(vm, onTab = { tab = it })
             1 -> ScannerTab(vm)
             2 -> ConnectionsTab(vm)
             3 -> SpeedScreen()

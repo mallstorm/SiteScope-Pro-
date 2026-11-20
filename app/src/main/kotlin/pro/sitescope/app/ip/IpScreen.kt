@@ -96,14 +96,9 @@ private fun LookupPage(vm: IpViewModel, state: AppState) {
     }
 
     val info = vm.info
-    if (info != null) InfoView(vm, info)
+    if (info != null) InfoView(vm, info, state)
     else if (!vm.searching && vm.hits.isEmpty()) {
-        if (vm.recent.isNotEmpty()) {
-            SectionTitle("Недавние запросы")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (q in vm.recent) MiniChip(q, false) { vm.search(q) }
-            }
-        }
+        RecentQueries(vm)
         SectionTitle("Примеры")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (q in listOf("8.8.8.8", "1.1.1.1", "yandex.ru", "AS13335")) MiniChip(q, false) { vm.search(q) }
@@ -123,9 +118,16 @@ private fun LookupPage(vm: IpViewModel, state: AppState) {
 }
 
 @Composable
-private fun InfoView(vm: IpViewModel, info: IpInfo) {
+private fun InfoView(vm: IpViewModel, info: IpInfo, state: AppState) {
     val context = LocalContext.current
-    SoftCard {
+    val dash = !info.isAsn && info.ip.isNotEmpty()
+    var more by remember(info.ip, info.query) { mutableStateOf(false) }
+    if (dash) {
+        IpDashboard(vm, info, state)
+        TextButton(onClick = { more = !more }, modifier = Modifier.fillMaxWidth()) { Text(if (more) "Скрыть подробности" else "Все сведения и реестр") }
+        if (!more) return
+    }
+    if (!dash) SoftCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (info.flag.isNotEmpty()) Text(info.flag, fontSize = 34.sp, modifier = Modifier.padding(end = 12.dp))
             Column(Modifier.weight(1f)) {
@@ -148,7 +150,7 @@ private fun InfoView(vm: IpViewModel, info: IpInfo) {
     }
     if (info.error.isNotEmpty()) { Spacer(Modifier.height(6.dp)); ErrorCard("Онлайн-справочники не ответили. Показано то, что известно локально.") }
 
-    if (info.hasGeo) {
+    if (info.hasGeo && !dash) {
         Spacer(Modifier.height(8.dp))
         MapCard(info)
     }
@@ -168,7 +170,7 @@ private fun InfoView(vm: IpViewModel, info: IpInfo) {
             (if (info.geoSource.isNotEmpty()) " (источник: ${info.geoSource})." else "."), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
     }
 
-    if (!info.isAsn && info.ip.isNotEmpty()) {
+    if (!info.isAsn && info.ip.isNotEmpty() && !dash) {
         SectionTitle("Проверки")
         // Чёрные списки
         if (Subnet.isIpv4(info.ip) && info.kind.startsWith("Публичный")) ToolCard(Icons.Rounded.GppMaybe, "Чёрные списки", "Не считают ли адрес источником спама", vm.blacklistRunning, vm.blacklists != null, { vm.runBlacklists() }) {
@@ -569,5 +571,218 @@ private fun AclBuilder(vm: IpViewModel) {
     Row {
         TextButton(onClick = { copyText(context, output) }) { Text("Копировать") }
         TextButton(onClick = { shareText(context, output, "Список доступа $name") }) { Text("Поделиться") }
+    }
+}
+
+
+private fun kindOf(q: String): Triple<String, String, androidx.compose.ui.graphics.vector.ImageVector> = when {
+    Regex("^(?i)as\\s?\\d+$").matches(q) -> Triple("ASN", "Автономная система", Icons.Rounded.AccountTree)
+    q.contains('/') -> Triple("CIDR", "Подсеть (CIDR)", Icons.Rounded.Layers)
+    Subnet.isIpv4(q) || Subnet.isIpv6(q) -> Triple("IP", "IP-адрес", Icons.Rounded.Language)
+    q.contains('.') -> Triple("DNS", "Домен", Icons.Rounded.Language)
+    else -> Triple("ASN", "Провайдер", Icons.Rounded.Business)
+}
+
+@Composable
+private fun RecentQueries(vm: IpViewModel) {
+    if (vm.recent.isEmpty()) return
+    SectionTitle("Недавние запросы")
+    SoftCard(padding = 4.dp) {
+        vm.recent.take(5).forEachIndexed { i, q ->
+            val (tag, sub, icon) = kindOf(q)
+            Row(Modifier.fillMaxWidth().clickable { vm.search(q) }.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(q, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Pill(tag, tones.info, tones.infoSoft)
+                val t = vm.recentTimes[q] ?: 0L
+                if (t > 0) Text(whenText(t), Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+            if (i < minOf(vm.recent.size, 5) - 1) HorizontalDivider(Modifier.padding(horizontal = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        }
+    }
+}
+
+private fun rdapUrl(info: IpInfo): Pair<String, String> {
+    val host = when {
+        info.rir.contains("ARIN", true) -> "rdap.arin.net/registry"
+        info.rir.contains("APNIC", true) -> "rdap.apnic.net"
+        info.rir.contains("LACNIC", true) -> "rdap.lacnic.net/rdap"
+        info.rir.contains("AFRINIC", true) -> "rdap.afrinic.net/rdap"
+        else -> "rdap.db.ripe.net"
+    }
+    return host.substringBefore('/').let { if (it == "rdap.db.ripe.net") "rdap.ripe.net" else it } to "https://$host/ip/${info.ip}"
+}
+
+@Composable
+private fun IpDashboard(vm: IpViewModel, info: IpInfo, state: AppState) {
+    val context = LocalContext.current
+    val publicIp = info.kind.startsWith("Публичный") || info.kind.startsWith("Глобальный")
+    val bl = vm.blacklists
+    val listed = bl?.count { it.listed == true } ?: 0
+    var showBl by remember(info.ip) { mutableStateOf(false) }
+    fun open(url: String) = try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (e: Exception) { toast(context, "Не удалось открыть") }
+    // --- Сводка
+    SoftCard(padding = 10.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(Icons.Rounded.Language, MaterialTheme.colorScheme.onPrimary, MaterialTheme.colorScheme.primary, 52.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("IP: " + info.ip, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable { copyText(context, info.ip) })
+                Text(if (info.query != info.ip) "Адрес сайта " + info.query else "Сведения об адресе и сети", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (info.kind.isNotEmpty()) Pill(info.kind.removeSuffix(" адрес").let { if (publicIp) "Публичный IP" else it }, if (publicIp) tones.good else tones.info, if (publicIp) tones.goodSoft else tones.infoSoft, icon = if (publicIp) Icons.Rounded.Check else null)
+                when {
+                    bl == null && vm.blacklistRunning -> Pill("Проверяем списки…", tones.info, tones.infoSoft)
+                    bl != null && listed == 0 -> Pill("Не в чёрных списках", tones.good, tones.goodSoft, Modifier.clickable { showBl = !showBl }, icon = Icons.Rounded.VerifiedUser)
+                    bl != null -> Pill("В списках: $listed", tones.bad, tones.badSoft, Modifier.clickable { showBl = !showBl }, icon = Icons.Rounded.GppMaybe)
+                    publicIp && Subnet.isIpv4(info.ip) -> Pill("Проверить списки", tones.info, tones.infoSoft, Modifier.clickable { vm.runBlacklists() })
+                }
+            }
+        }
+        if (showBl && bl != null) for (e in bl) Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+            Dot(when (e.listed) { true -> tones.bad; false -> tones.good; null -> MaterialTheme.colorScheme.outline })
+            Spacer(Modifier.width(8.dp)); Text(e.title, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+            Text(when (e.listed) { true -> "в списке"; false -> "чисто"; null -> "нет ответа" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+        val (rdapName, rdapLink) = rdapUrl(info)
+        Row {
+            IpCell(Icons.Rounded.Place, "Расположение", (info.flag + " " + info.place.ifEmpty { "—" }).trim() + if (info.countryCode.isNotEmpty() && info.place.isNotEmpty()) " (${info.countryCode})" else "", Modifier.weight(1f))
+            IpCell(Icons.Rounded.Layers, "Провайдер", info.holder.ifEmpty { "—" }, Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(6.dp))
+        Row {
+            IpCell(Icons.Rounded.AccountTree, "ASN", info.asn.ifEmpty { "—" }, Modifier.weight(1f), link = if (info.asn.isNotEmpty()) { { open("https://bgp.he.net/" + info.asn) } } else null)
+            IpCell(Icons.Rounded.Layers, "Префикс (CIDR)", info.prefix.ifEmpty { "—" }, Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(6.dp))
+        Row {
+            IpCell(Icons.Rounded.Description, "RDAP", if (publicIp) rdapName else "—", Modifier.weight(1f), link = if (publicIp) { { open(rdapLink) } } else null)
+            val p = vm.ping
+            IpCell(Icons.Rounded.MonitorHeart, "Ping",
+                when { p != null && p.ok -> "%.0f мс".format(p.avgMs) + " (мин. %.0f, макс. %.0f)".format(p.minMs, p.maxMs); p != null -> "нет ответа"; vm.pingRunning -> "проверяем…"; else -> "—" }, Modifier.weight(1f),
+                link = if (!vm.pingRunning) { { vm.runPing() } } else null)
+        }
+    }
+    // --- Подсети
+    val cidr = remember(info.prefix, info.ip) {
+        try { if (Subnet.isIpv4(info.ip)) Subnet.parse(info.prefix.ifEmpty { info.ip + "/24" }).normalized() else null } catch (e: Exception) { null }
+    }
+    if (cidr != null) {
+        Spacer(Modifier.height(8.dp))
+        SoftCard(padding = 10.dp, onClick = { vm.subnetInput = cidr.network.let { Subnet.toIp(it) } + "/" + cidr.prefix; vm.page = 1 }) {
+            DashHead(Icons.Rounded.Layers, "Подсети", "Расчёт и анализ CIDR, диапазонов, агрегации", null)
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(8.dp)) {
+                Column(Modifier.weight(1.3f)) { Pill("CIDR расчёт", tones.info, tones.infoSoft); Text(Subnet.toIp(cidr.network) + "/" + cidr.prefix, style = MaterialTheme.typography.titleSmall, maxLines = 1) }
+                Column(Modifier.weight(0.8f)) { Text("Адресов", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text((1L shl (32 - cidr.prefix)).toString(), style = MaterialTheme.typography.titleSmall) }
+                Column(Modifier.weight(1.3f)) { Text("Диапазон", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(Subnet.toIp(cidr.network) + " –\n" + Subnet.toIp(cidr.network + (1L shl (32 - cidr.prefix)) - 1), style = MaterialTheme.typography.labelMedium) }
+                Column(Modifier.weight(1.1f)) { Text("Маска", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(Subnet.prefixToMask(cidr.prefix), style = MaterialTheme.typography.labelMedium) }
+            }
+        }
+    }
+    // --- Маршрут
+    Spacer(Modifier.height(8.dp))
+    val real = vm.hops.filter { it.address.isNotEmpty() }
+    SoftCard(padding = 10.dp, onClick = if (vm.hops.isEmpty() && !vm.traceRunning) { { vm.runTrace() } } else null) {
+        DashHead(Icons.Rounded.AccountTree, "Маршрут", "Трассировка до хоста (traceroute)", when { vm.traceRunning -> "идёт…"; vm.hops.isNotEmpty() -> "${vm.hops.size} " + hopWord(vm.hops.size); else -> "Запустить" })
+        if (vm.hops.isEmpty()) Text(if (vm.traceRunning) "Определяем путь до узла…" else "Нажмите, чтобы построить маршрут.", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        else {
+            val picks = if (real.size <= 4) real else listOf(real.first(), real[real.size / 3], real[real.size * 2 / 3], real.last()).distinct()
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.Top) {
+                picks.forEachIndexed { i, h ->
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Box(Modifier.weight(1f).height(2.dp).background(if (i == 0) Color.Transparent else tones.good.copy(alpha = 0.5f)))
+                            Box(Modifier.size(26.dp).clip(CircleShape).background(if (h.reached) tones.good else MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) { Text("${h.ttl}", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold) }
+                            Box(Modifier.weight(1f).height(2.dp).background(if (i == picks.size - 1) Color.Transparent else tones.good.copy(alpha = 0.5f)))
+                        }
+                        Text(h.address, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("%.1f мс".format(h.ms), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            if (vm.traceRunning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
+        }
+    }
+    // --- Сервисы
+    Spacer(Modifier.height(8.dp))
+    var confirm by remember { mutableStateOf(false) }
+    val svc = vm.services
+    SoftCard(padding = 10.dp, onClick = if (svc == null && !vm.servicesRunning) { { confirm = true } } else null) {
+        DashHead(Icons.Rounded.Dns, "Сервисы", "Открытые порты и доступные сервисы", when { vm.servicesRunning -> "проверяем…"; svc != null -> "${svc.size} " + openWord(svc.size); else -> "Проверить" })
+        if (svc != null) {
+            if (svc.isEmpty()) Text("Популярные порты закрыты или узел их скрывает", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodySmall)
+            else FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for ((port, name) in svc) Row(Modifier.clip(RoundedCornerShape(10.dp)).background(tones.goodSoft).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Dot(tones.good, 7.dp); Spacer(Modifier.width(5.dp))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("$port", style = MaterialTheme.typography.titleSmall); Text(name, style = MaterialTheme.typography.labelSmall) }
+                }
+            }
+        } else if (vm.servicesRunning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+        else Text("Проверка популярных портов (SSH, HTTP, HTTPS, почта, базы данных).", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("Проверка сервисов") },
+        text = { Text("Проверяйте только свои узлы или те, на проверку которых у вас есть разрешение владельца.") },
+        confirmButton = { TextButton(onClick = { confirm = false; vm.runServices() }) { Text("Это мой узел") } },
+        dismissButton = { TextButton(onClick = { confirm = false }) { Text("Отмена") } })
+    // --- Действия
+    Spacer(Modifier.height(8.dp))
+    SoftCard(padding = 10.dp) {
+        DashHead(Icons.Rounded.Bolt, "Действия", "Быстрые действия с результатом", null)
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                if (info.hasGeo) try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:${info.lat},${info.lon}?q=${info.lat},${info.lon}(${Uri.encode(info.ip)})"))) } catch (e: Exception) { toast(context, "Нет приложения с картами") }
+                else toast(context, "Для этого адреса нет координат")
+            }, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.Place, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Открыть карту", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
+            OutlinedButton(onClick = { copyText(context, summaryText(info, vm), "Результат скопирован") }, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.ContentCopy, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Копировать", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
+            OutlinedButton(onClick = { shareText(context, summaryText(info, vm), info.ip) }, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Поделиться", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
+        }
+    }
+    RecentQueries(vm)
+}
+
+private fun hopWord(n: Int) = if (n % 100 in 11..14) "переходов" else when (n % 10) { 1 -> "переход"; 2, 3, 4 -> "перехода"; else -> "переходов" }
+private fun openWord(n: Int) = if (n % 100 in 11..14) "открытых" else if (n % 10 == 1) "открыт" else "открытых"
+
+private fun summaryText(info: IpInfo, vm: IpViewModel): String = buildString {
+    appendLine("IP: " + info.ip)
+    if (info.place.isNotEmpty()) appendLine("Расположение: " + info.place)
+    if (info.holder.isNotEmpty()) appendLine("Провайдер: " + info.holder)
+    if (info.asn.isNotEmpty()) appendLine("ASN: " + info.asn)
+    if (info.prefix.isNotEmpty()) appendLine("Префикс: " + info.prefix)
+    vm.ping?.takeIf { it.ok }?.let { appendLine("Ping: %.0f мс".format(it.avgMs)) }
+    vm.blacklists?.let { l -> appendLine("Чёрные списки: " + (l.count { it.listed == true }.let { if (it == 0) "не найден" else "найден в $it" })) }
+    vm.services?.let { s -> if (s.isNotEmpty()) appendLine("Открытые порты: " + s.joinToString(", ") { "${it.first} ${it.second}" }) }
+}
+
+@Composable
+private fun DashHead(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, sub: String, badge: String?) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconBadge(icon, MaterialTheme.colorScheme.onPrimary, MaterialTheme.colorScheme.primary, 40.dp)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (badge != null) Pill(badge, tones.info, tones.infoSoft)
+        Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun IpCell(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String, modifier: Modifier, link: (() -> Unit)? = null) {
+    Row(modifier.padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(6.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        if (link != null) Icon(Icons.Rounded.OpenInNew, "Открыть", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp).clickable(onClick = link))
     }
 }

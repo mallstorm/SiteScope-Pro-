@@ -47,6 +47,7 @@ class IpViewModel(app: Application) : AndroidViewModel(app) {
     var hits by mutableStateOf(listOf<ProviderHit>())
     var searchError by mutableStateOf("")
     var recent by mutableStateOf(listOf<String>())
+    var recentTimes by mutableStateOf(mapOf<String, Long>())
 
     var blacklists by mutableStateOf<List<IpTools.BlacklistEntry>?>(null)
     var blacklistRunning by mutableStateOf(false)
@@ -70,11 +71,15 @@ class IpViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile private var traceCancelled = false
     private val prefs = app.getSharedPreferences("ip_recent", Context.MODE_PRIVATE)
 
-    init { recent = (prefs.getString("list", "") ?: "").split('\n').filter { it.isNotBlank() } }
+    init {
+        recent = (prefs.getString("list", "") ?: "").split('\n').filter { it.isNotBlank() }
+        recentTimes = (prefs.getString("times", "") ?: "").split('\n').mapNotNull { l -> val i = l.indexOf('\t'); if (i > 0) l.substring(i + 1) to (l.substring(0, i).toLongOrNull() ?: 0L) else null }.toMap()
+    }
 
     private fun remember(q: String) {
         recent = (listOf(q) + recent.filter { it != q }).take(8)
-        prefs.edit().putString("list", recent.joinToString("\n")).apply()
+        recentTimes = (recentTimes + (q to System.currentTimeMillis())).filterKeys { it in recent }
+        prefs.edit().putString("list", recent.joinToString("\n")).putString("times", recentTimes.entries.joinToString("\n") { it.value.toString() + "\t" + it.key }).apply()
     }
 
     fun search(text: String = query) {
@@ -100,7 +105,14 @@ class IpViewModel(app: Application) : AndroidViewModel(app) {
                         else hits = found.map { ProviderHit(it.asn, it.displayName(), it.country, it.prefixes.size) }
                     }
                 }
-                if (info != null) remember(q)
+                if (info != null) {
+                    remember(q)
+                    // Быстрые безобидные проверки запускаем сами: связь, чёрные списки (DNS) и маршрут. Порты — только по подтверждению.
+                    info?.let { i -> if (!i.isAsn && i.ip.isNotEmpty()) {
+                        runPing()
+                        if (Subnet.isIpv4(i.ip) && i.kind.startsWith("Публичный")) { runBlacklists(); runTrace() }
+                    } }
+                }
             } catch (e: Throwable) { searchError = "Не удалось выполнить поиск: " + (e.message ?: e.javaClass.simpleName) }
             searching = false
         }
