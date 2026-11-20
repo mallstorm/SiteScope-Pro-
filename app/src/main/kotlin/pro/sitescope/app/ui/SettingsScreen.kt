@@ -86,7 +86,7 @@ fun SettingsScreen() {
                 }
                 Text(String.format(java.util.Locale.US, "%.2f", pending), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
             }
-            AppSlider(value = pending, onValueChange = { pending = it }, onValueChangeFinished = { UiPrefs.set(context, pending) }, valueRange = UiPrefs.MIN..UiPrefs.MAX, steps = 5)
+            AppSlider(value = pending, onValueChange = { pending = it }, onValueChangeFinished = { UiPrefs.set(context, pending) }, valueRange = UiPrefs.MIN..UiPrefs.MAX, steps = 4)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${String.format(java.util.Locale.US, "%.2f", UiPrefs.MIN)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                 TextButton(onClick = { UiPrefs.set(context, UiPrefs.DEFAULT) }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(28.dp)) { Text("Сбросить (${String.format(java.util.Locale.US, "%.2f", UiPrefs.DEFAULT)})") }
