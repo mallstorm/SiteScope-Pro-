@@ -397,7 +397,7 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 @Composable
-fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () -> Unit = {}, vm: VpnViewModel = viewModel()) {
+fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () -> Unit = {}, showTabs: Boolean = true, vm: VpnViewModel = viewModel()) {
     val context = LocalContext.current
     var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 5)) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -426,7 +426,7 @@ fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () 
                 Text(vm.appliedNote, style = MaterialTheme.typography.bodySmall, color = tones.good)
             }
         }
-        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (showTabs) Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("Адреса", "Серверы", "DNS", "Маршруты", "Запись", "Журнал").forEachIndexed { i, title -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title) }) }
         }
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) {

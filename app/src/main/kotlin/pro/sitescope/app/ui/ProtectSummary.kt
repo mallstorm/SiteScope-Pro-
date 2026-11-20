@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Hub
 import androidx.compose.material3.Icon
@@ -82,15 +83,28 @@ fun ProtectSummary(go: ProtectGo) {
     val servers = vpn.serverList.filter { needle.isEmpty() || (it.name + " " + it.endpoint).contains(needle, true) }
     val dpiOn = dpiState.phase == DpiPhase.RUNNING
 
-    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Трафик за время работы VPN: разница общих счётчиков устройства с момента включения (приблизительно).
+    var trafficBase by remember { mutableStateOf(-1L) }
+    var traffic by remember { mutableStateOf(0L) }
+    LaunchedEffect(vpn.active) {
+        if (!vpn.active) { trafficBase = -1L; traffic = 0L; return@LaunchedEffect }
+        fun total() = (android.net.TrafficStats.getTotalRxBytes().coerceAtLeast(0L)) + (android.net.TrafficStats.getTotalTxBytes().coerceAtLeast(0L))
+        trafficBase = total()
+        while (true) { traffic = (total() - trafficBase).coerceAtLeast(0L); kotlinx.coroutines.delay(2000) }
+    }
+    fun mb(b: Long) = if (b >= 1_073_741_824L) "%.1f ГБ".format(java.util.Locale("ru"), b / 1_073_741_824.0) else if (b >= 1_048_576L) "${b / 1_048_576L} МБ" else "${b / 1024} КБ"
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SmartSearchBar(query, { query = it }, "Найти адрес, сервер или правило", onGo = { }, scan = true)
         MetricStrip(listOf(
             Metric(Icons.Rounded.Shield, "VPN", if (vpn.active) "Включён" else "Выключен"),
             Metric(Icons.Rounded.Dns, "Сервер", if (vpn.serverActive) vpn.runningProfile.ifEmpty { "—" } else running?.name?.ifEmpty { running.endpoint } ?: "—"),
             Metric(Icons.Rounded.NetworkPing, "Пинг", if (pingValue != null && pingValue >= 0) "$pingValue мс" else "—"),
+            Metric(Icons.Rounded.SwapVert, "Трафик", if (vpn.active) mb(traffic) else "—"),
             Metric(Icons.Rounded.LockOpen, "DPI", if (dpiOn) "Активен" else "Выкл")
         ))
 
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // Свои адреса сайтов
         SummaryCard(Icons.Rounded.Link, "Свои адреса сайтов", "Переопределение IP-адресов и локальные записи (Hosts)", "${vpn.entries.size} " + plural(vpn.entries.size, "правило", "правила", "правил"), onOpen = { go(1, 0) }) {
             if (rules.isEmpty()) Text(if (vpn.entries.isEmpty()) "Правил пока нет." else "Ничего не найдено.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
@@ -119,6 +133,7 @@ fun ProtectSummary(go: ProtectGo) {
                     Text(s.name.ifEmpty { s.endpoint }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     if (live) StatusBadge("Активен", BadgeKind.GOOD) else if (vpn.reserveServer == s.id) StatusBadge("Резерв", BadgeKind.INFO)
                     if (ping != null) Text(if (ping >= 0) "  $ping мс" else "  нет ответа", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("  " + if (live) mb(traffic) else "0 МБ", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -152,6 +167,7 @@ fun ProtectSummary(go: ProtectGo) {
             }
             Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.outline)
         }
+    }
     }
 }
 
