@@ -20,7 +20,17 @@ class AppRow(val pkg: String, val label: String, val system: Boolean)
 class DpiViewModel(private val app: Application) : AndroidViewModel(app) {
     var cfg by mutableStateOf(DpiStore.load(app)); private set
     var note by mutableStateOf("")
-    var groups by mutableStateOf(setOf("youtube", "discord", "telegram"))
+    var groups by mutableStateOf(loadGroups()); private set
+    private fun loadGroups(): Set<String> {
+        val p = app.getSharedPreferences("dpi_ui", android.content.Context.MODE_PRIVATE)
+        val saved = p.getString("groups", null)?.split(',')?.filter { id -> DpiSites.groups.any { it.id == id } }?.toSet()
+        return saved ?: setOf("youtube")
+    }
+    fun toggleGroup(id: String) {
+        if (searching) return
+        groups = if (id in groups) groups - id else groups + id
+        app.getSharedPreferences("dpi_ui", android.content.Context.MODE_PRIVATE).edit().putString("groups", groups.joinToString(",")).apply()
+    }
     var custom by mutableStateOf("")
     var parallel by mutableStateOf(4f)
     var timeout by mutableStateOf(5f)
@@ -84,7 +94,7 @@ class DpiViewModel(private val app: Application) : AndroidViewModel(app) {
     fun startSearch(autoApply: Boolean) {
         if (searching) return
         val sites = (DpiSites.domainsOf(groups) + DpiSites.parse(custom)).distinct()
-        val strategies = if (fullList) DpiStrategies.all else DpiStrategies.quick(48)
+        val strategies = if (fullList) DpiStrategies.all else DpiStrategies.quick()
         searching = true
         job = viewModelScope.launch {
             try {

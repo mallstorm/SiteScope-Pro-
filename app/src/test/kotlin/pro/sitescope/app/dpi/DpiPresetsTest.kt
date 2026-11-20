@@ -35,4 +35,19 @@ class DpiPresetsTest {
         assertTrue(c.watchdog)
         assertEquals("", c.searchSites)
     }
+
+    @Test fun officialStrategiesAreCleanAndFirst() {
+        assertTrue(DpiOfficialList.lines.size >= 60)
+        for (l in DpiOfficialList.lines) {
+            assertTrue("запрещённый ключ в: $l", DpiArgs.sanitize(DpiArgs.split(DpiArgs.expand(l, "google.com", emptyMap()))).removed.isEmpty())
+            assertNull(DpiArgs.looksValid(l))
+        }
+        assertEquals(DpiOfficialList.lines.first(), DpiStrategies.quick().first())
+        assertTrue(DpiStrategies.quick().size >= DpiOfficialList.lines.size)
+    }
+
+    @Test fun bogusDnsAddresses() {
+        assertTrue(DpiDns.bogus("127.0.0.1")); assertTrue(DpiDns.bogus("10.1.2.3")); assertTrue(DpiDns.bogus("0.0.0.0"))
+        assertTrue(!DpiDns.bogus("142.250.1.1")); assertTrue(!DpiDns.bogus(null))
+    }
 }

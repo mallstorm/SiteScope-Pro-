@@ -144,7 +144,7 @@ private fun RunTab(vm: DpiViewModel, state: DpiState, onToggle: () -> Unit) {
             Text("Не знаете, что выбрать? Отметьте сайты и нажмите «Подобрать и включить»: приложение проверит, что у вас реально заблокировано, найдёт рабочую стратегию и включит обход.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, bottom = 6.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                DpiSites.groups.forEach { g -> MiniChip(g.title, g.id in vm.groups) { if (!vm.searching) vm.groups = if (g.id in vm.groups) vm.groups - g.id else vm.groups + g.id } }
+                DpiSites.groups.forEach { g -> MiniChip(g.title, g.id in vm.groups) { vm.toggleGroup(g.id) } }
             }
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (vm.searching) Button({ vm.stopSearch() }, Modifier.weight(1f).height(40.dp)) { Text("Остановить подбор") }
@@ -270,7 +270,7 @@ private fun SearchTab(vm: DpiViewModel) {
                 Text("Сначала проверяются сайты без обхода — так видно, что реально заблокировано. Затем все стратегии прогоняются параллельно, лучшие проверяются полностью. VPN на время подбора должен быть выключен.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, bottom = 8.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DpiSites.groups.forEach { g -> FilterChip(g.id in vm.groups, { vm.groups = if (g.id in vm.groups) vm.groups - g.id else vm.groups + g.id }, label = { Text(g.title) }, enabled = !vm.searching) }
+                    DpiSites.groups.forEach { g -> FilterChip(g.id in vm.groups, { vm.toggleGroup(g.id) }, label = { Text(g.title) }, enabled = !vm.searching) }
                 }
                 OutlinedTextField(vm.custom, { vm.custom = it }, Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("Свои сайты (через пробел)") }, enabled = !vm.searching, minLines = 1, maxLines = 3)
                 Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -311,7 +311,7 @@ private fun SearchTab(vm: DpiViewModel) {
                     if (!s.controlOk) Pill("ломает сайты", tones.bad, tones.badSoft, Modifier.padding(start = 8.dp))
                 }
                 Text(s.line, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(vertical = 6.dp), maxLines = 4, overflow = TextOverflow.Ellipsis)
-                if (s.failed.isNotEmpty()) Text("Не открылись: " + s.failed.take(4).joinToString(", ") + if (s.failed.size > 4) "…" else "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (s.failed.isNotEmpty()) Text("Не открылись:\n" + s.failed.take(4).joinToString("\n") + if (s.failed.size > 4) "\n…" else "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
                     Button({ vm.applyLine(s.line) }) { Text("Применить") }
                     OutlinedButton({ copyText(context, s.line) }) { Text("Копировать") }

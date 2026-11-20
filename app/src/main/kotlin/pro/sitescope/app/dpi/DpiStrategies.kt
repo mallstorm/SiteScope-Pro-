@@ -68,11 +68,11 @@ object DpiStrategies {
     )
 
     val all: List<String> by lazy {
-        (single() + tlsRecordPlus() + fake() + chains() + http() + auto()).distinct()
+        (DpiOfficialList.lines + fake() + tlsRecordPlus() + chains() + auto() + single() + http()).distinct()
     }
 
-    /** Первые [n] самых вероятных — «быстрый» подбор. */
-    fun quick(n: Int = 40): List<String> = all.take(n)
+    /** Быстрый подбор: официальный список ByeByeDPI (проверенные связки) + наши поддельные пакеты и цепочки. Одиночные -s/-d/-o идут в полный список. */
+    fun quick(n: Int = DpiOfficialList.lines.size + 40): List<String> = all.take(n)
 }
 
 /** Наборы сайтов для проверки. Контрольные нужны, чтобы отличить «обход работает» от «обход всё сломал». */
@@ -80,7 +80,7 @@ object DpiSites {
     class Group(val id: String, val title: String, val domains: List<String>)
 
     val groups = listOf(
-        Group("youtube", "YouTube", listOf("www.youtube.com", "youtu.be", "i.ytimg.com", "yt3.ggpht.com", "redirector.googlevideo.com")),
+        Group("youtube", "YouTube", listOf("www.youtube.com", "youtu.be", "i.ytimg.com", "yt3.ggpht.com", "youtubei.googleapis.com", "signaler-pa.youtube.com", "manifest.googlevideo.com", "redirector.googlevideo.com")),
         Group("discord", "Discord", listOf("discord.com", "gateway.discord.gg", "cdn.discordapp.com", "media.discordapp.net", "status.discord.com")),
         Group("telegram", "Telegram", listOf("telegram.org", "web.telegram.org", "t.me", "core.telegram.org", "api.telegram.org")),
         Group("social", "Соцсети", listOf("www.instagram.com", "www.facebook.com", "x.com", "www.linkedin.com", "www.reddit.com", "www.tiktok.com")),

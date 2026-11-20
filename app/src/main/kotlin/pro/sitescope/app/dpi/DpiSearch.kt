@@ -92,17 +92,25 @@ class DpiSearch(private val context: Context) {
         post { SearchProgress(running = true, phase = "Проверка без обхода", message = "Узнаю, какие сайты у вас действительно недоступны") }
         val timeoutMs = config.timeoutSec * 1000
         val engines = ConcurrentLinkedQueue<DpiEngine>()
+        var baseMsg = ""
         try {
             // 1. Базовая проверка: простой прокси без десинхронизации.
             val all = (config.sites + DpiSites.control).distinct()
-            val base = withContext(Dispatchers.IO) { withEngine(engines, emptyList()) { port -> checkAll(all, port, timeoutMs, 12) } }
+            val base = withContext(Dispatchers.IO) { withEngine(engines, emptyList()) { port -> checkAll(all, port, timeoutMs, 12, viaDoh = false) } }
             if (base == null) { post { SearchProgress(message = "Не удалось запустить byedpi.", finished = true) }; return@coroutineScope }
             val baseFailed = base.filter { !it.ok }.map { it.host }.toSet()
             val controlBroken = DpiSites.control.all { it in baseFailed }
             if (controlBroken) { post { SearchProgress(message = "Нет интернета: даже контрольные сайты не открылись.", finished = true) }; return@coroutineScope }
             val targets = DpiScoring.targetSites(config.sites, baseFailed)
             val blockedCount = config.sites.count { it in baseFailed }
-            post { it.copy(baselineBlocked = blockedCount, baselineTotal = config.sites.size) }
+            val why = base.filter { !it.ok && it.host in config.sites }.take(4).joinToString("\n") { it.host + " — " + it.reason }
+            // DNS провайдера: у недоступных сайтов сравниваем ответ системы и DoH.
+            val dnsBad = withContext(Dispatchers.IO) {
+                targets.filter { it in baseFailed }.take(6).map { h -> async { val s = DpiDns.system(h); val d = DpiDns.doh(h); h to ((s == null && d != null) || DpiDns.bogus(s)) } }.awaitAll().filter { it.second }.map { it.first }
+            }
+            val dnsNote = if (dnsBad.isEmpty()) "" else "\nDNS провайдера подменён: ${dnsBad.take(3).joinToString(", ")}. В VPN-режиме используется DNS 1.1.1.1; в режиме прокси включите «Частный DNS» (dns.google / one.one.one.one)."
+            baseMsg = "Без обхода не открылось:\n$why$dnsNote"
+            post { it.copy(baselineBlocked = blockedCount, baselineTotal = config.sites.size, message = baseMsg) }
             // Запоминаем заблокированные сайты: по ним наблюдатель потом проверяет, что обход всё ещё работает.
             if (blockedCount > 0) context.getSharedPreferences("dpi_bypass", Context.MODE_PRIVATE).edit().putString("searchSites", targets.joinToString(" ")).apply()
             if (blockedCount == 0) {
@@ -114,7 +122,7 @@ class DpiSearch(private val context: Context) {
             val quickSites = DpiScoring.sample(targets, 6) + DpiSites.control.take(1)
             val strategies = config.strategies
             val quick = ConcurrentLinkedQueue<StrategyScore>()
-            post { it.copy(phase = "Быстрый прогон", done = 0, total = strategies.size, message = "Стратегий: ${strategies.size}, параллельно: ${config.parallel}") }
+            post { it.copy(phase = "Быстрый прогон", done = 0, total = strategies.size, message = "Стратегий: ${strategies.size}, параллельно: ${config.parallel}\n$baseMsg") }
             val gate = Semaphore(config.parallel.coerceIn(1, 8))
             strategies.map { line ->
                 async(Dispatchers.IO) {
@@ -130,7 +138,7 @@ class DpiSearch(private val context: Context) {
 
             // 3. Полная проверка лучших на всех целевых сайтах.
             val finalists = DpiScoring.rank(quick.toList()).filter { it.ok > 0 && it.controlOk }.take(config.finalists)
-            post { it.copy(phase = "Полная проверка лучших", done = 0, total = finalists.size, message = "Проверяю ${targets.size} сайтов у каждой из ${finalists.size} стратегий") }
+            post { it.copy(phase = "Полная проверка лучших", done = 0, total = finalists.size, message = "Проверяю ${targets.size} сайтов у каждой из ${finalists.size} стратегий\n$baseMsg") }
             val fullResults = ConcurrentLinkedQueue<StrategyScore>()
             finalists.map { f ->
                 async(Dispatchers.IO) {
@@ -148,6 +156,7 @@ class DpiSearch(private val context: Context) {
             save(ranked)
             val best = ranked.firstOrNull { it.full }
             post { it.copy(running = false, finished = true, message = if (best == null) "Рабочих стратегий не найдено. Попробуйте полный список или другую сеть." else "Лучшая: ${best.ok} из ${best.total} сайтов") }
+            if (best == null) post { it.copy(message = it.message + "\n" + baseMsg) }
         } catch (e: CancellationException) {
             post { it.copy(running = false, finished = true, message = "Остановлено") }
             save(_results.value)
@@ -157,10 +166,10 @@ class DpiSearch(private val context: Context) {
         }
     }
 
-    private fun checkAll(hosts: List<String>, port: Int, timeoutMs: Int, concurrency: Int): List<DpiProbe.Result> {
+    private fun checkAll(hosts: List<String>, port: Int, timeoutMs: Int, concurrency: Int, viaDoh: Boolean = true): List<DpiProbe.Result> {
         val pool = java.util.concurrent.Executors.newFixedThreadPool(concurrency.coerceAtMost(hosts.size).coerceAtLeast(1))
         try {
-            val futures = hosts.map { h -> pool.submit<DpiProbe.Result> { DpiProbe.https(h, port, timeoutMs) } }
+            val futures = hosts.map { h -> pool.submit<DpiProbe.Result> { DpiProbe.https(h, port, timeoutMs, ip = if (viaDoh) DpiDns.doh(h) else null) } }
             return futures.map { it.get() }
         } finally { pool.shutdownNow() }
     }
@@ -174,7 +183,7 @@ class DpiSearch(private val context: Context) {
         val control = results.filter { it.host in DpiSites.control }
         val controlOk = control.isEmpty() || control.any { it.ok }
         val okMs = tested.filter { it.ok }.map { it.ms }
-        return StrategyScore(line, ok, tested.size, if (okMs.isEmpty()) 0 else okMs.average().toLong(), controlOk, full, tested.filter { !it.ok }.map { it.host })
+        return StrategyScore(line, ok, tested.size, if (okMs.isEmpty()) 0 else okMs.average().toLong(), controlOk, full, tested.filter { !it.ok }.map { it.host + " — " + it.reason })
     }
 
     private fun <T> withEngine(engines: ConcurrentLinkedQueue<DpiEngine>, extra: List<String>, block: (Int) -> T): T? {

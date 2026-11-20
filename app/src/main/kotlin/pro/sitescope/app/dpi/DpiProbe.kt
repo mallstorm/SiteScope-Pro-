@@ -10,12 +10,12 @@ import javax.net.ssl.SSLSocketFactory
 object DpiProbe {
     class Result(val host: String, val ok: Boolean, val ms: Long, val bytes: Int, val reason: String)
 
-    /** HTTPS: настоящий TLS с проверкой сертификата и имени, затем GET и чтение до [readLimit] байт — так видно и подмену, и обрыв потока. */
-    fun https(host: String, socksPort: Int, timeoutMs: Int, readLimit: Int = 64 * 1024): Result {
+    /** HTTPS: если задан [ip], прокси получает адрес (DNS провайдера не нужен), а в TLS уходит имя [host]. Настоящий TLS с проверкой сертификата и имени, затем GET и чтение до [readLimit] байт — так видно и подмену, и обрыв потока. */
+    fun https(host: String, socksPort: Int, timeoutMs: Int, readLimit: Int = 64 * 1024, ip: String? = null): Result {
         val t0 = System.currentTimeMillis()
         var raw: Socket? = null
         try {
-            val plain: Socket = Socks5.connect("127.0.0.1", socksPort, host, 443, timeoutMs)
+            val plain: Socket = Socks5.connect("127.0.0.1", socksPort, ip ?: host, 443, timeoutMs)
             raw = plain
             plain.soTimeout = timeoutMs
             val ssl = ((SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(plain, host, 443, true) as SSLSocket)
