@@ -76,6 +76,22 @@ fun SettingsScreen() {
                     FilterChip(selected = ThemePrefs.mode == i, onClick = { ThemePrefs.set(context, i) }, label = { Text(title) })
                 }
             }
+            // Во время перетаскивания масштаб не меняем (иначе ползунок «убегает» из-под пальца): применяем при отпускании.
+            var pending by remember { mutableFloatStateOf(UiPrefs.scale) }
+            LaunchedEffect(UiPrefs.scale) { pending = UiPrefs.scale }
+            Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Масштаб интерфейса", style = MaterialTheme.typography.titleSmall)
+                    Text("Размер элементов и отступов; текст не меняется. Меньше — плотнее, больше — крупнее.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(String.format(java.util.Locale.US, "%.2f", pending), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            AppSlider(value = pending, onValueChange = { pending = it }, onValueChangeFinished = { UiPrefs.set(context, pending) }, valueRange = UiPrefs.MIN..UiPrefs.MAX, steps = 5)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${String.format(java.util.Locale.US, "%.2f", UiPrefs.MIN)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                TextButton(onClick = { UiPrefs.set(context, UiPrefs.DEFAULT) }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(28.dp)) { Text("Сбросить (${String.format(java.util.Locale.US, "%.2f", UiPrefs.DEFAULT)})") }
+                Text(String.format(java.util.Locale.US, "%.2f", UiPrefs.MAX), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            }
         }
 
         SectionTitle("Проверка сети")
@@ -124,7 +140,7 @@ fun SettingsScreen() {
             scope.launch {
                 busy = true
                 val ok = withContext(Dispatchers.IO) { try { BackupManager.restore(context, backup); true } catch (e: Exception) { false } }
-                busy = false; ThemePrefs.load(context); refresh()
+                busy = false; ThemePrefs.load(context); UiPrefs.load(context); refresh()
                 toast(context, if (ok) "Данные восстановлены" else "Не удалось восстановить данные")
             }
         }

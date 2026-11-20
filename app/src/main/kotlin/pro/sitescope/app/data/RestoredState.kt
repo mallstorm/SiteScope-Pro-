@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit
 object RestoredState {
     @JvmStatic fun reload(context: Context) {
         ThemePrefs.load(context)
+        pro.sitescope.app.ui.UiPrefs.load(context)
         TvViewModel.externalChange++
         try {
             SiteMonitor.reschedule(context)

@@ -99,15 +99,35 @@ fun AppTheme(dark: Boolean = when (ThemePrefs.mode) { 1 -> false; 2 -> true; els
         // Шапка тёмная в обеих темах, поэтому значки строки состояния всегда светлые.
         if (window != null) androidx.core.view.WindowCompat.getInsetsController(window, view).apply { isAppearanceLightStatusBars = false; isAppearanceLightNavigationBars = !dark }
     }
-    // Плотность как на макетах: все dp уменьшены на 14 %, а текст (sp) оставлен прежним, чтобы он не падал ниже 11 sp.
+    // Плотность задаётся в настройках (по умолчанию 0,92): все dp масштабируются, а текст (sp) остаётся прежним, чтобы он не падал ниже 11 sp.
     val base = androidx.compose.ui.platform.LocalDensity.current
-    val dense = androidx.compose.ui.unit.Density(base.density * UiScale, base.fontScale / UiScale)
+    val dense = androidx.compose.ui.unit.Density(base.density * UiPrefs.scale, base.fontScale / UiPrefs.scale)
     CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides dense, LocalTones provides if (dark) DarkTones else LightTones) {
         MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, shapes = AppShapes, typography = AppTypography, content = content)
     }
 }
 
-/** Масштаб размеров интерфейса относительно стандартного dp. */
-const val UiScale = 0.86f
+/** Масштаб размеров интерфейса относительно стандартного dp: ползунок в настройках, шаг 0,04. */
+object UiPrefs {
+    const val MIN = 0.88f
+    const val MAX = 1.12f
+    const val STEP = 0.04f
+    const val DEFAULT = 0.92f
+    private const val KEY = "ui_scale"
+
+    var scale by androidx.compose.runtime.mutableFloatStateOf(DEFAULT)
+        private set
+
+    private fun snap(v: Float): Float = (Math.round(v.coerceIn(MIN, MAX) / STEP) * STEP).let { Math.round(it * 100f) / 100f }.coerceIn(MIN, MAX)
+
+    fun load(context: android.content.Context) {
+        scale = snap(context.getSharedPreferences(pro.sitescope.app.SettingsStore.PREFS, android.content.Context.MODE_PRIVATE).getFloat(KEY, DEFAULT))
+    }
+
+    fun set(context: android.content.Context, value: Float) {
+        scale = snap(value)
+        context.getSharedPreferences(pro.sitescope.app.SettingsStore.PREFS, android.content.Context.MODE_PRIVATE).edit().putFloat(KEY, scale).apply()
+    }
+}
 
 val tones: Tones @Composable get() = LocalTones.current

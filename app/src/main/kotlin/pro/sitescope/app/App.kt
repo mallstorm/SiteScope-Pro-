@@ -18,6 +18,7 @@ class App : Application() {
         pro.sitescope.app.vpn.CrashLog.install(this)
         registerActivityLifecycleCallbacks(LegacyInsets)
         pro.sitescope.app.ui.ThemePrefs.load(this)
+        pro.sitescope.app.ui.UiPrefs.load(this)
         val manager = getSystemService(NotificationManager::class.java)
         manager?.createNotificationChannel(NotificationChannel(CHANNEL_ALERTS, "Оповещения SiteScope", NotificationManager.IMPORTANCE_DEFAULT).apply {
             description = "Результаты проверок сайтов и каналов"
