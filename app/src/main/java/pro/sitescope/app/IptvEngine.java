@@ -311,10 +311,10 @@ public final class IptvEngine {
                     portIndex = (portIndex + 1) % ports.size();
                     finished.submit(() -> {
                         gate.awaitTurn(control);
-                        // Порт закрыт — не тратим время на шесть HTTP/HTTPS-запросов (главный источник простоя при внешнем поиске).
-                        if (!tcpOpen(target, port, timeoutMs + 300)) return new DiscoveryResult(target, port, null);
+                        CONNECT_FAILED.set(false);
                         Models.UdpxyEndpoint endpoint = probeUdpxy(target, port, timeoutMs, listener);
-                        if (endpoint == null)
+                        // Порт закрыт или молчит на подключении — остальные пути и HTTPS проверять незачем (главный источник простоя при внешнем поиске).
+                        if (endpoint == null && !CONNECT_FAILED.get())
                             endpoint = probeUdpxyScheme(target, port, timeoutMs, listener, "https");
                         return new DiscoveryResult(target, port, endpoint);
                     });
@@ -336,12 +336,7 @@ public final class IptvEngine {
         return results;
     }
 
-    private static boolean tcpOpen(String host, int port, int timeoutMs) {
-        try (java.net.Socket s = new java.net.Socket()) {
-            s.connect(new java.net.InetSocketAddress(host, port), timeoutMs);
-            return true;
-        } catch (Exception e) { return false; }
-    }
+    private static final ThreadLocal<Boolean> CONNECT_FAILED = ThreadLocal.withInitial(() -> false);
 
     private static final class DiscoveryResult {
         final String host; final int port; final Models.UdpxyEndpoint endpoint;
@@ -389,6 +384,10 @@ public final class IptvEngine {
                     endpoint.confirmed = true;
                     return endpoint;
                 }
+            } catch (java.net.ConnectException e) { CONNECT_FAILED.set(true); return null;
+            } catch (java.net.SocketTimeoutException e) {
+                String m = e.getMessage();
+                if (m != null && m.toLowerCase(Locale.US).contains("connect")) { CONNECT_FAILED.set(true); return null; }
             } catch (Exception ignored) { }
             finally { if (connection != null) connection.disconnect(); }
         }
