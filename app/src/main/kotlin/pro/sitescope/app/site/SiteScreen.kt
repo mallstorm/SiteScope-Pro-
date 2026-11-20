@@ -107,7 +107,7 @@ private fun ColumnScope.ReportView(vm: SiteViewModel, r: Report, state: AppState
     val context = LocalContext.current
     val saveHtml = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri ->
         if (uri != null) try {
-            val bytes = SiteReportBuilder.toHtml(r).toByteArray(); context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }; pro.sitescope.app.data.ReportLog.add(context, "sitescope-${r.host}.html", "SEO-аудит (${r.host})", "HTML", bytes.size.toLong())
+            val bytes = SiteReportBuilder.toHtml(r).toByteArray(); context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }; pro.sitescope.app.data.ReportLog.add(context, "sitescope-${r.host}.html", "SEO-аудит (${r.host})", "HTML", bytes.size.toLong(), keepUri(context, uri))
             toast(context, "Отчёт сохранён")
         } catch (e: Exception) { toast(context, "Не удалось сохранить") }
     }
@@ -115,22 +115,22 @@ private fun ColumnScope.ReportView(vm: SiteViewModel, r: Report, state: AppState
         if (uri != null) try {
             val buffer = java.io.ByteArrayOutputStream(); SitePdf.write(r, buffer)
             context.contentResolver.openOutputStream(uri)?.use { it.write(buffer.toByteArray()) }
-            pro.sitescope.app.data.ReportLog.add(context, "sitescope-${r.host}.pdf", "SEO-аудит (${r.host})", "PDF", buffer.size().toLong())
+            pro.sitescope.app.data.ReportLog.add(context, "sitescope-${r.host}.pdf", "SEO-аудит (${r.host})", "PDF", buffer.size().toLong(), keepUri(context, uri))
             toast(context, "PDF сохранён")
         } catch (e: Exception) { toast(context, "Не удалось сохранить") }
     }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     var detail by remember(r.target, r.timestamp) { mutableStateOf(false) }
+    val shown = r.sections.filter { it.checks.isNotEmpty() }
+    var tab by remember(r.target, r.timestamp) { mutableIntStateOf(0) }
     BackHandler(enabled = detail) { detail = false }
     if (!detail) {
-        SiteDashboard(vm, r, state, onDetails = { detail = true }, onSavePdf = { savePdf.launch("sitescope-${r.host}.pdf") }, onSaveHtml = { saveHtml.launch("sitescope-${r.host}.html") })
+        SiteDashboard(vm, r, state, onDetails = { key -> tab = if (key == null) 0 else (shown.indexOfFirst { it.key == key } + 1).coerceAtLeast(0); detail = true }, onSavePdf = { savePdf.launch("sitescope-${r.host}.pdf") }, onSaveHtml = { saveHtml.launch("sitescope-${r.host}.html") })
         return
     }
     LaunchedEffect(r.target) { vm.loadWatchChanges(r.target) }
-    val shown = r.sections.filter { it.checks.isNotEmpty() }
     val titles = listOf("Итог") + shown.map { it.title } + "Мониторинг" + "Действия"
     val icons = listOf<ImageVector>(Icons.Rounded.Dashboard) + shown.map { sectionIcon(it.key) } + Icons.Rounded.NotificationsActive + Icons.Rounded.Bolt
-    var tab by remember(r.target, r.timestamp) { mutableIntStateOf(0) }
 
     AppHeader(r.host.ifEmpty { "Отчёт" }, "Оценка ${r.grade} · ${whenText(r.timestamp)}", onBack = { detail = false }, actions = {
         IconButton(onClick = { vm.run(r.target) }) { Icon(Icons.Rounded.Refresh, "Проверить снова", tint = Color.White) }
@@ -312,4 +312,11 @@ private fun CheckRow(c: Check) {
             TechDetails(c.tech, Modifier.padding(top = 2.dp))
         }
     }
+}
+
+
+/** Запоминаем доступ к сохранённому файлу, чтобы позже открыть его из «Данных → Отчёты». */
+private fun keepUri(context: android.content.Context, uri: Uri): String {
+    try { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (e: Exception) { }
+    return uri.toString()
 }

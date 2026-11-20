@@ -5,6 +5,8 @@ package pro.sitescope.app.net
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,17 +33,24 @@ import java.util.Locale
 
 private fun cardTime(time: Long) = if (time > 0) SimpleDateFormat("d MMM yyyy, HH:mm", Locale.forLanguageTag("ru")).format(Date(time)) else "Неизвестно"
 
-private fun typeIcon(type: String, text: String): androidx.compose.ui.graphics.vector.ImageVector {
+private fun categoryOf(type: String, text: String): String {
     val t = (type + " " + text).lowercase()
     return when {
-        "роутер" in t || "router" in t || "шлюз" in t || "gateway" in t || "igd" in t -> Icons.Rounded.Router
-        "камер" in t || "camera" in t || "onvif" in t || "rtsp" in t -> Icons.Rounded.Videocam
-        "nas" in t || "хранил" in t || "storage" in t -> Icons.Rounded.Storage
-        "принтер" in t || "printer" in t || "ipp" in t -> Icons.Rounded.Print
-        "tv" in t || "телевиз" in t || "dlna" in t -> Icons.Rounded.Tv
-        "пк" in t || "компьютер" in t || "windows" in t || "rdp" in t || "smb" in t -> Icons.Rounded.Computer
-        else -> Icons.Rounded.Devices
+        "роутер" in t || "router" in t || "шлюз" in t || "gateway" in t || "igd" in t -> "router"
+        "камер" in t || "camera" in t || "onvif" in t || "rtsp" in t -> "camera"
+        "nas" in t || "хранил" in t || "storage" in t -> "nas"
+        "принтер" in t || "printer" in t || "ipp" in t -> "printer"
+        "tv" in t || "телевиз" in t || "dlna" in t -> "tv"
+        "пк" in t || "компьютер" in t || "windows" in t || "rdp" in t || "smb" in t -> "pc"
+        else -> "other"
     }
+}
+
+private val CATEGORIES = listOf("router" to "Роутеры", "camera" to "Камеры", "nas" to "Хранилища", "printer" to "Принтеры", "tv" to "ТВ", "pc" to "Компьютеры", "other" to "Прочее")
+
+private fun typeIcon(type: String, text: String): androidx.compose.ui.graphics.vector.ImageVector = when (categoryOf(type, text)) {
+    "router" -> Icons.Rounded.Router; "camera" -> Icons.Rounded.Videocam; "nas" -> Icons.Rounded.Storage
+    "printer" -> Icons.Rounded.Print; "tv" -> Icons.Rounded.Tv; "pc" -> Icons.Rounded.Computer; else -> Icons.Rounded.Devices
 }
 
 @Composable
@@ -56,6 +65,17 @@ internal fun DevicesTab(vm: NetViewModel, onTab: (Int) -> Unit = {}) {
         lastScan = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { try { pro.sitescope.app.DataStore(context.applicationContext).scans().firstOrNull() } catch (e: Exception) { null } }
     }
     val liveIps = vm.live.map { it.ip }.toSet()
+    var showFilters by remember { mutableStateOf(false) }
+    var typeFilter by remember { mutableStateOf("") }
+    var onlyOnline by remember { mutableStateOf(false) }
+    fun typeOf(card: DeviceRegistryStore.Card): String {
+        val o = card.observations.firstOrNull()
+        val ident = try { o?.identity() } catch (e: Exception) { null }
+        return categoryOf(ident?.deviceType.orEmpty().ifEmpty { try { o?.data?.optString("deviceType").orEmpty() } catch (e: Exception) { "" } }, card.title + " " + card.protocols)
+    }
+    fun isOnline(card: DeviceRegistryStore.Card) = card.addresses.split(',').any { it.trim() in liveIps }
+    val filtered = vm.cards.filter { (typeFilter.isEmpty() || typeOf(it) == typeFilter) && (!onlyOnline || isOnline(it)) }
+    val present = vm.cards.map { typeOf(it) }.toSet()
     val openServices = lastScan?.openResults?.size ?: 0
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         SmartSearchBar(vm.cardQuery, vm::searchCards, "Найти устройство, IP, MAC или сервис", onGo = { }, scan = true)
@@ -72,18 +92,40 @@ internal fun DevicesTab(vm: NetViewModel, onTab: (Int) -> Unit = {}) {
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Обнаруженные устройства (${vm.cardCount})", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    IconButton(onClick = { history = true }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.History, "История изменений", tint = MaterialTheme.colorScheme.primary) }
-                    IconButton(onClick = { wol = true }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.PowerSettingsNew, "Включить по сети", tint = MaterialTheme.colorScheme.primary) }
+                    TextButton(onClick = { showFilters = !showFilters }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                        Icon(Icons.Rounded.FilterList, null, Modifier.size(18.dp)); Spacer(Modifier.width(2.dp)); Text(if (typeFilter.isNotEmpty() || onlyOnline) "Фильтры •" else "Фильтры", maxLines = 1)
+                    }
+                    var menu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { menu = true }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.MoreVert, "Ещё", tint = MaterialTheme.colorScheme.primary) }
+                        DropdownMenu(menu, { menu = false }) {
+                            DropdownMenuItem(text = { Text("Поделиться списком") }, leadingIcon = { Icon(Icons.Rounded.Share, null) }, onClick = {
+                                menu = false
+                                val text = vm.cards.joinToString("\n") { c -> c.title + " — " + c.addresses + " — " + c.protocols }
+                                shareText(context, text.ifEmpty { "Устройств нет" }, "Устройства сети")
+                            })
+                            DropdownMenuItem(text = { Text("История изменений") }, leadingIcon = { Icon(Icons.Rounded.History, null) }, onClick = { menu = false; history = true })
+                            DropdownMenuItem(text = { Text("Включить по сети (WoL)") }, leadingIcon = { Icon(Icons.Rounded.PowerSettingsNew, null) }, onClick = { menu = false; wol = true })
+                        }
+                    }
                     Spacer(Modifier.width(4.dp))
                     if (vm.discovering) OutlinedButton(onClick = vm::stopDiscovery, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("Стоп") }
-                    else Button(onClick = vm::startDiscovery, contentPadding = PaddingValues(horizontal = 12.dp)) { Icon(Icons.Rounded.Radar, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Найти") }
+                    else FilledTonalIconButton(onClick = vm::startDiscovery, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.Radar, "Найти устройства", Modifier.size(20.dp)) }
                 }
             }
+            if (showFilters) item {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    MiniChip("Все", typeFilter.isEmpty() && !onlyOnline) { typeFilter = ""; onlyOnline = false }
+                    MiniChip("Онлайн", onlyOnline, dot = t.good) { onlyOnline = !onlyOnline }
+                    CATEGORIES.filter { it.first in present }.forEach { (id, title) -> MiniChip(title, typeFilter == id) { typeFilter = if (typeFilter == id) "" else id } }
+                }
+            }
+            if (filtered.isEmpty() && vm.cards.isNotEmpty()) item { Text("Под выбранные фильтры ничего не подходит.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             if (vm.cards.isEmpty() && !vm.cardsLoading) item {
                 EmptyState(Icons.Rounded.Devices, if (vm.cardCount == 0) "Пока пусто" else "Ничего не найдено",
                     "Нажмите «Найти», проверьте порты или сохраните подключение. Карточки сохраняются между запусками.")
             }
-            items(vm.cards, key = { it.id }) { card ->
+            items(filtered, key = { it.id }) { card ->
                 val obs = card.observations.firstOrNull()
                 val identity = try { obs?.identity() } catch (e: Exception) { null }
                 val vendor = identity?.manufacturer.orEmpty()

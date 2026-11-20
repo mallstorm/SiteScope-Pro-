@@ -74,6 +74,7 @@ fun DataScreen(startTab: Int = 0) {
 fun DataHub(state: AppState, startTab: Int = 0) {
     var tab by remember { mutableIntStateOf(startTab.coerceIn(0, 2)) }
     var fullProjects by remember { mutableStateOf(false) }
+    var reportMode by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         AppHeader("Данные", "Проекты, история и отчёты", logo = true,
             actions = { HeaderMenu(listOf("Настройки и резервная копия" to { state.openRoute("settings") })) }
@@ -81,9 +82,15 @@ fun DataHub(state: AppState, startTab: Int = 0) {
         SegmentedTabs(listOf("Проекты", "История", "Отчёты"), tab, { tab = it; fullProjects = false }, icons = listOf(Icons.Rounded.FolderOpen, Icons.Rounded.History, Icons.Rounded.Description), modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (tab) {
-                0 -> if (fullProjects) { BackHandler { fullProjects = false }; ProjectsTab() } else DataOverview(onTab = { tab = it }, onAllProjects = { fullProjects = true })
+                0 -> if (fullProjects) { BackHandler { fullProjects = false }; ProjectsTab() } else DataOverview(onTab = { if (it == 3) { tab = 2; reportMode = 1 } else { tab = it; if (it == 2) reportMode = 0 } }, onAllProjects = { fullProjects = true })
                 1 -> HistoryTab()
-                else -> ReportsScreen()
+                else -> Column(Modifier.fillMaxSize()) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        MiniChip("Сохранённые", reportMode == 0) { reportMode = 0 }
+                        MiniChip("Новый отчёт", reportMode == 1) { reportMode = 1 }
+                    }
+                    Box(Modifier.weight(1f).fillMaxWidth()) { if (reportMode == 0) SavedReports(onNew = { reportMode = 1 }) else ReportsScreen() }
+                }
             }
         }
     }

@@ -30,6 +30,7 @@ import pro.sitescope.app.SearchMetricsEngine
 import pro.sitescope.app.ui.*
 import java.text.SimpleDateFormat
 import java.util.Date
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
@@ -39,7 +40,7 @@ import java.util.Locale
 @Composable
 fun ColumnScope.SiteDashboard(
     vm: SiteViewModel, r: Report, state: AppState,
-    onDetails: () -> Unit, onSavePdf: () -> Unit, onSaveHtml: () -> Unit
+    onDetails: (String?) -> Unit, onSavePdf: () -> Unit, onSaveHtml: () -> Unit
 ) {
     val context = LocalContext.current
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -65,8 +66,9 @@ fun ColumnScope.SiteDashboard(
         if (vm.running) LoadingCard(vm.stage, vm.stageDetail, onCancel = { vm.cancel() })
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 10.dp)) {
             item { Summary(r, vm.psi, vm.psiLoading) }
+            item { Trend(vm, r) }
             item {
-                CompactTitle("Что исправить в первую очередь", action = "Все рекомендации ›") { onDetails() }
+                CompactTitle("Что исправить в первую очередь", action = "Все рекомендации ›") { onDetails(null) }
                 Tasks(r, onDetails)
             }
             item {
@@ -74,13 +76,13 @@ fun ColumnScope.SiteDashboard(
                 Vitals(vm.psi, vm.psiLoading) { vm.loadSpeed(r, force = true) }
             }
             item {
-                CompactTitle("Технологии сайта", action = "Подробнее ›") { onDetails() }
+                CompactTitle("Технологии сайта", action = "Подробнее ›") { onDetails("tech") }
                 Tech(r.info)
             }
             item { Monitoring(vm, r) { if (Build.VERSION.SDK_INT >= 33) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS) } }
             item {
                 CompactTitle("Последний отчёт", action = "Все отчёты ›") { state.openRoute("data", 2) }
-                LastReport(r, onSavePdf, onSaveHtml, onDetails)
+                LastReport(r, onSavePdf, onSaveHtml) { onDetails(null) }
             }
         }
     }
@@ -143,9 +145,9 @@ private fun Fact(icon: ImageVector, label: String, value: String, modifier: Modi
 }
 
 @Composable
-private fun Tasks(r: Report, onDetails: () -> Unit) {
+private fun Tasks(r: Report, onDetails: (String?) -> Unit) {
     val tasks = r.tasks.take(4)
-    SoftCard(padding = 4.dp, onClick = onDetails) {
+    SoftCard(padding = 4.dp) {
         if (tasks.isEmpty()) {
             Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Verified, null, tint = tones.good); Spacer(Modifier.width(10.dp))
@@ -157,7 +159,7 @@ private fun Tasks(r: Report, onDetails: () -> Unit) {
             val important = bad || section.key in setOf("availability", "security", "speed", "links")
             val c = if (bad) tones.bad else if (important) tones.warn else tones.info
             val soft = if (bad) tones.badSoft else if (important) tones.warnSoft else tones.infoSoft
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().clickable { onDetails(section.key) }.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(24.dp).clip(RoundedCornerShape(8.dp)).background(soft), contentAlignment = Alignment.Center) { Text("${i + 1}", color = c, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge) }
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
@@ -279,4 +281,39 @@ private fun LastReport(r: Report, onPdf: () -> Unit, onHtml: () -> Unit, onOpen:
 private fun plural(n: Int, one: String, few: String, many: String): String {
     val m100 = n % 100; val m10 = n % 10
     return if (m100 in 11..14) many else when (m10) { 1 -> one; in 2..4 -> few; else -> many }
+}
+
+
+/** Динамика оценки по прошлым проверкам этого сайта (из журнала). */
+@Composable
+private fun Trend(vm: SiteViewModel, r: Report) {
+    val context = LocalContext.current
+    val points by produceState(listOf<Int>(), r.host, r.timestamp) {
+        value = withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try { pro.sitescope.app.DataStore(context.applicationContext).audits().filter { it.host == r.host && it.error.isEmpty() }.sortedBy { it.timestamp }.takeLast(12).map { it.score } } catch (e: Exception) { emptyList() }
+        }
+    }
+    if (points.size < 2) return
+    val delta = points.last() - points[points.size - 2]
+    SoftCard(padding = 10.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Динамика оценки", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            Pill(if (delta > 0) "▲ +$delta" else if (delta < 0) "▼ $delta" else "Без изменений", if (delta >= 0) tones.good else tones.bad, if (delta >= 0) tones.goodSoft else tones.badSoft)
+        }
+        val line = MaterialTheme.colorScheme.primary
+        val grid = MaterialTheme.colorScheme.outlineVariant
+        androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(56.dp).padding(top = 6.dp)) {
+            val w = size.width; val h = size.height
+            drawLine(grid, androidx.compose.ui.geometry.Offset(0f, h), androidx.compose.ui.geometry.Offset(w, h), 1f)
+            val step = w / (points.size - 1)
+            val path = androidx.compose.ui.graphics.Path()
+            points.forEachIndexed { i, p ->
+                val x = i * step; val y = h - h * p.coerceIn(0, 100) / 100f
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            drawPath(path, line, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+            points.forEachIndexed { i, p -> drawCircle(line, 5f, androidx.compose.ui.geometry.Offset(i * step, h - h * p.coerceIn(0, 100) / 100f)) }
+        }
+        Text("Проверок: ${points.size} · от ${points.first()} до ${points.last()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }

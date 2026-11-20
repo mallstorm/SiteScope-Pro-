@@ -4,7 +4,9 @@ package pro.sitescope.app.data
 
 import android.content.Context
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -119,7 +121,7 @@ internal fun DataOverview(onTab: (Int) -> Unit, onAllProjects: () -> Unit) {
                 reports.take(3).forEachIndexed { i, r ->
                     val fmt = r.format.uppercase()
                     val (c, soft) = when (fmt) { "PDF" -> tones.bad to tones.badSoft; "CSV" -> tones.good to tones.goodSoft; else -> tones.info to tones.infoSoft }
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().clickableRow { openReport(context, r) }.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconBadge(when (fmt) { "PDF" -> Icons.Rounded.PictureAsPdf; "CSV" -> Icons.Rounded.TableChart; else -> Icons.Rounded.Code }, c, soft, 36.dp)
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
@@ -128,6 +130,7 @@ internal fun DataOverview(onTab: (Int) -> Unit, onAllProjects: () -> Unit) {
                         }
                         Pill(fmt, c, soft)
                         Text(sizeText(r.size), Modifier.padding(start = 6.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                        Icon(if (r.uri.isNotEmpty()) Icons.Rounded.OpenInNew else Icons.Rounded.Description, "Открыть", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp).size(20.dp))
                     }
                     if (i < minOf(reports.size, 3) - 1) HorizontalDivider(Modifier.padding(horizontal = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 }
@@ -137,7 +140,7 @@ internal fun DataOverview(onTab: (Int) -> Unit, onAllProjects: () -> Unit) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button({ adding = true }, Modifier.weight(1f).height(44.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Новый проект", maxLines = 1) }
                 OutlinedButton({ confirmClear = true }, Modifier.weight(1f).height(44.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Очистить историю", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
-                OutlinedButton({ onTab(2) }, Modifier.weight(1f).height(44.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.Description, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Сформировать отчёт", maxLines = 2, style = MaterialTheme.typography.labelLarge) }
+                OutlinedButton({ onTab(3) }, Modifier.weight(1f).height(44.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.Description, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Сформировать отчёт", maxLines = 2, style = MaterialTheme.typography.labelLarge) }
             }
         }
     }
@@ -157,3 +160,56 @@ internal fun DataOverview(onTab: (Int) -> Unit, onAllProjects: () -> Unit) {
 }
 
 private fun Modifier.clickableRow(onClick: () -> Unit): Modifier = this.then(Modifier.clickable(onClick = onClick))
+
+internal fun openReport(context: Context, r: ReportLog.Entry) {
+    if (r.uri.isEmpty()) { toast(context, "Файл сохранён через общий экспорт — найдите его в выбранной папке"); return }
+    val mime = when (r.format.uppercase()) { "PDF" -> "application/pdf"; "HTML" -> "text/html"; "CSV" -> "text/csv"; "JSON" -> "application/json"; else -> "*/*" }
+    try {
+        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW).setDataAndType(android.net.Uri.parse(r.uri), mime).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (e: Exception) { toast(context, "Не удалось открыть файл — возможно, он перемещён или удалён") }
+}
+
+
+/** Все сохранённые отчёты: открыть, поделиться ссылкой на файл, убрать запись из журнала. */
+@Composable
+internal fun SavedReports(onNew: () -> Unit) {
+    val context = LocalContext.current
+    var version by remember { mutableIntStateOf(0) }
+    val list = remember(version) { ReportLog.list(context) }
+    var filter by remember { mutableStateOf("ALL") }
+    val shown = list.filter { filter == "ALL" || it.format.uppercase() == filter }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                listOf("ALL" to "Все", "PDF" to "PDF", "HTML" to "HTML", "CSV" to "CSV", "JSON" to "JSON").forEach { (id, title) -> MiniChip(title, filter == id) { filter = id } }
+            }
+        }
+        if (shown.isEmpty()) item {
+            EmptyState(Icons.Rounded.Description, "Сохранённых отчётов нет", "Выгрузите PDF или HTML после проверки сайта либо соберите сводный отчёт по журналу приложения.") {
+                Button(onClick = onNew) { Text("Сформировать отчёт") }
+            }
+        }
+        items(shown.size) { i ->
+            val r = shown[i]
+            val fmt = r.format.uppercase()
+            val (c, soft) = when (fmt) { "PDF" -> tones.bad to tones.badSoft; "CSV" -> tones.good to tones.goodSoft; else -> tones.info to tones.infoSoft }
+            SoftCard(padding = 8.dp, onClick = { openReport(context, r) }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconBadge(when (fmt) { "PDF" -> Icons.Rounded.PictureAsPdf; "CSV" -> Icons.Rounded.TableChart; else -> Icons.Rounded.Code }, c, soft, 40.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(r.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(whenText(r.time) + " • " + r.source, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 3.dp)) { Pill(fmt, c, soft); Text(sizeText(r.size), style = MaterialTheme.typography.labelMedium) }
+                    }
+                    if (r.uri.isNotEmpty()) IconButton(onClick = {
+                        try { context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("*/*").putExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri.parse(r.uri)).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION), r.name)) }
+                        catch (e: Exception) { toast(context, "Не удалось поделиться") }
+                    }) { Icon(Icons.Rounded.Share, "Поделиться") }
+                    IconButton(onClick = { ReportLog.remove(context, r.time); version++ }) { Icon(Icons.Rounded.DeleteOutline, "Убрать из списка", tint = tones.bad) }
+                }
+            }
+        }
+        if (list.isNotEmpty()) item { Text("Удаление убирает запись из списка; сам файл остаётся в папке, куда вы его сохранили.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}

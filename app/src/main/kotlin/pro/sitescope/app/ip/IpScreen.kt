@@ -742,6 +742,13 @@ private fun IpDashboard(vm: IpViewModel, info: IpInfo, state: AppState) {
             OutlinedButton(onClick = { copyText(context, summaryText(info, vm), "Результат скопирован") }, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.ContentCopy, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Копировать", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
             OutlinedButton(onClick = { shareText(context, summaryText(info, vm), info.ip) }, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Поделиться", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
         }
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                try { pro.sitescope.app.DataStore(context.applicationContext).upsertProject("IP", info.ip, info.ip, -1, listOf(info.holder, info.place).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { "IP-адрес" }); toast(context, "Добавлено в «Данные → Проекты»") }
+                catch (e: Exception) { toast(context, "Не удалось сохранить") }
+            }, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.BookmarkAdd, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("В проекты", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
+            OutlinedButton(onClick = { open(context, ToolActivity::class.java) { putExtra("screen", "network"); putExtra("tab", 1); putExtra("targets", info.ip) } }, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.NetworkCheck, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Сканер портов", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
+        }
     }
     RecentQueries(vm)
 }
