@@ -105,16 +105,16 @@ fun AppHeader(
         Column(Modifier.statusBarsPadding().padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (back != null) {
-                    IconButton(onClick = back, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.ArrowBack, "Назад", tint = Color.White) }
+                    IconButton(onClick = back, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.ArrowBack, "Назад", tint = LocalTones.current.onHeader) }
                 } else if (logo) {
                     Icon(Icons.Rounded.Layers, null, tint = t.aqua, modifier = Modifier.size(26.dp))
                     Spacer(Modifier.width(8.dp))
                 }
                 Column(Modifier.weight(1f).padding(vertical = 2.dp)) {
-                    Text(title, color = Color.White, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (subtitle != null) Text(subtitle, color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(title, color = LocalTones.current.onHeader, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (subtitle != null) Text(subtitle, color = LocalTones.current.onHeaderDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                CompositionLocalProvider(LocalContentColor provides Color.White) { actions() }
+                CompositionLocalProvider(LocalContentColor provides LocalTones.current.onHeader) { actions() }
             }
             if (content != null) { Spacer(Modifier.height(4.dp)); Column(Modifier.padding(end = 10.dp), content = content) }
         }
@@ -126,7 +126,7 @@ fun AppHeader(
 fun HeaderMenu(items: List<Pair<String, () -> Unit>>) {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { open = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.MoreVert, "Меню", tint = Color.White) }
+        IconButton(onClick = { open = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.MoreVert, "Меню", tint = LocalTones.current.onHeader) }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             for ((label, action) in items) DropdownMenuItem(text = { Text(label) }, onClick = { open = false; action() })
         }
@@ -137,7 +137,7 @@ fun HeaderMenu(items: List<Pair<String, () -> Unit>>) {
 @Composable
 fun HeaderPill(text: String, icon: ImageVector, active: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val t = tones
-    val color = if (active) t.aqua else Color.White
+    val color = if (active) t.aqua else LocalTones.current.onHeader
     val shape = RoundedCornerShape(50)
     Box(modifier.heightIn(min = 34.dp).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         Row(
@@ -188,8 +188,8 @@ fun HeaderChips(items: List<String>, selected: Int, onSelect: (Int) -> Unit, ico
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val icon = icons?.getOrNull(index)
-                    if (icon != null) { Icon(icon, null, tint = if (on) t.onAqua else Color.White, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(4.dp)) }
-                    Text(label, color = if (on) t.onAqua else Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    if (icon != null) { Icon(icon, null, tint = if (on) t.onAqua else LocalTones.current.onHeader, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(4.dp)) }
+                    Text(label, color = if (on) t.onAqua else LocalTones.current.onHeader, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 }
             }
         }
@@ -374,9 +374,9 @@ fun BottomBar4(selected: Tab, taskCount: Int, onSelect: (Tab) -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
             ) {
                 if (tab == Tab.TASKS && taskCount > 0) {
-                    BadgedBox(badge = { Badge { Text(taskCount.toString()) } }) { Icon(tab.icon, null, tint = Color.White, modifier = Modifier.size(21.dp)) }
-                } else Icon(tab.icon, null, tint = if (on) Color.White else Color.White.copy(alpha = 0.78f), modifier = Modifier.size(21.dp))
-                Text(tab.title, color = if (on) Color.White else Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.labelSmall,
+                    BadgedBox(badge = { Badge { Text(taskCount.toString()) } }) { Icon(tab.icon, null, tint = LocalTones.current.onHeader, modifier = Modifier.size(21.dp)) }
+                } else Icon(tab.icon, null, tint = if (on) LocalTones.current.onHeader else LocalTones.current.onHeaderDim, modifier = Modifier.size(21.dp))
+                Text(tab.title, color = if (on) LocalTones.current.onHeader else LocalTones.current.onHeaderDim, style = MaterialTheme.typography.labelSmall,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
             }
         }

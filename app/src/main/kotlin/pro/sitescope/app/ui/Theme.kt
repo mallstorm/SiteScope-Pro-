@@ -26,7 +26,8 @@ class Tones(
     val tv: Color, val tvSoft: Color, val net: Color, val netSoft: Color,
     val heroStart: Color, val heroEnd: Color,
     val headerStart: Color, val headerEnd: Color, val aqua: Color, val onAqua: Color,
-    val tileStart: Color, val tileEnd: Color
+    val tileStart: Color, val tileEnd: Color,
+    val onHeader: Color, val onHeaderDim: Color
 )
 
 private val LightTones = Tones(
@@ -36,7 +37,8 @@ private val LightTones = Tones(
     tv = Color(0xFF5A4FCF), tvSoft = Color(0xFFE6E3FA), net = Color(0xFF1F8F6E), netSoft = Color(0xFFD9F3EA),
     heroStart = Color(0xFF0B4651), heroEnd = Color(0xFF0E7C86),
     headerStart = Color(0xFF06222C), headerEnd = Color(0xFF0B4651), aqua = Color(0xFF22E6D2), onAqua = Color(0xFF04323A),
-    tileStart = Color(0xFF0A2A38), tileEnd = Color(0xFF0E6B75)
+    tileStart = Color(0xFF0A2A38), tileEnd = Color(0xFF0E6B75),
+    onHeader = Color.White, onHeaderDim = Color(0xC7FFFFFF)
 )
 private val DarkTones = Tones(
     good = Color(0xFF6FD3A3), goodSoft = Color(0xFF14382A), warn = Color(0xFFF2B95C), warnSoft = Color(0xFF3F2E10),
@@ -45,7 +47,8 @@ private val DarkTones = Tones(
     tv = Color(0xFFB7B0FF), tvSoft = Color(0xFF2A2650), net = Color(0xFF86D9B8), netSoft = Color(0xFF173A2E),
     heroStart = Color(0xFF08323B), heroEnd = Color(0xFF0E6B75),
     headerStart = Color(0xFF031319), headerEnd = Color(0xFF08323B), aqua = Color(0xFF22E6D2), onAqua = Color(0xFF04323A),
-    tileStart = Color(0xFF0A2A38), tileEnd = Color(0xFF0E6B75)
+    tileStart = Color(0xFF0A2A38), tileEnd = Color(0xFF0E6B75),
+    onHeader = Color(0xFFF1E8D6), onHeaderDim = Color(0xFFC9BEA8)
 )
 
 val LocalTones = staticCompositionLocalOf { LightTones }
@@ -61,13 +64,14 @@ private val LightColors = lightColorScheme(
     error = Color(0xFFC0392B), errorContainer = Color(0xFFFDE3E1), onErrorContainer = Color(0xFF410002)
 )
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF5FD3DC), onPrimary = Color(0xFF00363B), primaryContainer = Color(0xFF0B4F57), onPrimaryContainer = Color(0xFFD3F1F3),
-    secondary = Color(0xFFA9C6D4), onSecondary = Color(0xFF0D2530), secondaryContainer = Color(0xFF2B4350), onSecondaryContainer = Color(0xFFDDEBF2),
-    tertiary = Color(0xFF9CC3E6), onTertiary = Color(0xFF0B2A4A), tertiaryContainer = Color(0xFF1F4A78), onTertiaryContainer = Color(0xFFDCE9F8),
-    background = Color(0xFF0A161D), onBackground = Color(0xFFE3EDF2), surface = Color(0xFF0A161D), onSurface = Color(0xFFE3EDF2),
-    surfaceVariant = Color(0xFF28383F), onSurfaceVariant = Color(0xFFB4C4CC), outline = Color(0xFF7A8C96), outlineVariant = Color(0xFF2E4048),
-    surfaceContainerLowest = Color(0xFF07111A), surfaceContainerLow = Color(0xFF0F1E27), surfaceContainer = Color(0xFF132731),
-    surfaceContainerHigh = Color(0xFF1B313C), surfaceContainerHighest = Color(0xFF243C48),
+    primary = Color(0xFF5FD3DC), onPrimary = Color(0xFF00363B), primaryContainer = Color(0xFF0B4F57), onPrimaryContainer = Color(0xFFEDE3CF),
+    secondary = Color(0xFFB8C9CF), onSecondary = Color(0xFF0D2530), secondaryContainer = Color(0xFF2B4350), onSecondaryContainer = Color(0xFFEDE3CF),
+    tertiary = Color(0xFF9CC3E6), onTertiary = Color(0xFF0B2A4A), tertiaryContainer = Color(0xFF1F4A78), onTertiaryContainer = Color(0xFFEDE3CF),
+    // Текст — тёплый бежевый, а не чисто белый: меньше слепит на тёмном фоне. Карточки чуть светлее фона, чтобы читались границы.
+    background = Color(0xFF0A161D), onBackground = Color(0xFFEDE3CF), surface = Color(0xFF0A161D), onSurface = Color(0xFFEDE3CF),
+    surfaceVariant = Color(0xFF28383F), onSurfaceVariant = Color(0xFFBFB49E), outline = Color(0xFF8C8677), outlineVariant = Color(0xFF2E4048),
+    surfaceContainerLowest = Color(0xFF11232D), surfaceContainerLow = Color(0xFF142A35), surfaceContainer = Color(0xFF173039),
+    surfaceContainerHigh = Color(0xFF1E3B47), surfaceContainerHighest = Color(0xFF284A58),
     error = Color(0xFFFF8A7D), errorContainer = Color(0xFF5C1A14), onErrorContainer = Color(0xFFFFDAD5)
 )
 
