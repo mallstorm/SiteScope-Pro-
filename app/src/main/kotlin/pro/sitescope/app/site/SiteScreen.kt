@@ -120,13 +120,19 @@ private fun ColumnScope.ReportView(vm: SiteViewModel, r: Report, state: AppState
         } catch (e: Exception) { toast(context, "Не удалось сохранить") }
     }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    var detail by remember(r.target, r.timestamp) { mutableStateOf(false) }
+    BackHandler(enabled = detail) { detail = false }
+    if (!detail) {
+        SiteDashboard(vm, r, state, onDetails = { detail = true }, onSavePdf = { savePdf.launch("sitescope-${r.host}.pdf") }, onSaveHtml = { saveHtml.launch("sitescope-${r.host}.html") })
+        return
+    }
     LaunchedEffect(r.target) { vm.loadWatchChanges(r.target) }
     val shown = r.sections.filter { it.checks.isNotEmpty() }
     val titles = listOf("Итог") + shown.map { it.title } + "Мониторинг" + "Действия"
     val icons = listOf<ImageVector>(Icons.Rounded.Dashboard) + shown.map { sectionIcon(it.key) } + Icons.Rounded.NotificationsActive + Icons.Rounded.Bolt
     var tab by remember(r.target, r.timestamp) { mutableIntStateOf(0) }
 
-    AppHeader(r.host.ifEmpty { "Отчёт" }, "Оценка ${r.grade} · ${whenText(r.timestamp)}", onBack = { vm.clear() }, actions = {
+    AppHeader(r.host.ifEmpty { "Отчёт" }, "Оценка ${r.grade} · ${whenText(r.timestamp)}", onBack = { detail = false }, actions = {
         IconButton(onClick = { vm.run(r.target) }) { Icon(Icons.Rounded.Refresh, "Проверить снова", tint = Color.White) }
         IconButton(onClick = { shareText(context, SiteReportBuilder.toText(r), "Отчёт: ${r.host}") }) { Icon(Icons.Rounded.Share, "Поделиться", tint = Color.White) }
     }) {

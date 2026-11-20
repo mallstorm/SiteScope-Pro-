@@ -14,6 +14,8 @@ import pro.sitescope.app.AuditEngine
 import pro.sitescope.app.CrawlerEngine
 import pro.sitescope.app.DataStore
 import pro.sitescope.app.Models
+import pro.sitescope.app.SearchMetricsEngine
+import pro.sitescope.app.SecureStore
 import pro.sitescope.app.core.TaskCenter
 
 class SiteHistoryItem(val target: String, val host: String, val score: Int, val time: Long, val full: Boolean)
@@ -29,6 +31,21 @@ class SiteViewModel(app: Application) : AndroidViewModel(app) {
     var history by mutableStateOf(listOf<SiteHistoryItem>())
     var monitored by mutableStateOf(setOf<String>())
     var watchChanges by mutableStateOf(false)
+    /** Скорость по Google PageSpeed (мобильная): подгружается после отчёта, чтобы не задерживать оценку. */
+    var psi by mutableStateOf<SearchMetricsEngine.PageSpeed?>(null)
+    var psiLoading by mutableStateOf(false)
+    private var psiFor = ""
+
+    fun loadSpeed(r: Report, force: Boolean = false) {
+        val key = r.target + "@" + r.timestamp
+        if (psiLoading || (!force && psiFor == key)) return
+        psiFor = key; psi = null; psiLoading = true
+        viewModelScope.launch(Dispatchers.IO) {
+            val apiKey = try { SecureStore(getApplication<Application>()).get("pagespeed_key") ?: "" } catch (e: Exception) { "" }
+            val p = try { SearchMetricsEngine.pageSpeed(SearchMetricsEngine.normalizeUrl(r.target), "mobile", apiKey) } catch (e: Throwable) { null }
+            withContext(Dispatchers.Main) { psi = p; psiLoading = false }
+        }
+    }
 
     @Volatile private var cancelled = false
     private var job: Job? = null

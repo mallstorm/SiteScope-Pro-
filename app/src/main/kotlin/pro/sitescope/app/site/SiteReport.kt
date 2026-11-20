@@ -21,9 +21,17 @@ class Section(val key: String, val title: String, val checks: List<Check>, val w
     }
 }
 
+/** Короткие показатели для сводки «Итог»: то, что видно на первом экране отчёта. */
+class SiteInfo(
+    val responseMs: Long = 0, val sslText: String = "—", val sslOk: Boolean? = null,
+    val indexable: Boolean? = null, val viewport: Boolean = false,
+    val cms: String = "", val server: String = "", val cdn: String = "", val dns: String = ""
+)
+
 class Report(
     val target: String, val host: String, val timestamp: Long, val reachable: Boolean,
-    val sections: List<Section>, val facts: List<Pair<String, String>>, val previousScore: Int?
+    val sections: List<Section>, val facts: List<Pair<String, String>>, val previousScore: Int?,
+    val info: SiteInfo = SiteInfo()
 ) {
     val score: Int = if (!reachable) 0 else {
         val used = sections.filter { it.checks.isNotEmpty() && it.weight > 0 }
@@ -62,7 +70,55 @@ object SiteReportBuilder {
         if (a.server.isNotEmpty()) facts.add("Веб-сервер" to a.server)
         if (a.domainRegistrar.isNotEmpty()) facts.add("Регистратор" to a.domainRegistrar)
         if (a.domainExpires.isNotEmpty()) facts.add("Домен оплачен до" to a.domainExpires)
-        return Report(a.target.ifEmpty { x.finalUrl }, a.host, a.timestamp, reachable, sections, facts, previousScore)
+        return Report(a.target.ifEmpty { x.finalUrl }, a.host, a.timestamp, reachable, sections, facts, previousScore, info(a, x))
+    }
+
+    private val NOINDEX_META = Regex("<meta[^>]+name=[\"']robots[\"'][^>]*content=[\"'][^\"']*noindex", RegexOption.IGNORE_CASE)
+
+    fun cdnOf(h: Map<String, String>): String {
+        val server = (h["server"] ?: "").lowercase(); val via = (h["via"] ?: "").lowercase()
+        return when {
+            h.containsKey("cf-ray") || server.contains("cloudflare") -> "Cloudflare"
+            h.containsKey("x-amz-cf-id") || via.contains("cloudfront") -> "CloudFront"
+            (h["x-served-by"] ?: "").lowercase().contains("cache") || h.containsKey("x-fastly-request-id") -> "Fastly"
+            h.keys.any { it.startsWith("x-akamai") } || server.contains("akamai") -> "Akamai"
+            server.contains("ddos-guard") -> "DDoS-Guard"
+            server.contains("stackpath") || h.containsKey("x-sp-url") -> "StackPath"
+            h.containsKey("x-vercel-id") -> "Vercel"
+            h.containsKey("x-nf-request-id") -> "Netlify"
+            server.contains("qrator") || h.containsKey("x-qrator-ip") -> "Qrator"
+            else -> ""
+        }
+    }
+
+    fun dnsOf(ns: String): String {
+        val n = ns.lowercase()
+        return when {
+            n.contains("cloudflare") -> "Cloudflare"; n.contains("awsdns") -> "Route 53"; n.contains("google") -> "Google"
+            n.contains("yandex") -> "Яндекс"; n.contains("reg.ru") || n.contains("hosting.reg") -> "REG.RU"; n.contains("godaddy") || n.contains("domaincontrol") -> "GoDaddy"
+            n.contains("ns1.") && n.contains("nsone") -> "NS1"; n.contains("selectel") -> "Selectel"; n.contains("timeweb") -> "Timeweb"; n.contains("beget") -> "Beget"
+            n.contains("azure-dns") -> "Azure"; n.isBlank() -> ""
+            else -> ns.split(Regex("[\\s,;]+")).firstOrNull { it.contains('.') }?.trimEnd('.')?.split('.')?.takeLast(2)?.joinToString(".") ?: ""
+        }
+    }
+
+    private fun info(a: Models.AuditResult, x: SiteExtras.Data): SiteInfo {
+        val tls = x.tls
+        val ssl = when {
+            tls != null && tls.valid -> "Действительный" to true
+            tls != null || a.https -> "Проблема" to false
+            else -> "Нет HTTPS" to false
+        }
+        val noindex = NOINDEX_META.containsMatchIn(x.html) || (x.headers["x-robots-tag"] ?: "").contains("noindex", true) || a.noindexPages > 0
+        val server = (x.headers["server"] ?: a.server).ifBlank { "" }
+        return SiteInfo(
+            responseMs = if (x.ttfbMs > 0) x.ttfbMs else a.averageResponseMs,
+            sslText = ssl.first, sslOk = ssl.second,
+            indexable = if (x.reachable) !noindex else null,
+            viewport = x.page.viewport,
+            cms = a.cmsName.takeIf { it.isNotBlank() && it != "Не определена" } ?: "",
+            server = server, cdn = cdnOf(x.headers), dns = dnsOf(a.domainNameservers)
+        )
     }
 
     private fun availability(a: Models.AuditResult, x: SiteExtras.Data): Section {
