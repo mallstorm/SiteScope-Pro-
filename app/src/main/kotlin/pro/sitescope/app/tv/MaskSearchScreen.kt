@@ -80,7 +80,7 @@ class MaskViewModel(app: Application) : AndroidViewModel(app) {
     var names by mutableStateOf(prefs.getString("names", "") ?: "")
     var hosts by mutableStateOf(prefs.getString("hosts", "") ?: "")
     var ports by mutableStateOf(prefs.getString("ports", "") ?: "")
-    var concurrency by mutableStateOf(prefs.getInt("concurrency", 16).toFloat())
+    var concurrency by mutableStateOf(prefs.getInt("concurrency", 48).toFloat())
     var timeoutSec by mutableStateOf(prefs.getInt("timeout", 3).toFloat())
     var maxCandidates by mutableStateOf(prefs.getString("maxCand", "2000") ?: "2000")
     var stopAfter by mutableStateOf(prefs.getString("stopAfter", "0") ?: "0")
@@ -392,7 +392,7 @@ fun MaskSearchScreen(vm: MaskViewModel = viewModel()) {
         SectionTitle("Параметры проверки")
         SoftCard {
             Text("Одновременных проверок: ${vm.concurrency.toInt()}", style = MaterialTheme.typography.bodyMedium)
-            AppSlider(vm.concurrency, { vm.concurrency = it }, valueRange = 1f..48f, steps = 46)
+            AppSlider(vm.concurrency, { vm.concurrency = it }, valueRange = 1f..128f, steps = 126)
             Text("Ожидание ответа: ${vm.timeoutSec.toInt()} с", style = MaterialTheme.typography.bodyMedium)
             AppSlider(vm.timeoutSec, { vm.timeoutSec = it }, valueRange = 1f..15f, steps = 13)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

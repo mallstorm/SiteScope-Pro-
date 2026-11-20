@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 object MaskSearch {
     const val HARD_MAX_CANDIDATES = 200_000L
+    const val MAX_THREADS = 128
     private const val MAX_NUM_SPAN = 1_000_000L
 
     sealed class Part {
@@ -243,7 +244,7 @@ object MaskSearch {
     // ------------------------------------------------------------------ перебор
 
     class ScanConfig(
-        val concurrency: Int = 16, val timeoutMs: Int = 3000, val maxCandidates: Long = 2000,
+        val concurrency: Int = 48, val timeoutMs: Int = 3000, val maxCandidates: Long = 2000,
         val stopAfter: Int = 0, val userAgent: String = StreamChecker.DEFAULT_UA,
         /** Проверка udp://@группа:порт подпиской на мультикаст; предоставляет Android-слой. null — udp пропускается. */
         val udp: ((url: String, timeoutMs: Int) -> UdpResult?)? = null
@@ -270,7 +271,7 @@ object MaskSearch {
         if (total <= 0) { listener.progress(0, 0); return }
         val next = AtomicLong(0); val done = AtomicLong(0); val found = AtomicInteger(0)
         val dead = ConcurrentHashMap.newKeySet<String>(); val alive = ConcurrentHashMap.newKeySet<String>(); val reportedRaw = ConcurrentHashMap.newKeySet<String>()
-        val threads = cfg.concurrency.coerceIn(1, 48)
+        val threads = cfg.concurrency.coerceIn(1, MAX_THREADS)
         val pool = Executors.newFixedThreadPool(threads)
         val stopped = { cancel.get() || (cfg.stopAfter > 0 && found.get() >= cfg.stopAfter) }
         repeat(threads) {

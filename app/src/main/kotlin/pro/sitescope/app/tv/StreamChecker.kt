@@ -294,6 +294,20 @@ object StreamChecker {
         fun onFinished(cancelled: Boolean)
     }
 
+    const val MAX_THREADS = 64
+
+    private fun hostKey(url: String): String? = try {
+        val u = java.net.URI(url.replace(" ", "%20"))
+        val port = if (u.port > 0) u.port else if (u.scheme.equals("https", true)) 443 else 80
+        if (u.host == null || !(u.scheme.equals("http", true) || u.scheme.equals("https", true))) null else "${u.host}:$port"
+    } catch (_: Exception) { null }
+
+    private fun tcpOpen(url: String, timeoutMs: Int): Boolean = try {
+        val u = java.net.URI(url.replace(" ", "%20"))
+        val port = if (u.port > 0) u.port else if (u.scheme.equals("https", true)) 443 else 80
+        java.net.Socket().use { it.connect(java.net.InetSocketAddress(u.host, port), timeoutMs); true }
+    } catch (_: Exception) { false }
+
     class Batch internal constructor(private val pool: ExecutorService, private val cancelled: AtomicBoolean) {
         fun cancel() { cancelled.set(true); pool.shutdownNow() }
         val isCancelled: Boolean get() = cancelled.get()
@@ -304,10 +318,13 @@ object StreamChecker {
      */
     fun checkAll(channels: List<Channel>, threads: Int, timeoutMs: Int, udpxyBase: String,
                  localCheck: ((Channel) -> Result)?, listener: BatchListener): Batch {
-        val pool = Executors.newFixedThreadPool(threads.coerceIn(1, 32))
+        val pool = Executors.newFixedThreadPool(threads.coerceIn(1, MAX_THREADS))
         val cancelled = AtomicBoolean(false)
         val done = AtomicInteger(0)
         val total = channels.size
+        // Много каналов часто живут на одном узле: после двух неудачных подключений остальные каналы узла не ждут таймаут.
+        val hostFails = java.util.concurrent.ConcurrentHashMap<String, AtomicInteger>()
+        val hostAlive = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         Thread({
             for (ch in channels) {
                 if (cancelled.get()) break
@@ -318,7 +335,14 @@ object StreamChecker {
                         val result = try {
                             if (target.startsWith("udp://", true) || target.startsWith("rtp://", true))
                                 localCheck?.invoke(ch) ?: Result().apply { status = StreamStatus.UNKNOWN; detail = "Локальный поток" }
-                            else check(target, ch.userAgent, ch.referrer, timeoutMs)
+                            else {
+                                val key = hostKey(target)
+                                if (key != null && key !in hostAlive && (hostFails[key]?.get() ?: 0) >= 2) Result().apply { status = StreamStatus.DEAD; detail = "Узел не отвечает" }
+                                else {
+                                    if (key != null && key !in hostAlive && !tcpOpen(target, minOf(timeoutMs, 3000))) { hostFails.getOrPut(key) { AtomicInteger() }.incrementAndGet(); Result().apply { status = StreamStatus.DEAD; detail = "Узел не отвечает" } }
+                                    else { if (key != null) hostAlive.add(key); check(target, ch.userAgent, ch.referrer, timeoutMs) }
+                                }
+                            }
                         } catch (e: Throwable) { Result().apply { detail = e.message ?: "Ошибка проверки" } }
                         if (cancelled.get()) return@execute
                         apply(ch, result)

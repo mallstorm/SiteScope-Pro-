@@ -311,6 +311,8 @@ public final class IptvEngine {
                     portIndex = (portIndex + 1) % ports.size();
                     finished.submit(() -> {
                         gate.awaitTurn(control);
+                        // Порт закрыт — не тратим время на шесть HTTP/HTTPS-запросов (главный источник простоя при внешнем поиске).
+                        if (!tcpOpen(target, port, timeoutMs + 300)) return new DiscoveryResult(target, port, null);
                         Models.UdpxyEndpoint endpoint = probeUdpxy(target, port, timeoutMs, listener);
                         if (endpoint == null)
                             endpoint = probeUdpxyScheme(target, port, timeoutMs, listener, "https");
@@ -332,6 +334,13 @@ public final class IptvEngine {
             }
         } finally { pool.shutdownNow(); }
         return results;
+    }
+
+    private static boolean tcpOpen(String host, int port, int timeoutMs) {
+        try (java.net.Socket s = new java.net.Socket()) {
+            s.connect(new java.net.InetSocketAddress(host, port), timeoutMs);
+            return true;
+        } catch (Exception e) { return false; }
     }
 
     private static final class DiscoveryResult {

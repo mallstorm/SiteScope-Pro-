@@ -63,8 +63,8 @@ fun TvLanScreen(net: NetViewModel = viewModel()) {
         try { withContext(Dispatchers.IO) {
             try {
                 val hosts = IptvTargets.parse(targets); val list = ScannerEngine.parsePorts(ports)
-                IptvEngine.discoverUdpxy(hosts, list, 900, workers.coerceAtMost(8),
-                    maxOf(delay.toLong(), 250L), object : IptvEngine.DiscoveryListener {
+                IptvEngine.discoverUdpxy(hosts, list, 900, workers,
+                    delay.toLong(), object : IptvEngine.DiscoveryListener {
                     override fun onProgress(completed: Long, total: Long, currentHost: String?) { status = "Проверено $completed из $total" }
                     override fun isCancelled(): Boolean = job?.isActive == false
                     override fun onFound(endpoint: Models.UdpxyEndpoint?) { if (endpoint != null) scope.launch { gateways.add(endpoint) } }
