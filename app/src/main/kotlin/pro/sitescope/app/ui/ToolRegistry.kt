@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.QueryStats
 import androidx.compose.material.icons.rounded.Router
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.VpnKey
 import androidx.compose.material.icons.rounded.SettingsInputAntenna
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Speed
