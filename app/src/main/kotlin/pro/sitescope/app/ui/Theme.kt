@@ -105,7 +105,10 @@ fun AppTheme(dark: Boolean = when (ThemePrefs.mode) { 1 -> false; 2 -> true; els
     val base = androidx.compose.ui.platform.LocalDensity.current
     val dense = androidx.compose.ui.unit.Density(base.density * UiPrefs.scale, base.fontScale / UiPrefs.scale)
     CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides dense, LocalTones provides if (dark) DarkTones else LightTones) {
-        MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, shapes = AppShapes, typography = AppTypography, content = content)
+        MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, shapes = AppShapes, typography = AppTypography) {
+            // Текст вне Surface/Card иначе остаётся чёрным: в тёмной теме названия плиток не видны.
+            CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onBackground, content = content)
+        }
     }
 }
 

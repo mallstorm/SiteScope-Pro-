@@ -146,11 +146,11 @@ fun OverviewScreen(state: AppState) {
         Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp).padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SmartSearchBar(input, { input = it }, "Сайт, IP, сеть, M3U или поток", onGo = { go() }, scan = true,
                 onPaste = { clipboard.getText()?.text?.let { input = it.trim().take(500) } })
-            MetricStrip(listOf(
-                Metric(Icons.Rounded.Wifi, "Сеть", data.subnet.ifEmpty { net.text }),
-                Metric(Icons.Rounded.Layers, "Активно", rememberActiveTaskCount().toString()),
-                Metric(Icons.Rounded.Description, "Отчёты", data.reports.toString())
-            ))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NetworkCard(net.text, listOf(net.detail, data.subnet).filter { it.isNotBlank() }.joinToString(" · ").ifEmpty { if (net.connected) "Адрес не определён" else "Нет подключения" }, Modifier.weight(2.2f))
+                SmallMetric(Icons.Rounded.Layers, "Активно", rememberActiveTaskCount().toString(), Modifier.weight(1f)) { state.openRoute("tasks") }
+                SmallMetric(Icons.Rounded.Description, "Отчёты", data.reports.toString(), Modifier.weight(1f)) { state.openRoute("data", 2) }
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatTile(Icons.Rounded.Language, "Сайты и SEO", if (data.audits > 0) "${data.audits} проверок" + (if (data.avgScore >= 0) " · ср. ${data.avgScore}" else "") else "Проверок пока нет", Modifier.weight(1f)) { state.openRoute("site") }
                 StatTile(Icons.Rounded.Public, "IP и подсети", "Поиск · CIDR · база", Modifier.weight(1f)) { state.openRoute("ip") }
@@ -176,6 +176,40 @@ fun OverviewScreen(state: AppState) {
                 }
             }
         }
+    }
+}
+
+/** Широкая плитка текущей сети: тип подключения, оператор и локальный адрес. */
+@Composable
+private fun NetworkCard(title: String, detail: String, modifier: Modifier) {
+    Row(
+        modifier.height(54.dp).shadow(1.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow).padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Rounded.Wifi, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** Малая плитка-счётчик: число крупно, подпись под ним. */
+@Composable
+private fun SmallMetric(icon: ImageVector, label: String, value: String, modifier: Modifier, onClick: () -> Unit) {
+    Column(
+        modifier.height(54.dp).shadow(1.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow).clickable(onClick = onClick).padding(horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(value, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+        }
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

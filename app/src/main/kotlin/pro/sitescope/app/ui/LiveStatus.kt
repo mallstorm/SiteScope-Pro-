@@ -41,7 +41,7 @@ fun rememberVpnLifecycle(): State<String> {
 }
 
 /** Подпись и признак наличия сети по текущему подключению по умолчанию. */
-class NetLabel(val text: String, val connected: Boolean)
+class NetLabel(val text: String, val connected: Boolean, val detail: String = "")
 
 @Composable
 fun rememberNetLabel(): State<NetLabel> {
@@ -49,22 +49,38 @@ fun rememberNetLabel(): State<NetLabel> {
     val label = remember { mutableStateOf(NetLabel("Сеть", true)) }
     DisposableEffect(Unit) {
         val manager = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        fun describe(caps: NetworkCapabilities?): NetLabel = when {
+        fun details(network: Network?, caps: NetworkCapabilities?): String {
+            if (manager == null || network == null) return ""
+            val parts = mutableListOf<String>()
+            if (caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) {
+                try {
+                    val op = (context.applicationContext.getSystemService(Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager)?.networkOperatorName
+                    if (!op.isNullOrBlank()) parts += op
+                } catch (_: Exception) { }
+            }
+            try {
+                val ip = manager.getLinkProperties(network)?.linkAddresses?.map { it.address }?.firstOrNull { it is java.net.Inet4Address && !it.isLoopbackAddress }?.hostAddress
+                if (ip != null) parts += ip
+            } catch (_: Exception) { }
+            return parts.joinToString(" · ")
+        }
+        fun describe(network: Network?, caps: NetworkCapabilities?): NetLabel = when {
             caps == null -> NetLabel("Нет сети", false)
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetLabel("Wi-Fi", true)
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetLabel("Мобильная сеть", true)
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> NetLabel("Ethernet", true)
-            else -> NetLabel("Сеть", true)
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetLabel("Wi-Fi", true, details(network, caps))
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetLabel("Мобильная сеть", true, details(network, caps))
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> NetLabel("Ethernet", true, details(network, caps))
+            else -> NetLabel("Сеть", true, details(network, caps))
         }
         val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) { label.value = describe(manager?.getNetworkCapabilities(network)) }
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) { label.value = describe(caps) }
+            override fun onAvailable(network: Network) { label.value = describe(network, manager?.getNetworkCapabilities(network)) }
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) { label.value = describe(network, caps) }
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: android.net.LinkProperties) { label.value = describe(network, manager?.getNetworkCapabilities(network)) }
             override fun onLost(network: Network) { label.value = NetLabel("Нет сети", false) }
         }
         var registered = false
         try {
             if (manager != null) {
-                label.value = describe(manager.activeNetwork?.let { manager.getNetworkCapabilities(it) })
+                label.value = describe(manager.activeNetwork, manager.activeNetwork?.let { manager.getNetworkCapabilities(it) })
                 manager.registerDefaultNetworkCallback(callback); registered = true
             }
         } catch (_: Exception) { }
