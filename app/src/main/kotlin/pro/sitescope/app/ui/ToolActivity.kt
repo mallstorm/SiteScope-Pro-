@@ -73,6 +73,7 @@ fun ToolContent(screen: String, tab: Int, targets: String?, state: AppState? = n
             "tvmask" -> { BackHeader("Поиск ТВ по маске ссылки", onBack); MaskSearchScreen() }
             "dpi" -> ProtectScreen(1, 0, state)
             "anon" -> ProtectScreen(2, 0, state)
+            "keys" -> pro.sitescope.app.keys.KeyHubScreen(onBack)
             "tvlan" -> { BackHeader("ТВ в локальной сети", onBack); TvLanScreen() }
             "metrics" -> { BackHeader("Метрики поиска", onBack); MetricsScreen(targets) }
             "batch" -> { BackHeader("Проверка списка сайтов", onBack); BatchScreen() }

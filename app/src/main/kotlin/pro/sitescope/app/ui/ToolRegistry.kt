@@ -81,6 +81,7 @@ object ToolRegistry {
             Tool("vpn", "VPN и свои адреса", "Туннель, Hosts, DNS", Icons.Rounded.Shield, "vpn", 0),
             Tool("dpi", "DPI byedpi", "Обход блокировок", Icons.Rounded.LockOpen, "dpi"),
             Tool("anon", "Onion и I2P", "Tor и I2P в браузере", Icons.Rounded.Language, "anon", isNew = true),
+            Tool("keys", "Ключи Xray", "Поиск, проверка, экспорт", Icons.Rounded.VpnKey, "keys", isNew = true),
             Tool("tls", "TLS Inspector", "Рукопожатия, JA3, QUIC", Icons.Rounded.Security, "tls-inspector", isNew = true),
             Tool("journal", "Журнал", "События и действия", Icons.Rounded.Dns, "vpn", 5)
         ))
