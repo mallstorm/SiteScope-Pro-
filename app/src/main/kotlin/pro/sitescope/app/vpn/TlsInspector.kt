@@ -13,7 +13,7 @@ data class TlsFingerprint(
 data class TlsHandshake(
     val timestamp: Long, val source: String, val sourcePort: Int,
     val remote: String, val remotePort: Int, val fingerprint: TlsFingerprint,
-    val transport: String = "TCP/TLS", val quicVersion: String = ""
+    val transport: String = "TCP/TLS", val quicVersion: String = "", val dcid: String = ""
 )
 
 /** Bounded decoder for the plaintext TLS ClientHello handshake message, not encrypted application data. */
@@ -165,7 +165,7 @@ object TlsInspectorHub {
                 "/" + initial.version + "/" + initial.dcid
             val hello = QuicHandshakeReassembler.accept(key, initial, at) ?: return
             results.addLast(TlsHandshake(at, info.src, info.srcPort, info.dst, info.dstPort, hello,
-                "UDP/QUIC", initial.version))
+                "UDP/QUIC", initial.version, initial.dcid))
             if (results.size > 300) results.removeFirst()
             return
         }

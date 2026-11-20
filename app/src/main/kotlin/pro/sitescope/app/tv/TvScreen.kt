@@ -60,6 +60,7 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
     val context = LocalContext.current
     var addSheet by remember { mutableStateOf(false) }
     var manageSheet by remember { mutableStateOf(false) }
+    var recordsSheet by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf<Channel?>(null) }
     var prefillUrl by remember { mutableStateOf("") }
 
@@ -79,9 +80,14 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
                 }
             }
         ) {
-            HeaderChips(listOf("Каналы", "Источники", "ТВ в сети", "По маске"), 0, { index ->
-                when (index) { 1 -> manageSheet = true; 2 -> state.openRoute("tvlan"); 3 -> state.openRoute("tvmask") }
-            }, listOf(Icons.Rounded.LiveTv, Icons.Rounded.Cloud, Icons.Rounded.SettingsInputAntenna, Icons.Rounded.ManageSearch))
+            HeaderChips(listOf("Каналы", "Источники", "Проверка", "Локальная сеть", "Записи"), 0, { index ->
+                when (index) {
+                    1 -> manageSheet = true
+                    2 -> if (vm.checking) vm.stopCheck() else if (vm.channels.isNotEmpty()) { vm.startCheck(vm.channels.toList()); toast(context, "Проверяем все каналы") } else toast(context, "Сначала добавьте плейлист")
+                    3 -> state.openRoute("tvlan")
+                    4 -> recordsSheet = true
+                }
+            }, listOf(Icons.Rounded.LiveTv, Icons.Rounded.Layers, Icons.Rounded.VerifiedUser, Icons.Rounded.AccountTree, Icons.Rounded.FiberManualRecord))
         }
         if (vm.busy.isNotEmpty()) Box(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) { LoadingCard(vm.busy) }
 
@@ -96,7 +102,6 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
         } else if (vm.channels.isNotEmpty()) {
             Column(Modifier.padding(horizontal = 12.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 SmartSearchBar(vm.query, { vm.query = it }, "Найти канал", onGo = { }, scan = true)
-                CheckPanel(vm, visible)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     MiniChip("Все", vm.group == TvViewModel.ALL) { vm.group = TvViewModel.ALL }
                     MiniChip("★ Избранное", vm.group == TvViewModel.FAVORITES) { vm.group = TvViewModel.FAVORITES }
@@ -104,16 +109,31 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
                     val groups = remember(vm.channels) { vm.groups() }
                     for (g in groups.take(60)) MiniChip(g, vm.group == g) { vm.group = g }
                 }
+                TvSummary(vm, tick)
+                CheckPanel(vm, visible)
             }
-            if (visible.isEmpty()) {
-                EmptyState(Icons.Rounded.SearchOff, "Ничего не нашлось", when {
-                    vm.group == TvViewModel.FAVORITES -> "Удерживайте канал и нажмите «В избранное»."
-                    vm.group == TvViewModel.RECENT -> "Здесь появятся каналы, которые вы смотрели."
-                    else -> "Попробуйте другой запрос или фильтр."
-                })
-            } else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (visible.isEmpty()) item {
+                    EmptyState(Icons.Rounded.SearchOff, "Ничего не нашлось", when {
+                        vm.group == TvViewModel.FAVORITES -> "Удерживайте канал и нажмите «В избранное»."
+                        vm.group == TvViewModel.RECENT -> "Здесь появятся каналы, которые вы смотрели."
+                        else -> "Попробуйте другой запрос или фильтр."
+                    })
+                }
                 items(visible, key = { it.id + it.sourceId + it.number }) { channel ->
-                    ChannelRow(channel, tick, onClick = { vm.markWatched(channel); play(context, visible, visible.indexOf(channel)) }, onLong = { details = channel })
+                    ChannelRow(channel, tick, onPlay = { vm.markWatched(channel); play(context, visible, visible.indexOf(channel)) }, onMore = { details = channel },
+                        onFavorite = { vm.toggleFavorite(channel) })
+                }
+                item { CompactTitle("Источники", action = "Подробнее ›") { manageSheet = true } }
+                item { SourcesCard(vm) { manageSheet = true } }
+                item { CompactTitle("Быстрые действия") }
+                item {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        QuickTile(Icons.Rounded.LibraryAdd, "Добавить плейлист", Modifier.weight(1f)) { addSheet = true }
+                        QuickTile(Icons.Rounded.VerifiedUser, "Проверить все", Modifier.weight(1f)) { if (!vm.checking) vm.startCheck(vm.channels.toList()) }
+                        QuickTile(Icons.Rounded.Search, "Поиск по маске", Modifier.weight(1f)) { state.openRoute("tvmask") }
+                        QuickTile(Icons.Rounded.AccountTree, "ТВ в локальной сети", Modifier.weight(1f)) { state.openRoute("tvlan") }
+                    }
                 }
             }
         }
@@ -121,6 +141,7 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
 
     if (addSheet) AddSheet(vm, prefillUrl) { addSheet = false; prefillUrl = "" }
     if (manageSheet) ManageSheet(vm) { manageSheet = false }
+    if (recordsSheet) RecordsSheet { recordsSheet = false }
     details?.let { channel -> DetailsSheet(vm, channel, tick, onPlay = { vm.markWatched(channel); play(context, visible, maxOf(0, visible.indexOf(channel))) }) { details = null } }
 }
 
@@ -171,44 +192,149 @@ private fun Logo(channel: Channel, size: androidx.compose.ui.unit.Dp) {
 }
 
 @Composable
-private fun ChannelRow(channel: Channel, tick: Int, onClick: () -> Unit, onLong: () -> Unit) {
+private fun TvSummary(vm: TvViewModel, tick: Int) {
+    val ok = remember(tick, vm.channels) { vm.channels.count { it.status == StreamStatus.OK || it.status == StreamStatus.SLOW } }
+    val archive = remember(vm.channels) { vm.channels.count { ArchiveChecker.supportsArchive(it) } }
+    SoftCard(padding = 8.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(Icons.Rounded.LiveTv, MaterialTheme.colorScheme.onPrimary, MaterialTheme.colorScheme.primary, 38.dp)
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1.3f)) {
+                Text("Телевидение", style = MaterialTheme.typography.titleSmall)
+                Text("Плейлисты, каналы, доступность и архив", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+            }
+            SummaryStat(Icons.Rounded.Layers, "Плейлисты", vm.sources.size.toString(), null, Modifier.weight(1f))
+            SummaryStat(Icons.Rounded.Tv, "Каналы", vm.channels.size.toString(), null, Modifier.weight(1f))
+            SummaryStat(Icons.Rounded.CheckCircle, "Работают", if (vm.channels.any { it.checkedAt > 0 }) ok.toString() else "—", tones.good, Modifier.weight(1f))
+            SummaryStat(Icons.Rounded.Inventory2, "Архив", archive.toString(), null, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun SummaryStat(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String, tint: Color?, modifier: Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(icon, null, tint = tint ?: MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+
+@Composable
+private fun ChannelRow(channel: Channel, tick: Int, onPlay: () -> Unit, onMore: () -> Unit, onFavorite: () -> Unit) {
     val now = remember(tick, channel.id) { Epg.now(channel) }
+    val tech = listOf(listOf(channel.quality, if (channel.resolution.contains('x')) "(" + channel.resolution.substringAfter('x') + ")" else "").filter { it.isNotEmpty() }.joinToString(" "), channel.video)
+        .filter { it.isNotEmpty() }.joinToString(" · ")
     Row(
         Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest)
-            .combinedClickable(onClick = onClick, onLongClick = onLong).padding(horizontal = 10.dp, vertical = 6.dp),
+            .combinedClickable(onClick = onMore, onLongClick = onMore).padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Logo(channel, 38.dp)
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(channel.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                if (channel.favorite) Icon(Icons.Rounded.Star, null, tint = tones.warn, modifier = Modifier.padding(start = 4.dp).size(14.dp))
-            }
-            if (now != null) {
-                Text(now.title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                LinearProgressIndicator(progress = { now.progress(System.currentTimeMillis()) }, modifier = Modifier.fillMaxWidth(0.7f).padding(top = 3.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
-                    color = tones.tv, trackColor = MaterialTheme.colorScheme.surfaceContainerHigh)
-            } else {
-                val sub = when {
-                    channel.status != StreamStatus.UNKNOWN && channel.status != StreamStatus.OK -> channel.detail
-                    channel.group.isNotEmpty() -> channel.group
-                    else -> ""
-                }
-                if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        Spacer(Modifier.width(6.dp))
-        if (channel.uptimePercent >= 0) Column(horizontalAlignment = Alignment.End) {
-            Text("${channel.uptimePercent}%", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-            Text("аптайм", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (channel.quality.isNotEmpty()) { Spacer(Modifier.width(6.dp)); Pill(channel.quality, tones.tv, tones.tvSoft) }
         Spacer(Modifier.width(8.dp))
-        Dot(statusColor(channel.status), 10.dp)
+        Column(Modifier.weight(1f)) {
+            Text(channel.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val second = when {
+                tech.isNotEmpty() -> tech
+                channel.status != StreamStatus.UNKNOWN && channel.status != StreamStatus.OK -> channel.detail
+                else -> ""
+            }
+            if (second.isNotEmpty()) Text(second, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(if (channel.favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder, "Избранное", tint = if (channel.favorite) tones.warn else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp).clickable(onClick = onFavorite))
+                Spacer(Modifier.width(3.dp))
+                Text(now?.title ?: channel.group, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (now != null) LinearProgressIndicator(progress = { now.progress(System.currentTimeMillis()) }, modifier = Modifier.fillMaxWidth(0.7f).padding(top = 2.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
+                color = tones.tv, trackColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+        }
+        Spacer(Modifier.width(4.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Dot(statusColor(channel.status), 8.dp); Spacer(Modifier.width(3.dp))
+                if (channel.uptimePercent >= 0) Text("${channel.uptimePercent}%", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                else Text("—", style = MaterialTheme.typography.labelLarge)
+            }
+            Text("Аптайм", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (channel.quality.isNotEmpty()) Pill(channel.quality, tones.good, tones.goodSoft)
+        }
         Spacer(Modifier.width(6.dp))
-        Box(Modifier.size(30.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.primary).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-            Icon(Icons.Rounded.PlayArrow, "Смотреть", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
+        OutlinedButton(onClick = onPlay, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 8.dp), shape = RoundedCornerShape(10.dp)) {
+            Icon(Icons.Rounded.PlayArrow, null, Modifier.size(16.dp)); Spacer(Modifier.width(2.dp)); Text("Смотреть", maxLines = 1, style = MaterialTheme.typography.labelMedium)
+        }
+        Icon(Icons.Rounded.MoreVert, "Ещё", modifier = Modifier.size(28.dp).clip(RoundedCornerShape(14.dp)).clickable(onClick = onMore).padding(4.dp))
+    }
+}
+
+@Composable
+private fun SourcesCard(vm: TvViewModel, onOpen: () -> Unit) {
+    val fmt = remember { SimpleDateFormat("d MMM", Locale("ru")) }
+    SoftCard(padding = 4.dp, onClick = onOpen) {
+        for (s in vm.sources) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Description, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(s.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(s.url.ifEmpty { "Файл" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Column(Modifier.padding(horizontal = 6.dp)) {
+                Text("M3U", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text("Каналов: ${s.count}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Pill("Активен", tones.good, tones.goodSoft, icon = Icons.Rounded.Check)
+        }
+        val epgOn = vm.epgInfo.isNotEmpty() && vm.epgInfo != "Не загружена"
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.CalendarMonth, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Телепрограмма (EPG)", style = MaterialTheme.typography.titleSmall)
+                Text(vm.epgUrls.lineSequence().firstOrNull { it.isNotBlank() } ?: "Ссылка не задана", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Column(Modifier.padding(horizontal = 6.dp)) {
+                Text("XMLTV", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text(if (epgOn) "Каналов: ${Epg.channelCount}" else "Не загружена", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+            if (epgOn) Pill("Активен", tones.good, tones.goodSoft, icon = Icons.Rounded.Check) else Pill("Выкл.", MaterialTheme.colorScheme.onSurfaceVariant, MaterialTheme.colorScheme.surfaceContainerHigh)
+        }
+    }
+}
+
+@Composable
+private fun QuickTile(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, modifier: Modifier, onClick: () -> Unit) {
+    SoftCard(modifier, onClick = onClick, padding = 8.dp) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 3, minLines = 2)
+        }
+    }
+}
+
+@Composable
+private fun RecordsSheet(onClose: () -> Unit) {
+    val context = LocalContext.current
+    var tickR by remember { mutableIntStateOf(0) }
+    LaunchedEffect(TvRecorder.finished) { tickR++ }
+    val recordings = remember(tickR) { TvRecorder.recordings(context) }
+    ModalBottomSheet(onDismissRequest = onClose) {
+        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp).verticalScroll(rememberScrollState())) {
+            Text("Записи", style = MaterialTheme.typography.titleLarge)
+            if (TvRecorder.recording) Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.FiberManualRecord, null, tint = tones.bad, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("${TvRecorder.channelName} · ${fmtBytes(TvRecorder.bytesWritten)}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                TextButton(onClick = { TvRecorder.stop(context) }) { Text("Стоп") }
+            }
+            if (recordings.isEmpty() && !TvRecorder.recording) Text("Пока нет записей. Откройте канал (⋮) и нажмите «Записать».", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+            for (file in recordings.take(50)) Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(file.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(fmtBytes(file.length()) + " · " + SimpleDateFormat("d MMM, HH:mm", Locale("ru")).format(Date(file.lastModified())), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = { TvRecorder.delete(file); tickR++ }) { Icon(Icons.Rounded.DeleteOutline, "Удалить", tint = MaterialTheme.colorScheme.error) }
+            }
+            Text("Папка: ${TvRecorder.outputDir(context).absolutePath}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }

@@ -5,6 +5,7 @@ package pro.sitescope.app.data
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -33,10 +34,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private fun dateText(time: Long): String = if (time <= 0) "" else SimpleDateFormat("d MMM yyyy, HH:mm", Locale("ru")).format(Date(time))
+internal fun dateText(time: Long): String = if (time <= 0) "" else SimpleDateFormat("d MMM yyyy, HH:mm", Locale("ru")).format(Date(time))
 
 /** Открывает цель проекта или записи истории в нужном разделе приложения. */
-private fun openTarget(context: Context, type: String, target: String) {
+internal fun openTarget(context: Context, type: String, target: String) {
     val intent = when (type) {
         "IPTV" -> Intent(context, ShellActivity::class.java).putExtra("tab", "tv")
         "IP" -> Intent(context, ToolActivity::class.java).putExtra("screen", "network").putExtra("tab", 1).putExtra("targets", target)
@@ -47,13 +48,13 @@ private fun openTarget(context: Context, type: String, target: String) {
 }
 
 @Composable
-private fun typeLook(type: String): Triple<ImageVector, Color, Color> = when (type) {
+internal fun typeLook(type: String): Triple<ImageVector, Color, Color> = when (type) {
     "IP" -> Triple(Icons.Rounded.Lan, tones.net, tones.netSoft)
     "IPTV" -> Triple(Icons.Rounded.LiveTv, tones.tv, tones.tvSoft)
     else -> Triple(Icons.Rounded.Language, tones.site, tones.siteSoft)
 }
 
-private fun typeTitle(type: String) = when (type) { "IP" -> "Сеть"; "IPTV" -> "ТВ"; else -> "Сайт" }
+internal fun typeTitle(type: String) = when (type) { "IP" -> "Сеть"; "IPTV" -> "ТВ"; else -> "Сайт" }
 
 @Composable
 fun DataScreen(startTab: Int = 0) {
@@ -72,13 +73,18 @@ fun DataScreen(startTab: Int = 0) {
 @Composable
 fun DataHub(state: AppState, startTab: Int = 0) {
     var tab by remember { mutableIntStateOf(startTab.coerceIn(0, 2)) }
+    var fullProjects by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         AppHeader("Данные", "Проекты, история и отчёты", logo = true,
             actions = { HeaderMenu(listOf("Настройки и резервная копия" to { state.openRoute("settings") })) }
         ) { StatusPills(state) }
-        SegmentedTabs(listOf("Проекты", "История", "Отчёты"), tab, { tab = it }, modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp))
+        SegmentedTabs(listOf("Проекты", "История", "Отчёты"), tab, { tab = it; fullProjects = false }, icons = listOf(Icons.Rounded.FolderOpen, Icons.Rounded.History, Icons.Rounded.Description), modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            when (tab) { 0 -> ProjectsTab(); 1 -> HistoryTab(); else -> ReportsScreen() }
+            when (tab) {
+                0 -> if (fullProjects) { BackHandler { fullProjects = false }; ProjectsTab() } else DataOverview(onTab = { tab = it }, onAllProjects = { fullProjects = true })
+                1 -> HistoryTab()
+                else -> ReportsScreen()
+            }
         }
     }
 }
