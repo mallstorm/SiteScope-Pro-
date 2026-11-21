@@ -105,4 +105,4 @@ jobs:
           gh release delete "$RELEASE_TAG" --yes --cleanup-tag 2>/dev/null || true
           gh release create "$RELEASE_TAG" dist/* --prerelease --target "$GITHUB_SHA" \
             --title "SiteScope Pro — свежая сборка" \
-            --notes "Автоматическая сборка из ветки ${GITHUB_REF_NAME} (${GITHUB_SHA::7}). Установите APK на телефон (arm64)."
+            --notes "Автоматическая сборка из ветки ${GITHUB_REF_NAME} (${GITHUB_SHA::7}). Один APK, без дополнительных файлов: все библиотеки (arm64-v8a) и данные внутри. Подпись v1+v2+v3 (CN=SiteScope Pro Beta). SHA-256: $(cut -d' ' -f1 dist/SHA256SUMS.txt)"

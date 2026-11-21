@@ -63,8 +63,11 @@ android {
     buildFeatures { compose = true }
     // Модели ML Kit (tflite) читаются прямо из APK и не должны быть сжаты.
     androidResources { noCompress += listOf("tflite", "lite") }
+    // Максимальная совместимость установщиков (в том числе Xiaomi/HyperOS): без блока зависимостей Google Play и со сжатым dex.
+    dependenciesInfo { includeInApk = false; includeInBundle = false }
     packaging {
         jniLibs { useLegacyPackaging = true }
+        dex { useLegacyPackaging = true }
         resources { excludes += setOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/9/OSGI-INF/MANIFEST.MF") }
     }
     lint { checkReleaseBuilds = true; abortOnError = true; disable += "UnsafeOptInUsageError" }
