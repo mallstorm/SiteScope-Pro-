@@ -78,6 +78,14 @@ tasks.withType<JavaCompile>().configureEach { options.encoding = "UTF-8"; option
 tasks.withType<Test>().configureEach {
     // Robolectric's TLS server fixture on JDK 17 uses InetAddress through reflection.
     jvmArgs("--add-opens=java.base/java.net=ALL-UNNAMED")
+    // CI prefetches SDK images with retries and checksum verification.
+    // Robolectric's default runtime fetcher otherwise hits repo1.maven.org
+    // for every test JVM and may return HTTP 429 / 5xx even when Gradle
+    // itself resolved all dependencies successfully.
+    if (System.getenv("CI") == "true") {
+        systemProperty("robolectric.dependency.dir", rootProject.file(".robolectric-sdk-cache").absolutePath)
+        systemProperty("robolectric.offline", "true")
+    }
 }
 
 // ── Обход DPI: исходники byedpi (MIT) собираются NDK-clang в исполняемый файл libciadpi_exec.so (arm64).
