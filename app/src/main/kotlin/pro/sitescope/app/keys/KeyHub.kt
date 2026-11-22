@@ -63,6 +63,7 @@ object KeySettings {
     fun tlsCheck(c: Context) = p(c).getBoolean("tls", true)
     fun useSearch(c: Context) = p(c).getBoolean("search", true)
     fun proxyLimit(c: Context) = p(c).getInt("plimit", 400).coerceIn(100, 2000)
+    fun deepLimit(c: Context) = p(c).getInt("deepLimit", 120).coerceIn(10, 4000)
     fun ipv6(c: Context) = p(c).getBoolean("ipv6", true)
     fun kinds(c: Context): Set<String> = p(c).getString("kinds", "xray")!!.split(',').filter { it.isNotBlank() }.toSet()
     fun lastQuery(c: Context) = p(c).getString("query", "")!!
