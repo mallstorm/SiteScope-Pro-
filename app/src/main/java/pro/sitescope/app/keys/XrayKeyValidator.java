@@ -10,7 +10,13 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.ServerSocket;
-import java.net.URL;
+import java.net.Socket;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.HttpsURLConnection;
 import java.util.concurrent.atomic.AtomicBoolean;
 import libv2ray.CoreCallbackHandler;
@@ -83,28 +89,37 @@ public final class XrayKeyValidator {
             if (!controller.getIsRunning())
                 return new Result(FAILED, -1, "Xray-core отклонил конфигурацию");
             Proxy proxy = new Proxy(Proxy.Type.SOCKS, new InetSocketAddress("127.0.0.1", port));
-            String[] urls = {"https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204"};
-            long started = System.nanoTime();
-            for (String url : urls) {
+            String[] targets = {"www.gstatic.com", "cp.cloudflare.com"};
+            for (String target : targets) {
                 if (Thread.currentThread().isInterrupted())
                     return new Result(INCONCLUSIVE, -1, "Проверка прервана");
-                HttpsURLConnection connection = null;
-                try {
-                    connection = (HttpsURLConnection) new URL(url).openConnection(proxy);
-                    connection.setConnectTimeout(timeoutMs);
-                    connection.setReadTimeout(timeoutMs);
-                    connection.setUseCaches(false);
-                    connection.setInstanceFollowRedirects(false);
-                    connection.setRequestProperty("Connection", "close");
-                    int response = connection.getResponseCode();
-                    if (response == 204) {
-                        long delay = (System.nanoTime() - started) / 1_000_000L;
-                        return new Result(VERIFIED, delay, "HTTPS 204 через Xray");
+                // Proxy-aware Socket forces a SOCKS5 CONNECT with remote DNS.
+                // TLS certificate and HTTP status are verified AFTER routing through the key.
+                try (Socket plain = new Socket(proxy)) {
+                    long started = System.nanoTime();
+                    plain.connect(InetSocketAddress.createUnresolved(target, 443), timeoutMs);
+                    plain.setSoTimeout(timeoutMs);
+                    try (SSLSocket ssl = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault())
+                            .createSocket(plain, target, 443, true)) {
+                        ssl.setSoTimeout(timeoutMs);
+                        ssl.startHandshake();
+                        if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(target, ssl.getSession()))
+                            throw new java.io.IOException("TLS hostname mismatch");
+                        OutputStream output = ssl.getOutputStream();
+                        output.write(("GET /generate_204 HTTP/1.1\r\nHost: " + target +
+                                "\r\nUser-Agent: SiteScope-KeyValidator/1\r\nConnection: close\r\n\r\n")
+                                .getBytes(StandardCharsets.US_ASCII));
+                        output.flush();
+                        BufferedReader reader = new BufferedReader(
+                                new InputStreamReader(ssl.getInputStream(), StandardCharsets.US_ASCII));
+                        String status = reader.readLine();
+                        if (status != null && status.matches("HTTP/\\d(?:\\.\\d)? 204(?:\\s.*)?")) {
+                            return new Result(VERIFIED,
+                                    (System.nanoTime() - started) / 1_000_000L, "TLS + HTTP 204 через Xray");
+                        }
                     }
                 } catch (Exception ignored) {
-                    // A second independent endpoint avoids regional false negatives.
-                } finally {
-                    if (connection != null) connection.disconnect();
+                    // Do not mark live based on an open port, local SOCKS or TLS alone.
                 }
             }
             return new Result(FAILED, -1, "HTTPS через профиль не работает (оба тестовых адреса)");
