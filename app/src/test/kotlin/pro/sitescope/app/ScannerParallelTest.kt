@@ -46,8 +46,18 @@ class ScannerParallelTest {
                         times.add(System.nanoTime())
                         val n = active.incrementAndGet(); peak.updateAndGet { old -> maxOf(old, n) }
                         try {
-                            Thread.sleep(150)
+                            // A server handler is not a client-side scanner worker.
+                            // Track only the lifetime of the accepted connection.
+                            // Sleeping after a fast TCP connect artificially overlaps
+                            // handlers even when ScannerEngine obeys concurrency.
                             it.getOutputStream().write("SSH-2.0-Test\r\n".toByteArray())
+                            it.getOutputStream().flush()
+                            it.soTimeout = 2500
+                            try {
+                                while (it.getInputStream().read() != -1) { }
+                            } catch (_: SocketTimeoutException) {
+                                // Timeout also bounds the fixture on CI.
+                            }
                         } finally { active.decrementAndGet() }
                     }
                 }
