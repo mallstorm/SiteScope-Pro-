@@ -1,6 +1,9 @@
 package pro.sitescope.app.keys
 
 import android.app.Application
+import android.app.Activity
+import android.content.Intent
+import android.net.VpnService
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -40,6 +43,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pro.sitescope.app.XrayProfileStore
+import pro.sitescope.app.HostsVpnService
 import kotlin.coroutines.coroutineContext
 import pro.sitescope.app.ui.*
 import pro.sitescope.app.vpn.Countries
@@ -407,6 +411,17 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun connectSingBox(key: KeyItem) {
+        if (running || key.type !in SingBoxConfig.types || !key.alive) return
+        val intent = Intent(context, HostsVpnService::class.java)
+            .setAction(HostsVpnService.ACTION_START)
+            .putExtra(HostsVpnService.EXTRA_MODE, HostsVpnService.MODE_SINGBOX)
+            .putExtra(HostsVpnService.EXTRA_SINGBOX_ID, key.id)
+        context.getSharedPreferences(HostsVpnService.PREFS, Context.MODE_PRIVATE)
+            .edit().putString(HostsVpnService.EXTRA_SINGBOX_ID, key.id).apply()
+        context.startForegroundService(intent)
+    }
+
     fun addToServers(list: List<KeyItem>, done: (Int) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             val store = XrayProfileStore(context); var n = 0
@@ -421,6 +436,23 @@ private fun countryName(code: String) = if (code.length != 2) "Не опреде
 @Composable
 fun KeyHubScreen(onBack: () -> Unit, vm: KeyHubViewModel = viewModel()) {
     var tab by remember { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    var pending by remember { mutableStateOf<KeyItem?>(null) }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val key = pending
+        pending = null
+        if (result.resultCode == Activity.RESULT_OK && key != null) vm.connectSingBox(key)
+        else toast(context, "Разрешение Android VPN не предоставлено")
+    }
+    fun connect(key: KeyItem) {
+        pending = key
+        val prepare = try { VpnService.prepare(context) } catch (e: Exception) {
+            toast(context, "Не удалось запросить разрешение VPN")
+            return
+        }
+        if (prepare != null) permission.launch(prepare)
+        else { pending = null; vm.connectSingBox(key) }
+    }
     Column(Modifier.fillMaxSize()) {
         AppHeader("Ключи и прокси", "Xray + sing-box · VLESS, Hysteria2, TUIC, WG, OpenVPN, AnyTLS", onBack = onBack) {
             HeaderChips(listOf("Поиск", "Ключи ${vm.items.size}", "Чёрный список ${vm.blocked.size}", "Настройки"), tab, { tab = it }, listOf(Icons.Rounded.Search, Icons.Rounded.VpnKey, Icons.Rounded.Block, Icons.Rounded.Tune))
@@ -428,7 +460,7 @@ fun KeyHubScreen(onBack: () -> Unit, vm: KeyHubViewModel = viewModel()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (tab) {
                 0 -> SearchTab(vm, onShow = { tab = 1 })
-                1 -> KeysTab(vm)
+                1 -> KeysTab(vm, onConnect = ::connect)
                 2 -> BlacklistTab(vm)
                 else -> SettingsTab(vm)
             }
@@ -524,7 +556,7 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
 // ------------------------------------------------------------------ Ключи
 
 @Composable
-private fun KeysTab(vm: KeyHubViewModel) {
+private fun KeysTab(vm: KeyHubViewModel, onConnect: (KeyItem) -> Unit) {
     val context = LocalContext.current
     val t = tones
     var country by remember { mutableStateOf<String?>(null) }
@@ -606,6 +638,13 @@ private fun KeysTab(vm: KeyHubViewModel) {
                 OutlinedButton(onClick = { selected = if (selected.size == shown.size) emptySet() else shown.map { it.id }.toSet() }, contentPadding = PaddingValues(horizontal = 10.dp), enabled = shown.isNotEmpty()) { Text(if (selected.isNotEmpty() && selected.size == shown.size) "Снять" else "Все") }
                 IconButton(onClick = { vm.recheck(selected) }, enabled = !vm.running && all.isNotEmpty()) { Icon(Icons.Rounded.Refresh, "Полная перепроверка выделенных или всех") }
                 IconButton(onClick = { vm.remove(selected); selected = emptySet() }, enabled = !vm.running && selected.isNotEmpty()) { Icon(Icons.Rounded.Block, "В чёрный список", tint = t.bad) }
+                IconButton(
+                    onClick = { chosen.singleOrNull()?.let(onConnect) },
+                    enabled = !vm.running && chosen.size == 1 &&
+                        chosen.first().alive && chosen.first().type in SingBoxConfig.types
+                ) {
+                    Icon(Icons.Rounded.PowerSettingsNew, "Подключиться через sing-box", tint = t.good)
+                }
                 Spacer(Modifier.weight(1f))
                 Button(onClick = { export = true }, enabled = chosen.any { it.alive }) { Icon(Icons.Rounded.IosShare, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Экспорт") }
             }
