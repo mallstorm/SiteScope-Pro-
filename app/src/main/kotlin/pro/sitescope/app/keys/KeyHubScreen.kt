@@ -210,6 +210,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         job = viewModelScope.launch(Dispatchers.Default) {
             try {
                 val found = ConcurrentHashMap<String, KeyItem>()
+                val excluded = blocked.mapTo(HashSet()) { it.fingerprint }
                 val subSeen = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
                 stage = "Поиск сайтов"
                 val sites = LinkedHashMap<String, String>()
@@ -244,6 +245,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                                     KeyCrawler.crawl(url, pagesCap, depth, types, KeySources.proxyTypesFor(url, types), followSubs, subSeen, { cPages.incrementAndGet(); publish() }) { keys ->
                                         for (k in keys) {
                                             if (found.size >= 30000) break
+                                            if (KeyBlocklistStore.fingerprint(k) in excluded) continue
                                             KeyCrawler.parse(k, label, allowV6)?.let { if (found.putIfAbsent(it.id, it) == null) { own++; cKeys.set(found.size) } }
                                         }
                                         publish()
@@ -257,7 +259,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                 publish(true)
                 if (KeyGuard.tripped) say("Мало памяти: сбор остановлен досрочно, найденное проверяется")
                 // Слияние с базой: уже проверенные сохраняют результат. Проверяем не больше лимитов.
-                val old = items.associateBy { it.id }
+                val old = items.filterNot { KeyBlocklistStore.fingerprint(it.link) in excluded }.associateBy { it.id }
                 val fresh0 = found.values.filter { it.id !in old }
                 val proxyLimit = KeySettings.proxyLimit(c); val keyLimit = KeySettings.keysLimit(c)
                 val fresh = fresh0.filter { !it.proxy }.shuffled().take(keyLimit) + fresh0.filter { it.proxy }.shuffled().take(proxyLimit)
@@ -269,10 +271,21 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                 checkItems(fresh)
                 deepValidate(fresh, KeySettings.deepLimit(c))
                 KeyChecker.geo(c, fresh.filter { it.alive })
-                val drop = fresh.filter { it.proxy && (it.ms == -2L || (eliteOnly && it.anon != 3)) }.map { it.id }.toSet()
-                if (drop.isNotEmpty()) items = items.filter { it.id !in drop }
-                val liveNow = fresh.count { it.alive && it.id !in drop }
-                finishedNote = "Найдено $foundTotal · TCP/прокси ${fresh.size} · подтверждено $liveNow" + (fresh.count { it.proxy && it.anon == 3 && it.id !in drop }.let { if (it > 0) " · элитных $it" else "" })
+                // Only verified failures enter the permanent blacklist.
+                // Inconclusive tests and unsupported UDP protocols remain unverified.
+                val rejected = fresh.filter { key ->
+                    !key.udp && (key.ms == -2L ||
+                        (!key.proxy && key.validation == XrayKeyValidator.FAILED))
+                }
+                val newlyExcluded = quarantine(rejected) { key ->
+                    if (key.ms == -2L) "Не отвечает при проверке" else
+                        key.validationNote.ifBlank { "VPN-профиль не установил соединение" }
+                }
+                val eliteDrop = fresh.filter { it.proxy && eliteOnly && it.anon != 3 }
+                    .map { it.id }.toSet()
+                if (eliteDrop.isNotEmpty()) items = items.filter { it.id !in eliteDrop }
+                val liveNow = fresh.count { it.alive && it.id !in eliteDrop }
+                finishedNote = "Найдено $foundTotal · проверено ${fresh.size} · рабочих $liveNow · исключено $newlyExcluded"
                 stage = "Готово"
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -337,7 +350,11 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                 list.forEach { it.validation = 0; it.validationMs = -1L; it.validationAt = 0; it.validationNote = ""; it.country = "" }
                 checkItems(list)
                 deepValidate(list, list.size)
-                finishedNote = "Проверено ${list.size} · подтверждено ${list.count { it.alive }}"
+                val failed = list.filter {
+                    !it.udp && (it.ms == -2L || (!it.proxy && it.validation == XrayKeyValidator.FAILED))
+                }
+                quarantine(failed) { it.validationNote.ifBlank { "Не работает после повторной проверки" } }
+                finishedNote = "Проверено ${list.size} · рабочих ${list.count { it.alive }} · исключено ${failed.size}"
                 stage = "Готово"
             }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
