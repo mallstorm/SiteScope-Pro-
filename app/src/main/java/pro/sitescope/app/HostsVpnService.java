@@ -288,7 +288,7 @@ public final class HostsVpnService extends VpnService {
         running = true;
         updateNotification("sing-box · " + profileName);
         updateState(STATE_ACTIVE, true, MODE_SINGBOX,
-            "sing-box · HEV и ядро работают · профиль " + profileName,
+            "sing-box · туннель поднят · Интернет проверяется…",
             profileName, profileId, profileEndpoint, "sing-box 1.14.4");
         watchdog = new Thread(new Runnable() { @Override public void run() {
             try {
@@ -304,6 +304,29 @@ public final class HostsVpnService extends VpnService {
             } catch (InterruptedException ignored) { }
         } }, "SiteScopeSingBoxWatchdog");
         watchdog.start();
+        final SingBoxRuntime healthRuntime = singBoxRuntime;
+        healthProbe = new Thread(new Runnable() { @Override public void run() {
+            try {
+                long delay = healthRuntime.probeOutbound();
+                if (!running || token != generation || MODE_SINGBOX.equals(activeMode) == false || singBoxRuntime != healthRuntime) return;
+                updateNotification("sing-box · " + profileName + " · " + delay + " мс");
+                updateState(STATE_ACTIVE, true, MODE_SINGBOX,
+                    "sing-box · Интернет подтверждён · " + delay + " мс",
+                    profileName, profileId, profileEndpoint, "sing-box 1.14.4");
+                VpnDiagnostics.log(HostsVpnService.this, "SINGBOX_OUTBOUND_CONFIRMED",
+                    "protocol verified, delay=" + delay + "ms");
+            } catch (Throwable error) {
+                if (!running || token != generation || !MODE_SINGBOX.equals(activeMode) || singBoxRuntime != healthRuntime) return;
+                updateNotification("sing-box · Интернет НЕ подтверждён");
+                updateState(STATE_ACTIVE, true, MODE_SINGBOX,
+                    "sing-box · туннель поднят, Интернет не подтверждён: " + safeMessage(error),
+                    profileName, profileId, profileEndpoint, "sing-box 1.14.4");
+                VpnDiagnostics.log(HostsVpnService.this, "SINGBOX_OUTBOUND_FAILED", safeMessage(error));
+            } finally {
+                if (healthProbe == Thread.currentThread()) healthProbe = null;
+            }
+        } }, "SiteScopeSingBoxHealthProbe");
+        healthProbe.start();
     }
 
     private synchronized void fallbackSingBoxToBasic(int token, String message) {
