@@ -422,7 +422,7 @@ private fun countryName(code: String) = if (code.length != 2) "Не опреде
 fun KeyHubScreen(onBack: () -> Unit, vm: KeyHubViewModel = viewModel()) {
     var tab by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
-        AppHeader("Ключи и прокси", "VLESS, VMess, SS, Trojan, SOCKS, HTTP, Hysteria2, WireGuard", onBack = onBack) {
+        AppHeader("Ключи и прокси", "Xray + sing-box · VLESS, Hysteria2, TUIC, WG, OpenVPN, AnyTLS", onBack = onBack) {
             HeaderChips(listOf("Поиск", "Ключи ${vm.items.size}", "Чёрный список ${vm.blocked.size}", "Настройки"), tab, { tab = it }, listOf(Icons.Rounded.Search, Icons.Rounded.VpnKey, Icons.Rounded.Block, Icons.Rounded.Tune))
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -446,6 +446,9 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
     var sources by remember { mutableStateOf(KeySettings.lastSources(context)) }
     var picked by remember { mutableStateOf(KeySettings.kinds(context).ifEmpty { setOf("xray") }) }
     var v6 by remember { mutableStateOf(KeySettings.ipv6(context)) }
+    val profilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importLocalProfile(uri) { message -> toast(context, message) }
+    }
     fun go() { if (!vm.running && picked.isNotEmpty()) vm.start(query, picked, sources.lines().map { it.trim() }.filter { it.isNotEmpty() }) }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -475,6 +478,11 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
             }
             BigField(query, { query = it }, "Свой запрос для поиска сайтов (необязательно)", keyboard = KeyboardType.Text, leading = Icons.Rounded.Search, onGo = { go() })
             BigField(sources, { sources = it }, "Свои источники: сайты, @канал Telegram, ссылки на списки (по строке)", singleLine = false, minLines = 2, keyboard = KeyboardType.Uri, leading = Icons.Rounded.Link, mono = true)
+            OutlinedButton(onClick = { profilePicker.launch(arrayOf("*/*")) }, enabled = !vm.running) {
+                Icon(Icons.Rounded.FileOpen, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Импорт WireGuard .conf / OpenVPN .ovpn")
+            }
             if (vm.running) {
                 SoftCard(color = t.infoSoft, padding = 12.dp) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -483,13 +491,13 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text(vm.stage, style = MaterialTheme.typography.titleSmall)
                             Text(when (vm.stage) {
-                                "Проверка отклика", "Проверка VPN через Xray" -> "${vm.checked} из ${vm.toCheck}"
+                                "Проверка отклика", "Проверка VPN через ядра" -> "${vm.checked} из ${vm.toCheck}"
                                 else -> "источников ${vm.sitesDone}/${vm.sitesFound} · страниц ${vm.pages} · найдено ${vm.keysFound}"
                             }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         OutlinedButton(onClick = { vm.stop() }) { Text("Стоп") }
                     }
-                    if ((vm.stage == "Проверка отклика" || vm.stage == "Проверка VPN через Xray") && vm.toCheck > 0) LinearProgressIndicator(progress = { vm.checked / vm.toCheck.toFloat() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                    if ((vm.stage == "Проверка отклика" || vm.stage == "Проверка VPN через ядра") && vm.toCheck > 0) LinearProgressIndicator(progress = { vm.checked / vm.toCheck.toFloat() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 }
             }
             if (vm.finishedNote.isNotEmpty() && !vm.running) {
@@ -502,7 +510,7 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
                 }
             }
             if (vm.log.isNotEmpty()) SoftCard(padding = 10.dp) { vm.log.take(8).forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
-            Text("Читаются только открытые страницы и публичные списки. Прокси проверяются реальным запросом через них (ip-api.com, httpbin.org), ключи Xray — реальным HTTPS-запросом через встроенное ядро после TCP-предпроверки. Чужие серверы видят ваш трафик: не используйте их для входов и платежей. Hysteria2, TUIC и WireGuard только собираются в список для экспорта.",
+            Text("Читаются только открытые страницы и публичные списки. Прокси проверяются реальным запросом через них (ip-api.com, httpbin.org), ключи Xray — реальным HTTPS-запросом через встроенное ядро после TCP-предпроверки. Чужие серверы видят ваш трафик: не используйте их для входов и платежей. Hysteria2, TUIC, WireGuard, OpenVPN и AnyTLS проверяются через sing-box. Перед проверкой отключите другие VPN.",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
         }
         if (!vm.running) Surface(tonalElevation = 3.dp) {
@@ -575,13 +583,14 @@ private fun KeysTab(vm: KeyHubViewModel) {
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Text(k.host + ":" + k.port, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = FontFamily.Monospace)
-                            Text((TYPE_LABEL[k.type] ?: k.type) + (if (!k.proxy && k.validation == 1) " · HTTPS через Xray ✓" else if (!k.proxy && (k.validation == 2 || k.validation == 3)) " · ${k.validationNote}" else if (k.tls == 1) " · TCP/TLS ✓" else "") + (if (k.proxy && k.ms >= 0) (ANON_LABEL[k.anon]?.let { " · $it" } ?: "") + (if (k.https == 1) " · HTTPS ✓" else if (k.https == 2) " · без HTTPS" else "") else "") + (if (k.v6) " · IPv6" else "") + " · " + k.source, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text((TYPE_LABEL[k.type] ?: k.type) + (if (!k.proxy && k.validation == 1) " · HTTPS через ${if (k.type in SingBoxConfig.types) "sing-box" else "Xray"} ✓" else if (!k.proxy && (k.validation == 2 || k.validation == 3)) " · ${k.validationNote}" else if (k.tls == 1) " · TCP/TLS ✓" else "") + (if (k.proxy && k.ms >= 0) (ANON_LABEL[k.anon]?.let { " · $it" } ?: "") + (if (k.https == 1) " · HTTPS ✓" else if (k.https == 2) " · без HTTPS" else "") else "") + (if (k.v6) " · IPv6" else "") + " · " + k.source, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         when {
-                            k.udp -> Pill("Не проверен", t.info, t.infoSoft)
-                            k.ms == -2L -> Pill("Нет TCP", t.bad, t.badSoft)
+                            k.alive -> Pill("${k.verifiedPing} мс ✓", if (k.verifiedPing <= 400) t.good else t.warn, if (k.verifiedPing <= 400) t.goodSoft else t.warnSoft)
                             !k.proxy && k.validation == 2 -> Pill("Не работает", t.bad, t.badSoft)
                             !k.proxy && k.validation == 3 -> Pill("Ошибка теста", t.warn, t.warnSoft)
+                            k.udp -> Pill("Не проверен", t.info, t.infoSoft)
+                            k.ms == -2L -> Pill("Нет TCP", t.bad, t.badSoft)
                             !k.proxy && !k.alive -> Pill("Не проверен", MaterialTheme.colorScheme.outline, MaterialTheme.colorScheme.surfaceContainerLow)
                             k.ms < 0 -> Pill("нет", t.bad, t.badSoft)
                             else -> Pill("${k.verifiedPing} мс", if (k.verifiedPing <= 150) t.good else if (k.verifiedPing <= 400) t.warn else t.bad, if (k.verifiedPing <= 150) t.goodSoft else if (k.verifiedPing <= 400) t.warnSoft else t.badSoft)
@@ -863,7 +872,7 @@ private fun SettingsTab(vm: KeyHubViewModel) {
         slider("Ключей за один запуск", klimit, 200..4000, "klimit", { klimit = it }, "В больших сборниках десятки тысяч ключей: проверяется случайная часть этого размера")
         slider("Таймаут, мс", timeout, 1500..8000, "timeout", { timeout = it })
         slider("Прокси за один запуск", plimit, 100..2000, "plimit", { plimit = it }, "В публичных списках тысячи адресов: проверяется случайная часть этого размера. Мёртвые прокси не сохраняются")
-        slider("VPN-ключей с полной проверкой", deep, 10..1000, "deepLimit", { deep = it }, "После TCP-проверки запускается реальный Xray для каждого кандидата. Остальные остаются НЕ ПРОВЕРЕНЫ. Выборочная перепроверка работает без ограничения.")
+        slider("VPN-ключей с полной проверкой", deep, 10..1000, "deepLimit", { deep = it }, "После предварительной проверки запускается Xray или sing-box для каждого кандидата. Остальные остаются НЕ ПРОВЕРЕНЫ. Выборочная перепроверка работает без ограничения.")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("TLS-рукопожатие"); Text("Для ключей с TLS и Reality: отсекает серверы, которые только принимают порт", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Switch(tls, { tls = it; KeySettings.put(c, "tls", it) })
