@@ -262,3 +262,61 @@ private fun DeviceSheet(d: VpnShare.Device, addresses: List<VpnShare.Address>, r
         }
     }
 }
+
+// ------------------------------------------------------------------ Главное и «Ещё»
+
+@Composable
+private fun BigRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, sub: String, onClick: () -> Unit, trailing: @Composable () -> Unit = { Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.outline) }) {
+    SoftCard(padding = 12.dp, onClick = onClick, modifier = Modifier.padding(bottom = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(icon, tones.info, MaterialTheme.colorScheme.surfaceContainerLow, 42.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.width(8.dp))
+            trailing()
+        }
+    }
+}
+
+/** Главное: четыре понятных действия вместо восьми вкладок. */
+@Composable
+internal fun VpnMainTab(vm: VpnViewModel, onTab: (Int) -> Unit, onKeys: () -> Unit) {
+    val context = LocalContext.current
+    var rot by remember { mutableStateOf(VpnRotation.enabled(context)) }
+    var share by remember { mutableStateOf(VpnShare.enabled(context)) }
+    val server = vm.serverList.firstOrNull { it.id == (if (vm.serverActive) vm.runningProfileId else vm.selectedServer) }
+    val ping = server?.let { vm.serverPings[it.id] }
+    Spacer(Modifier.height(6.dp))
+    BigRow(Icons.Rounded.Dns, "Сервер",
+        if (server == null) "Сервера нет. Добавьте ключ или найдите бесплатные" else Countries.flag(Countries.of(server.name, server.endpoint)) + " " + server.name.ifEmpty { server.endpoint } + (if (ping != null && ping >= 0) " · $ping мс" else ""),
+        { onTab(1) })
+    BigRow(Icons.Rounded.Autorenew, "Менять сервер сама",
+        if (rot) "Включено: смена каждые ${VpnRotation.intervalMin(context).let { if (it >= 60) "${it / 60} ч" else "$it мин" }}" else "Страна будет меняться по расписанию",
+        { onTab(6) }) {
+        Switch(checked = rot, onCheckedChange = {
+            if (it && VpnRotation.pool(context).size < 2) { toast(context, "Выберите 2 и больше серверов"); onTab(6) } else { rot = it; VpnRotation.setEnabled(context, it) }
+        })
+    }
+    BigRow(Icons.Rounded.WifiTethering, "Раздать другим устройствам",
+        if (share) "Включено: устройств ${VpnShare.devices(context).size} из ${VpnShare.limit(context)}" else "Телефоны и ноутбук через ваш VPN",
+        { onTab(7) }) {
+        Switch(checked = share, onCheckedChange = {
+            if (it && VpnShare.devices(context).isEmpty()) { toast(context, "Сначала добавьте устройство"); onTab(7) } else { share = it; VpnShare.setEnabled(context, it) }
+        })
+    }
+    BigRow(Icons.Rounded.VpnKey, "Найти бесплатные ключи", "Поиск по сайтам, проверка отклика, сортировка по странам", onKeys)
+    BigRow(Icons.Rounded.MoreHoriz, "Ещё", "Свои адреса, DNS, приложения, запись трафика, журнал", { onTab(9) })
+}
+
+@Composable
+internal fun MoreTab(onTab: (Int) -> Unit) {
+    Spacer(Modifier.height(6.dp))
+    BigRow(Icons.Rounded.Link, "Свои адреса сайтов", "Подменить IP для сайта (файл Hosts)", { onTab(0) })
+    BigRow(Icons.Rounded.AccountTree, "Какие приложения идут через VPN", "Все или только выбранные", { onTab(3) })
+    BigRow(Icons.Rounded.Dns, "DNS-серверы", "Какими серверами пользоваться для имён сайтов", { onTab(2) })
+    BigRow(Icons.Rounded.RadioButtonChecked, "Запись трафика", "Диагностика: сохранить обмен данными в файл", { onTab(4) })
+    BigRow(Icons.Rounded.Description, "Журнал событий", "Что делал VPN и почему не подключился", { onTab(5) })
+}

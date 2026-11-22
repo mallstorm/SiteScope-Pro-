@@ -397,9 +397,10 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 @Composable
-fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () -> Unit = {}, showTabs: Boolean = true, vm: VpnViewModel = viewModel()) {
+fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () -> Unit = {}, showTabs: Boolean = true, onKeys: () -> Unit = {}, vm: VpnViewModel = viewModel()) {
     val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 7)) }
+    var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 9)) }
+    androidx.activity.compose.BackHandler(enabled = !showTabs && tab in listOf(0, 2, 3, 4, 5)) { tab = 9 }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) vm.start() else toast(context, "Без разрешения VPN включить нельзя")
     }
@@ -438,6 +439,8 @@ fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () 
                 4 -> CaptureTab(vm)
                 6 -> RotationTab(vm)
                 7 -> ShareTab(vm)
+                8 -> VpnMainTab(vm, onTab = { tab = it }, onKeys = onKeys)
+                9 -> MoreTab(onTab = { tab = it })
                 else -> LogTab(vm)
             }
         }

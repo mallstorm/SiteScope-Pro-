@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -108,22 +109,13 @@ fun ToolsScreen(state: AppState) {
     fun launch(tool: Tool) { tool.prepare?.invoke(state); state.openRoute(tool.route, tool.tab) }
 
     Column(Modifier.fillMaxSize()) {
-        AppHeader("Инструменты", "Все рабочие модули SiteScope Pro", logo = true,
+        AppHeader("Инструменты", "Выберите раздел", logo = true,
             actions = { HeaderMenu(listOf("Настройки и резервная копия" to { state.openRoute("settings") })) }
-        ) { StatusPills(state) }
+        )
 
-        Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp).padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp).padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SmartSearchBar(query, { query = it }, "Найти инструмент", scan = true,
                 onGo = { groups.firstOrNull()?.tools?.firstOrNull()?.let { launch(it) } })
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (c in ToolCategory.entries) {
-                    val on = category == c
-                    Box(
-                        Modifier.height(28.dp).clip(RoundedCornerShape(50)).background(if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerLowest)
-                            .clickable { category = c }.padding(horizontal = 12.dp), contentAlignment = Alignment.Center
-                    ) { Text(c.title, style = MaterialTheme.typography.labelLarge, color = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface) }
-                }
-            }
             if (groups.isEmpty()) {
                 Text("Ничего не найдено. Попробуйте другое слово или категорию.", style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 16.dp))
@@ -153,40 +145,37 @@ private fun groupHeight(toolCount: Int): Dp = 64.dp + 52.dp * ((toolCount + 1) /
 @Composable
 private fun ToolGroupCard(group: ToolGroup, expanded: Boolean, onToggle: () -> Unit, live: (Tool) -> ToolLive, onOpen: (Tool) -> Unit) {
     Column(
-        Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest)
+        Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest)
     ) {
-        Row(Modifier.fillMaxWidth().height(46.dp).clickable(onClick = onToggle).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            ToolIcon(group.icon, size = 30.dp)
-            Spacer(Modifier.width(10.dp))
+        Row(Modifier.fillMaxWidth().height(64.dp).clickable(onClick = onToggle).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            ToolIcon(group.icon, size = 42.dp)
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(group.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(group.subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(group.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(group.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text("${group.tools.size}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
-            Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (expanded) "Свернуть" else "Развернуть", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(20.dp))
+            Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (expanded) "Свернуть" else "Развернуть", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(24.dp))
         }
-        if (expanded) Column(Modifier.padding(start = 6.dp, end = 6.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            for (pair in group.tools.chunked(2)) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                for (tool in pair) Box(Modifier.weight(1f)) { ToolTile(tool, live(tool)) { onOpen(tool) } }
-                if (pair.size == 1) Spacer(Modifier.weight(1f))
-            }
+        if (expanded) Column(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            for (tool in group.tools) ToolRow(tool, live(tool)) { onOpen(tool) }
         }
     }
 }
 
 @Composable
-private fun ToolTile(tool: Tool, live: ToolLive, onClick: () -> Unit) {
+private fun ToolRow(tool: Tool, live: ToolLive, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .clickable(onClick = onClick).padding(horizontal = 7.dp),
+        Modifier.fillMaxWidth().heightIn(min = 54.dp).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ToolIcon(tool.icon, size = 26.dp)
-        Spacer(Modifier.width(7.dp))
+        ToolIcon(tool.icon, size = 34.dp)
+        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(tool.title, style = MaterialTheme.typography.labelLarge, maxLines = if (live.subtitle != null) 1 else 2, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp)
-            if (live.subtitle != null) Text(live.subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(tool.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(live.subtitle ?: tool.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (live.badge != null) { Spacer(Modifier.width(3.dp)); StatusBadge(live.badge, live.badgeKind) }
+        if (live.badge != null) { Spacer(Modifier.width(6.dp)); StatusBadge(live.badge, live.badgeKind) }
+        Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(20.dp))
     }
 }

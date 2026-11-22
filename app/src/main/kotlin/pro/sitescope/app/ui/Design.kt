@@ -365,7 +365,7 @@ fun BottomBar4(selected: Tab, taskCount: Int, onSelect: (Tab) -> Unit) {
             .background(Brush.linearGradient(listOf(t.headerStart, t.headerEnd))).navigationBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        for (tab in Tab.entries) {
+        for (tab in Tab.entries.filter { it != Tab.TASKS }) {
             val on = tab == selected
             Column(
                 Modifier.weight(1f).heightIn(min = 46.dp).clip(RoundedCornerShape(16.dp))

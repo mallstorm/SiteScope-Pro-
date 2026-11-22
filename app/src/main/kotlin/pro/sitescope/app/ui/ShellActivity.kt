@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -48,7 +49,7 @@ import pro.sitescope.app.tv.TvScreen
 
 /** Четыре вкладки нижней панели. Раздел, открытый из вкладки, не меняет подсвеченную вкладку. */
 enum class Tab(val title: String, val icon: ImageVector) {
-    HOME("Обзор", Icons.Rounded.Dashboard), TOOLS("Инструменты", Icons.Rounded.Build),
+    HOME("Главная", Icons.Rounded.Home), TOOLS("Инструменты", Icons.Rounded.Build),
     TASKS("Задачи", Icons.Rounded.Checklist), DATA("Данные", Icons.Rounded.Folder)
 }
 
@@ -165,7 +166,7 @@ fun Shell(state: AppState) {
             } else {
                 Crossfade(targetState = state.tab, label = "tab") { tab ->
                     when (tab) {
-                        Tab.HOME -> OverviewScreen(state)
+                        Tab.HOME -> HomeScreen(state)
                         Tab.TOOLS -> ToolsScreen(state)
                         Tab.TASKS -> TasksScreen(state)
                         Tab.DATA -> key(state.dataNonce) { DataHub(state, state.dataTab) }
