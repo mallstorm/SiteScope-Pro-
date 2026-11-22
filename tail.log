@@ -1,0 +1,171 @@
+Downloading https://services.gradle.org/distributions/gradle-8.14.3-bin.zip
+.............10%.............20%.............30%.............40%.............50%.............60%.............70%.............80%.............90%..............100%
+
+Welcome to Gradle 8.14.3!
+
+Here are the highlights of this release:
+ - Java 24 support
+ - GraalVM Native Image toolchain selection
+ - Enhancements to test reporting
+ - Build Authoring improvements
+
+For more details see https://docs.gradle.org/8.14.3/release-notes.html
+
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:buildKotlinToolingMetadata
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:buildCiadpi
+> Task :app:preBuild
+> Task :app:preReleaseBuild
+> Task :app:generateReleaseResValues
+> Task :app:checkReleaseAarMetadata
+> Task :app:mapReleaseSourceSetPaths
+> Task :app:generateReleaseResources
+> Task :app:packageReleaseResources
+> Task :app:mergeReleaseResources
+> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksRelease
+> Task :app:parseReleaseLocalResources
+> Task :app:processReleaseMainManifest
+> Task :app:processReleaseManifest
+> Task :app:preReleaseUnitTestBuild
+> Task :app:javaPreCompileRelease
+> Task :app:javaPreCompileReleaseUnitTest FROM-CACHE
+> Task :app:extractProguardFiles
+> Task :app:mergeReleaseJniLibFolders
+> Task :app:mergeReleaseNativeLibs
+> Task :app:processReleaseManifestForPackage
+> Task :app:checkReleaseDuplicateClasses
+
+> Task :app:stripReleaseDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so, libbarhopper_v3.so, libciadpi_exec.so, libgojni.so, libhev-socks5-tunnel.so, libi2pd.so, libimage_processing_util_jni.so, libjpeg.so, libleptonica.so, libpngx.so, libsingbox_exec.so, libsurface_util_jni.so, libtesseract.so, libtor.so.
+
+> Task :app:mergeReleaseStartupProfile
+> Task :app:extractReleaseNativeSymbolTables
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:mergeReleaseArtProfile
+> Task :app:mergeReleaseShaders
+> Task :app:compileReleaseShaders NO-SOURCE
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:mergeReleaseAssets
+> Task :app:extractReleaseVersionControlInfo
+> Task :app:validateSigningRelease
+> Task :app:writeReleaseAppMetadata
+> Task :app:writeReleaseSigningConfigVersions
+> Task :app:processReleaseResources
+> Task :app:compressReleaseAssets
+> Task :app:desugarReleaseFileDependencies
+> Task :app:compileReleaseKotlin
+> Task :app:mergeExtDexRelease
+> Task :app:optimizeReleaseResources
+
+> Task :app:compileReleaseKotlin
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/client/ClientActivity.kt:61:57 'val Icons.Rounded.ScreenShare: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.ScreenShare.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/client/ClientActivity.kt:204:38 'val Icons.Rounded.OpenInNew: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.OpenInNew.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/client/ClientScreens.kt:165:86 'val Icons.Rounded.InsertDriveFile: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.InsertDriveFile.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/client/ClientScreens.kt:294:107 'val Icons.Rounded.Send: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Send.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/client/ClientScreens.kt:392:120 'val Icons.Rounded.Send: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Send.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/client/ClientScreens.kt:489:115 'val Icons.Rounded.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Message.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/client/ClientScreens.kt:490:265 'val Icons.Rounded.Send: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Send.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/client/ClientScreens.kt:585:107 'val Icons.Rounded.Send: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Send.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/data/DataOverview.kt:34:50 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/data/DataOverview.kt:133:68 'val Icons.Rounded.OpenInNew: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.OpenInNew.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/data/DataScreen.kt:37:106 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/data/DataScreen.kt:182:83 'val Icons.Rounded.Label: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Label.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/data/DataScreen.kt:184:84 'val Icons.Rounded.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Notes.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ip/IpDbScreen.kt:264:28 'val Icons.Rounded.FactCheck: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.FactCheck.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ip/IpDbScreen.kt:301:92 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ip/IpScreen.kt:410:103 'val Icons.Rounded.Rule: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Rule.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ip/IpScreen.kt:450:109 'val Icons.Rounded.CallSplit: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.CallSplit.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ip/IpScreen.kt:793:46 'val Icons.Rounded.OpenInNew: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.OpenInNew.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/keys/KeyHubScreen.kt:434:84 'constructor(p0: String!, p1: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/keys/KeyHubScreen.kt:434:119 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/keys/KeyHubScreen.kt:694:66 'val Icons.Rounded.FormatListBulleted: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.FormatListBulleted.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/net/DeviceCardsTab.kt:191:93 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/net/NetworkScreen.kt:39:100 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/net/NetworkScreen.kt:302:95 'val Icons.Rounded.Label: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Label.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/net/NetworkScreen.kt:326:79 'val Icons.Rounded.Label: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Label.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/net/NetworkScreen.kt:328:80 'val Icons.Rounded.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Notes.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/net/SpeedScreen.kt:269:59 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/scan/QrScanner.kt:1:13 Annotation 'androidx.camera.core.ExperimentalGetImage' is not annotated with '@RequiresOptIn'. '@OptIn' has no effect.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/site/BatchScreen.kt:45:40 'val Icons.Rounded.PlaylistAddCheck: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.PlaylistAddCheck.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/site/SiteScreen.kt:239:64 'val Icons.Rounded.Rule: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Rule.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/site/SiteScreen.kt:280:45 'val Icons.Rounded.OpenInNew: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.OpenInNew.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/MaskSearchScreen.kt:486:73 'val Icons.Rounded.VolumeOff: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.VolumeOff.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/MaskSearchScreen.kt:486:102 'val Icons.Rounded.VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.VolumeUp.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/TvLanScreen.kt:110:32 'val Icons.Rounded.ManageSearch: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.ManageSearch.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/TvPlayerActivity.kt:454:107 'val Icons.Rounded.FormatListBulleted: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.FormatListBulleted.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/TvPlayerActivity.kt:596:66 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/TvScreen.kt:159:139 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/TvScreen.kt:266:52 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/TvScreen.kt:327:93 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/TvScreen.kt:457:56 'val Icons.Rounded.ManageSearch: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.ManageSearch.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/TvScreen.kt:497:79 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/TvScreen.kt:571:97 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/tv/TvViewModel.kt:227:66 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ui/Design.kt:108:102 'val Icons.Rounded.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.ArrowBack.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ui/HomeScreen.kt:36:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ui/Nav.kt:23:43 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ui/Nav.kt:29:50 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ui/OverviewScreen.kt:130:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ui/ProtectSummary.kt:96:75 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ui/ToolRegistry.kt:71:90 'val Icons.Rounded.OpenInNew: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.OpenInNew.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ui/ToolRegistry.kt:75:78 'val Icons.Rounded.List: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.List.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ui/ToolRegistry.kt:77:93 'val Icons.Rounded.PlaylistAddCheck: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.PlaylistAddCheck.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ui/ToolRegistry.kt:79:79 'val Icons.Rounded.ManageSearch: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.ManageSearch.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/ui/ToolsScreen.kt:98:13 Duplicate branch condition in 'when'.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/vpn/TlsInspectorScreen.kt:261:72 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/vpn/TlsInspectorScreen.kt:314:75 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/vpn/VpnRotation.kt:63:34 Java type mismatch: inferred type is 'String?', but 'String' was expected.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/vpn/VpnScreen.kt:578:100 'val Icons.Rounded.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Notes.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/vpn/VpnScreen.kt:684:137 'val Icons.Rounded.OpenInNew: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.OpenInNew.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/vpn/VpnScreen.kt:693:34 'val Icons.Rounded.Rule: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.Rule.
+w: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/kotlin/pro/sitescope/app/wifi/WifiViewModel.kt:83:32 'field SSID: String!' is deprecated. Deprecated in Java.
+
+> Task :app:compileReleaseJavaWithJavac
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+Note: /home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/src/main/java/pro/sitescope/app/DnsAnalyzer.java uses unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+
+> Task :app:processReleaseJavaRes
+> Task :app:bundleReleaseClassesToRuntimeJar
+> Task :app:bundleReleaseClassesToCompileJar
+> Task :app:generateReleaseLintReportModel
+> Task :app:generateReleaseUnitTestLintModel
+> Task :app:compileReleaseUnitTestKotlin
+> Task :app:compileReleaseUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processReleaseUnitTestJavaRes
+> Task :app:lintAnalyzeRelease
+> Task :app:testReleaseUnitTest
+> Task :app:dexBuilderRelease
+> Task :app:lintAnalyzeReleaseUnitTest
+> Task :app:mergeReleaseGlobalSynthetics
+> Task :app:generateReleaseLintVitalReportModel
+> Task :app:mergeReleaseJavaResource
+> Task :app:mergeDexRelease
+> Task :app:compileReleaseArtProfile
+> Task :app:lintVitalAnalyzeRelease
+> Task :app:lintVitalReportRelease SKIPPED
+> Task :app:lintVitalRelease SKIPPED
+> Task :app:packageRelease
+> Task :app:createReleaseApkListingFileRedirect
+> Task :app:assembleRelease
+
+> Task :app:lintReportRelease
+Wrote HTML report to file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/app/build/reports/lint-results-release.html
+
+> Task :app:lintRelease
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1795374893079.json
+
+[Incubating] Problems report is available at: file:///home/runner/work/SiteScope-Pro-/SiteScope-Pro-/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 6m 27s
+58 actionable tasks: 57 executed, 1 from cache
