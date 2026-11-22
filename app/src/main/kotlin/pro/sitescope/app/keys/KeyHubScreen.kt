@@ -2,6 +2,7 @@ package pro.sitescope.app.keys
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -48,7 +49,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 private val TYPE_LABEL = mapOf("vless" to "VLESS", "vmess" to "VMess", "trojan" to "Trojan", "ss" to "Shadowsocks", "socks" to "SOCKS5", "http" to "HTTP",
-    "hysteria2" to "Hysteria2", "tuic" to "TUIC", "wireguard" to "WireGuard")
+    "hysteria2" to "Hysteria2", "tuic" to "TUIC", "wireguard" to "WireGuard",
+    "openvpn" to "OpenVPN", "anytls" to "AnyTLS")
 private val ANON_LABEL = mapOf(1 to "прозрачный", 2 to "анонимный", 3 to "элитный")
 
 class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
@@ -84,7 +86,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         if (!force && n - lastSave > 60_000) { lastSave = n; KeyStore.save(context, items) }
     }
 
-    fun stop() { job?.cancel(); stage = "Остановлено"; running = false; KeyStore.save(context, items); touch() }
+    fun stop() { job?.cancel(); SingBoxValidator.cancel(); stage = "Остановлено"; running = false; KeyStore.save(context, items); touch() }
 
     // Clearing the visible database never erases the persistent deny-list.
     fun clearAll() { items = emptyList(); KeyStore.clear(context); touch() }
@@ -116,6 +118,41 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         quarantine(items.filter { it.id in ids }) { "Исключён вручную" }
     }
 
+    /** Imports private OpenVPN/WireGuard profiles without making them public. */
+    fun importLocalProfile(uri: Uri, done: (String) -> Unit) {
+        if (running) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+                    val output = java.io.ByteArrayOutputStream()
+                    val buf = ByteArray(8192)
+                    while (output.size() <= 262144) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        output.write(buf, 0, n)
+                    }
+                    output.toByteArray()
+                } ?: throw IllegalArgumentException("Не удалось прочитать файл")
+                require(bytes.size <= 262144) { "Файл больше 256 КБ" }
+                val profile = SingBoxConfig.importProfile(String(bytes, Charsets.UTF_8))
+                val key = KeyItem(profile.link, profile.type.uppercase() + " · " + profile.host,
+                    profile.type, profile.host, profile.port, "Локальный файл", System.currentTimeMillis())
+                val hash = KeyBlocklistStore.fingerprint(key.link)
+                if (blocked.any { it.fingerprint == hash }) "Этот профиль уже находится в чёрном списке"
+                else if (items.any { KeyBlocklistStore.fingerprint(it.link) == hash }) "Профиль уже добавлен"
+                else {
+                    items = items + key
+                    KeyStore.save(context, items)
+                    touch()
+                    "Импортирован ${profile.type.uppercase()} — выполните проверку"
+                }
+            } catch (error: Exception) {
+                "Импорт не выполнен: " + (error.message ?: "неизвестная ошибка")
+            }
+            withContext(Dispatchers.Main) { done(result) }
+        }
+    }
+
     /** Only real routed traffic can restore a blacklisted profile. */
     fun recheckBlocked(ids: Set<String>) {
         if (running) return
@@ -140,9 +177,12 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                     key.validationAt = 0L; key.validationNote = ""
                     try {
                         KeyChecker.check(key, timeout, checkTls)
-                        if (!key.proxy && !key.udp && key.ms >= 0) {
+                        if (!key.proxy && (key.ms >= 0 || key.ms == -3L) &&
+                            (key.type in SingBoxConfig.types || !key.udp)) {
                             val result = withContext(Dispatchers.IO) {
-                                XrayKeyValidator.check(context, key.link, timeout)
+                                if (key.type in SingBoxConfig.types)
+                                    SingBoxValidator.check(context, key.link, timeout)
+                                else XrayKeyValidator.check(context, key.link, timeout)
                             }
                             key.validation = result.status
                             key.validationMs = result.delayMs
@@ -274,8 +314,8 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                 // Only verified failures enter the permanent blacklist.
                 // Inconclusive tests and unsupported UDP protocols remain unverified.
                 val rejected = fresh.filter { key ->
-                    !key.udp && (key.ms == -2L ||
-                        (!key.proxy && key.validation == XrayKeyValidator.FAILED))
+                    (!key.udp && key.ms == -2L) ||
+                        (!key.proxy && key.validation == XrayKeyValidator.FAILED)
                 }
                 val newlyExcluded = quarantine(rejected) { key ->
                     if (key.ms == -2L) "Не отвечает при проверке" else
@@ -319,16 +359,20 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
      * The native core is used serially, not once per coroutine.
      */
     private suspend fun deepValidate(list: List<KeyItem>, limit: Int) {
-        val eligible = list.filter { !it.proxy && !it.udp && it.ms >= 0 &&
+        val eligible = list.filter { !it.proxy &&
+            (if (it.type in SingBoxConfig.types) it.ms >= 0 || it.ms == -3L else !it.udp && it.ms >= 0) &&
             (it.validation != XrayKeyValidator.VERIFIED || !it.alive) }
         val candidates = eligible.take(limit)
         if (candidates.isEmpty()) return
-        stage = "Проверка VPN через Xray"
+        stage = "Проверка VPN через ядра"
         cChecked.set(0); checked = 0; toCheck = candidates.size
         say("Глубокая проверка: ${candidates.size} из ${eligible.size} кандидатов")
         for (key in candidates) {
             coroutineContext.ensureActive()
-            val result = withContext(Dispatchers.IO) { XrayKeyValidator.check(context, key.link, 4500) }
+            val result = withContext(Dispatchers.IO) {
+                if (key.type in SingBoxConfig.types) SingBoxValidator.check(context, key.link, 4500)
+                else XrayKeyValidator.check(context, key.link, 4500)
+            }
             key.validation = result.status
             key.validationMs = result.delayMs
             key.validationAt = System.currentTimeMillis()
@@ -351,7 +395,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                 checkItems(list)
                 deepValidate(list, list.size)
                 val failed = list.filter {
-                    !it.udp && (it.ms == -2L || (!it.proxy && it.validation == XrayKeyValidator.FAILED))
+                    (!it.udp && it.ms == -2L) || (!it.proxy && it.validation == XrayKeyValidator.FAILED)
                 }
                 quarantine(failed) { it.validationNote.ifBlank { "Не работает после повторной проверки" } }
                 finishedNote = "Проверено ${list.size} · рабочих ${list.count { it.alive }} · исключено ${failed.size}"
