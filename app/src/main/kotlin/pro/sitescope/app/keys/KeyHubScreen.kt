@@ -39,6 +39,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pro.sitescope.app.XrayProfileStore
+import kotlin.coroutines.coroutineContext
 import pro.sitescope.app.ui.*
 import pro.sitescope.app.vpn.Countries
 import pro.sitescope.app.vpn.VpnShare
@@ -154,10 +155,11 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                 found.clear()
                 // Проверка
                 checkItems(fresh)
+                deepValidate(fresh, KeySettings.deepLimit(c))
                 val drop = fresh.filter { it.proxy && (it.ms == -2L || (eliteOnly && it.anon != 3)) }.map { it.id }.toSet()
                 if (drop.isNotEmpty()) items = items.filter { it.id !in drop }
                 val liveNow = fresh.count { it.alive && it.id !in drop }
-                finishedNote = "Найдено $foundTotal · проверено ${fresh.size} · живых $liveNow" + (fresh.count { it.proxy && it.anon == 3 && it.id !in drop }.let { if (it > 0) " · элитных $it" else "" })
+                finishedNote = "Найдено $foundTotal · TCP/прокси ${fresh.size} · подтверждено $liveNow" + (fresh.count { it.proxy && it.anon == 3 && it.id !in drop }.let { if (it > 0) " · элитных $it" else "" })
                 stage = "Готово"
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -187,13 +189,44 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         publish(true)
     }
 
+    /** Real proof: HTTPS response through a disposable local Xray SOCKS core.
+     * The native core is used serially, not once per coroutine.
+     */
+    private suspend fun deepValidate(list: List<KeyItem>, limit: Int) {
+        val eligible = list.filter { !it.proxy && !it.udp && it.ms >= 0 &&
+            (it.validation != XrayKeyValidator.VERIFIED || !it.alive) }
+        val candidates = eligible.take(limit)
+        if (candidates.isEmpty()) return
+        stage = "Проверка VPN через Xray"
+        cChecked.set(0); checked = 0; toCheck = candidates.size
+        say("Глубокая проверка: ${candidates.size} из ${eligible.size} кандидатов")
+        for (key in candidates) {
+            coroutineContext.ensureActive()
+            val result = withContext(Dispatchers.IO) { XrayKeyValidator.check(context, key.link, 4500) }
+            key.validation = result.status
+            key.validationMs = result.delayMs
+            key.validationAt = System.currentTimeMillis()
+            key.validationNote = result.reason
+            cChecked.incrementAndGet(); publish(true)
+            if (cChecked.get() % 10 == 0) KeyStore.save(context, items)
+        }
+        if (eligible.size > candidates.size)
+            say("Ещё ${eligible.size - candidates.size} кандидатов не валидированы — выберите их и нажмите перепроверку")
+    }
+
     /** Повторная проверка выбранных (или всех) ключей. */
     fun recheck(ids: Set<String>) {
         if (running) return
         running = true; finishedNote = ""
         val list = items.filter { ids.isEmpty() || it.id in ids }
         job = viewModelScope.launch(Dispatchers.Default) {
-            try { list.forEach { it.country = if (it.alive) it.country else "" }; checkItems(list); finishedNote = "Проверено ${list.size} · живых ${list.count { it.alive }}"; stage = "Готово" }
+            try {
+                list.forEach { it.validation = 0; it.validationMs = -1L; it.validationAt = 0; it.validationNote = ""; it.country = "" }
+                checkItems(list)
+                deepValidate(list, list.size)
+                finishedNote = "Проверено ${list.size} · подтверждено ${list.count { it.alive }}"
+                stage = "Готово"
+            }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) { finishedNote = "Ошибка: " + (e.message ?: "") }
             finally { KeyStore.save(context, items); running = false; publish(true) }
