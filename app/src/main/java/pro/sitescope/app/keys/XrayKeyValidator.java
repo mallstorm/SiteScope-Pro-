@@ -46,6 +46,67 @@ public final class XrayKeyValidator {
 
     private XrayKeyValidator() {}
 
+    /**
+     * Bulk Xray verifier, equivalent to the lightweight native real-delay probe
+     * used by v2rayNG. Unlike check(), no long-lived CoreController, SOCKS inbound,
+     * or per-key startLoop/stopLoop cycle is created. libv2ray supports concurrent
+     * independent measureOutboundDelay calls for ordinary generated profiles.
+     *
+     * The config has exactly ONE outbound -- the candidate itself -- so a healthy
+     * direct/freedom outbound cannot produce a false positive. The test URL is
+     * fetched through that outbound by the native engine.
+     */
+    public static Result checkNativeDelay(Context context, String profile) {
+        if (Thread.currentThread().isInterrupted())
+            return new Result(INCONCLUSIVE, -1, "Проверка отменена");
+        try {
+            String state = context.getSharedPreferences(HostsVpnService.PREFS, Context.MODE_PRIVATE)
+                    .getString(HostsVpnService.KEY_STATE, HostsVpnService.STATE_OFF);
+            if (HostsVpnService.STATE_ACTIVE.equals(state) || HostsVpnService.STATE_STARTING.equals(state))
+                return new Result(INCONCLUSIVE, -1, "Для точного теста остановите VPN SiteScope");
+
+            XrayProfileParser.ParsedProfile parsed = XrayProfileParser.parse(profile);
+            if (parsed.fullConfig != null)
+                return new Result(INCONCLUSIVE, -1, "Полный JSON требует отдельного валидатора");
+            if ("SHADOWSOCKS".equals(parsed.type)) {
+                JSONObject settings = parsed.outbound.optJSONObject("settings");
+                org.json.JSONArray servers = settings == null ? null : settings.optJSONArray("servers");
+                JSONObject server = servers == null ? null : servers.optJSONObject(0);
+                String cipher = server == null ? "" : server.optString("method");
+                if (cipher.toLowerCase(java.util.Locale.US).endsWith("-cfb"))
+                    return new Result(FAILED, -1, "Устаревший Shadowsocks-шифр не поддерживается");
+            }
+
+            XrayAssets.prepare(context);
+            JSONObject outbound = new JSONObject(parsed.outbound.toString());
+            outbound.remove("mux");
+            JSONObject cfg = new JSONObject();
+            cfg.put("log", new JSONObject().put("loglevel", "warning"));
+            cfg.put("outbounds", new org.json.JSONArray().put(outbound));
+
+            // Measured time covers real outbound HTTP request, not TCP connect.
+            String[] urls = {
+                "https://www.gstatic.com/generate_204",
+                "https://www.google.com/generate_204"
+            };
+            for (String url : urls) {
+                if (Thread.currentThread().isInterrupted())
+                    return new Result(INCONCLUSIVE, -1, "Проверка отменена");
+                long delay = Libv2ray.measureOutboundDelay(cfg.toString(), url);
+                if (delay >= 0)
+                    return new Result(VERIFIED, delay, "HTTP через Xray: " + delay + " мс");
+            }
+            // A temporary network outage or restricted probe URL cannot justify
+            // permanent blacklisting of an otherwise valid subscription key.
+            return new Result(INCONCLUSIVE, -1, "Оба HTTP-теста через Xray без ответа");
+        } catch (IllegalArgumentException error) {
+            return new Result(FAILED, -1, "Некорректная конфигурация");
+        } catch (Throwable error) {
+            return new Result(INCONCLUSIVE, -1,
+                    "Ошибка нативного измерения Xray: " + error.getClass().getSimpleName());
+        }
+    }
+
     public static Result check(Context context, String profile, int timeoutMs) {
         if (!BUSY.compareAndSet(false, true))
             return new Result(INCONCLUSIVE, -1, "Валидатор занят");
