@@ -5,7 +5,6 @@ class KeyKind(val id: String, val title: String, val sub: String, val types: Set
 
 object KeySources {
     private const val GH = "https://raw.githubusercontent.com/"
-    private const val WIKI = "https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/"
     val XRAY_TYPES = setOf("vless", "vmess", "trojan", "ss")
     val UDP_TYPES = setOf("hysteria2", "tuic", "wireguard")
     val PROXY_TYPES = setOf("socks", "http")
@@ -26,23 +25,32 @@ object KeySources {
             GH + "kasesm/Free-Config/main/vmess_raw.txt",
             GH + "kasesm/Free-Config/main/trojan_raw.txt",
             GH + "kasesm/Free-Config/main/ss_raw.txt",
-            WIKI + "vless.txt", WIKI + "vmess.txt", WIKI + "trojan.txt", WIKI + "ss.txt")),
+            GH + "Idolvpn/Automate-V2ray-Config-Collector/main/configs/vless.txt",
+            GH + "Idolvpn/Automate-V2ray-Config-Collector/main/configs/vmess.txt",
+            GH + "Idolvpn/Automate-V2ray-Config-Collector/main/configs/trojan.txt")),
         KeyKind("udp", "Hysteria2, TUIC, WireGuard", "Быстрые UDP-протоколы, отклик не проверяется", UDP_TYPES, listOf(
             GH + "barry-far/V2ray-Config/main/All_Configs_Sub.txt", GH + "mrvcoder/V2rayCollector/main/mixed_iran.txt", GH + "mahdibland/V2RayAggregator/master/sub/sub_merge_base64.txt",
             GH + "0xRadikal/Free-v2ray-Configs/main/protocols/hysteria2.txt",
             GH + "0xRadikal/Free-v2ray-Configs/main/protocols/tuic.txt",
             GH + "PrinceVSFX/Hysteria2-Configs/main/Configs_list.txt",
-            WIKI + "hy2.txt", WIKI + "tuic.txt")),
+            GH + "morpheusadam/v2ray-config/main/subs/bundles/tuic.txt",
+            GH + "MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/hysteria2.txt")),
         KeyKind("socks", "SOCKS5", "Открытые серверы IPv4 и IPv6", setOf("socks"), listOf(
             GH + "TheSpeedX/PROXY-List/master/socks5.txt", GH + "monosans/proxy-list/main/proxies/socks5.txt", GH + "hookzof/socks5_list/master/proxy.txt",
             GH + "roosterkid/openproxylist/main/SOCKS5_RAW.txt", GH + "proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt",
             GH + "vakhov/fresh-proxy-list/master/socks5.txt", GH + "zloi-user/hideip.me/master/socks5.txt", GH + "iplocate/free-proxy-list/main/all-proxies.txt",
-            GH + "0xRadikal/Free-v2ray-Configs/main/protocols/socks.txt", WIKI + "socks5.txt")),
+            GH + "0xRadikal/Free-v2ray-Configs/main/protocols/socks.txt",
+            GH + "FusionProxies/free-proxy-list/main/proxies/socks5.txt",
+            GH + "Dahono-com/free-proxy-list/main/proxies/socks5.txt",
+            GH + "Moleway/Free-Proxy-List/main/socks5.txt")),
         KeyKind("http", "HTTP и HTTPS", "Прокси с проверкой HTTPS", setOf("http"), listOf(
             GH + "TheSpeedX/PROXY-List/master/http.txt", GH + "monosans/proxy-list/main/proxies/http.txt", GH + "proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
             GH + "clarketm/proxy-list/master/proxy-list-raw.txt", GH + "jetkai/proxy-list/main/online-proxies/txt/proxies-https.txt", GH + "roosterkid/openproxylist/main/HTTPS_RAW.txt",
             GH + "ShiftyTR/Proxy-List/master/https.txt", GH + "zloi-user/hideip.me/master/https.txt", GH + "Zaeem20/FREE_PROXIES_LIST/master/https.txt",
-            GH + "sunny9577/proxy-scraper/master/generated/http_proxies.txt", GH + "vakhov/fresh-proxy-list/master/https.txt", GH + "MuRongPIG/Proxy-Master/main/http.txt", WIKI + "http.txt", WIKI + "https.txt")),
+            GH + "sunny9577/proxy-scraper/master/generated/http_proxies.txt", GH + "vakhov/fresh-proxy-list/master/https.txt", GH + "MuRongPIG/Proxy-Master/main/http.txt",
+            GH + "FusionProxies/free-proxy-list/main/proxies/http.txt",
+            GH + "Dahono-com/free-proxy-list/main/proxies/http.txt",
+            GH + "Moleway/Free-Proxy-List/main/http.txt")),
         KeyKind("elite", "Элитные прокси", "Только анонимные: не выдают ваш IP", PROXY_TYPES, listOf(
             "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=elite",
             "https://api.proxyscrape.com/v2/?request=getproxies&protocol=socks5&timeout=10000&country=all",
@@ -55,7 +63,8 @@ object KeySources {
             GH + "0xRadikal/Free-v2ray-Configs/main/fast/configs.txt",
             GH + "0xRadikal/Free-v2ray-Configs/main/top100.txt",
             GH + "kasesm/Free-Config/main/all_raw.txt",
-            GH + "kasesm/Free-Config/main/high_volume_raw.txt"))
+            GH + "kasesm/Free-Config/main/high_volume_raw.txt",
+            GH + "Idolvpn/Automate-V2ray-Config-Collector/main/configs/mix_sub.txt"))
     )
 
     fun byId(id: String) = kinds.firstOrNull { it.id == id }
@@ -63,7 +72,7 @@ object KeySources {
     /** Подпись источника для списка: для GitHub — владелец/репозиторий. */
     fun label(url: String): String {
         val host = KeyCrawler.hostOf(url)
-        if (host == "raw.githubusercontent.com") { val p = url.substringAfter(host + "/").split('/'); if (p.size >= 3 && p[0] == "wiki") return p[1] + "/" + p[2]; if (p.size >= 2) return p[0] + "/" + p[1] }
+        if (host == "raw.githubusercontent.com") { val p = url.substringAfter(host + "/").split('/'); if (p.size >= 2) return p[0] + "/" + p[1] }
         return host.ifEmpty { url }
     }
 
