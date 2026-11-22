@@ -9,6 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 class DpiArgsTest {
     @Test fun splitHandlesQuotesAndSpaces() {
@@ -108,6 +109,7 @@ class DpiScoringTest {
 }
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class DpiChainConfigTest {
     @Test fun addsSocksOutboundAndDialerProxy() {
         val src = """{"outbounds":[{"tag":"proxy","protocol":"vless","settings":{}},{"tag":"direct","protocol":"freedom"},{"tag":"dns-out","protocol":"dns"},{"tag":"block","protocol":"blackhole"}]}"""
