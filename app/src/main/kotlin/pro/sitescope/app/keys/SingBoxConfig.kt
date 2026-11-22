@@ -50,7 +50,7 @@ object SingBoxConfig {
     }
 
     private fun decodeProfile(link: String, scheme: String): String {
-        require(link.startsWith(scheme + "://profile/")) { "Для $scheme необходим файл конфигурации" }
+        if (!link.startsWith(scheme + "://profile/")) throw UnsupportedOperationException("Для $scheme требуется полный файл конфигурации")
         val encoded = link.substringAfter("://profile/").substringBefore('#')
         require(encoded.length < 350000)
         return String(Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP))
@@ -87,9 +87,14 @@ object SingBoxConfig {
                 opts["downmbps"]?.toIntOrNull()?.takeIf { it > 0 }?.let { out.put("down_mbps", it) }
             }
             "tuic" -> {
-                val password = opts["password"].orEmpty()
-                require(password.isNotBlank()) { "В TUIC отсутствует пароль" }
-                out.put("uuid", user).put("password", password)
+                // Both share-link dialects are common: uuid:password@host
+                // and uuid@host?password=...; don't discard either.
+                val uuid = user.substringBefore(':')
+                val password = opts["password"].orEmpty().ifBlank {
+                    if (':' in user) user.substringAfter(':') else ""
+                }
+                require(uuid.isNotBlank() && password.isNotBlank()) { "В TUIC отсутствует UUID или пароль" }
+                out.put("uuid", uuid).put("password", password)
                 opts["congestion_control"]?.let { out.put("congestion_control", it) }
                 opts["udp_relay_mode"]?.let { out.put("udp_relay_mode", it) }
             }
