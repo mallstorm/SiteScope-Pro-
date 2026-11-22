@@ -37,7 +37,15 @@ class KeyItem(val link: String, val name: String, val type: String, val host: St
     var anon = 0    // прокси: 0 неизвестно, 1 прозрачный, 2 анонимный, 3 элитный
     var https = 0   // прокси: 0 не проверялся, 1 HTTPS работает, 2 нет
     val id: String get() = type + "|" + host + ":" + port + "|" + Integer.toHexString(link.substringBefore('#').hashCode())
-    val alive: Boolean get() = ms >= 0 && tls != 2
+    // Alive requires actual routed traffic, not merely an open TCP port.
+    // Legacy TCP-only saved entries migrate to UNTESTED.
+    var validation = 0   // 0 untested, 1 Xray HTTPS success, 2 failed, 3 inconclusive
+    var validationMs = -1L
+    var validationAt = 0L
+    var validationNote = ""
+    val verifiedPing: Long get() = if (proxy) ms else validationMs
+    val alive: Boolean get() = if (proxy) ms >= 0 else validation == 1 &&
+        validationAt > System.currentTimeMillis() - 6L * 60 * 60 * 1000
     val proxy: Boolean get() = type == "http" || type == "socks"
     val udp: Boolean get() = type == "hysteria2" || type == "tuic" || type == "wireguard"
     val v6: Boolean get() = host.contains(':')
@@ -74,6 +82,8 @@ object KeyStore {
             val o = a.getJSONObject(i)
             KeyItem(o.getString("link"), o.optString("name"), o.optString("type"), o.optString("host"), o.optInt("port"), o.optString("source"), o.optLong("foundAt")).also {
                 it.ip = o.optString("ip"); it.country = o.optString("country"); it.ms = o.optLong("ms", -1); it.tls = o.optInt("tls"); it.checkedAt = o.optLong("checkedAt"); it.anon = o.optInt("anon"); it.https = o.optInt("https")
+                it.validation = o.optInt("validation"); it.validationMs = o.optLong("validationMs", -1)
+                it.validationAt = o.optLong("validationAt"); it.validationNote = o.optString("validationNote")
             }
         }
     } catch (e: Exception) { emptyList() }
@@ -82,7 +92,9 @@ object KeyStore {
         val keep = items.sortedWith(compareByDescending<KeyItem> { it.alive }.thenByDescending { it.foundAt }).take(LIMIT)
         val a = JSONArray()
         keep.forEach { a.put(JSONObject().put("link", it.link).put("name", it.name).put("type", it.type).put("host", it.host).put("port", it.port).put("source", it.source).put("foundAt", it.foundAt)
-            .put("ip", it.ip).put("country", it.country).put("ms", it.ms).put("tls", it.tls).put("checkedAt", it.checkedAt).put("anon", it.anon).put("https", it.https)) }
+            .put("ip", it.ip).put("country", it.country).put("ms", it.ms).put("tls", it.tls).put("checkedAt", it.checkedAt).put("anon", it.anon).put("https", it.https)
+            .put("validation", it.validation).put("validationMs", it.validationMs)
+            .put("validationAt", it.validationAt).put("validationNote", it.validationNote)) }
         try { file(c).writeText(a.toString()) } catch (e: Exception) { }
     }
     fun clear(c: Context) { file(c).delete() }
@@ -378,7 +390,7 @@ object KeyChecker {
         item.ms = (System.nanoTime() - t0) / 1_000_000
         if (cc.length == 2) item.country = cc.uppercase()
         val real = myIp()
-        var anon = if (real.isNotEmpty() && exit == real) 1 else 3
+        var anon = if (real.isEmpty()) 0 else if (exit == real) 1 else 3
         val h = viaProxy("http://httpbin.org/headers", proxy, timeout)
         if (h != null && h.first == 200) {
             val low = h.second.lowercase()
@@ -442,7 +454,7 @@ object KeyChecker {
 
 /** Экспорт: понятные имена, подписка base64 и локальная подписка по Wi-Fi. */
 object KeyExport {
-    fun label(i: KeyItem): String = (if (i.country.length == 2) Countries.flag(i.country) + " " + i.country + " · " else "") + (if (i.ms >= 0) "${i.ms} мс · " else "") + (if (i.proxy && i.anon == 3) "elite · " else "") + i.host
+    fun label(i: KeyItem): String = (if (i.country.length == 2) Countries.flag(i.country) + " " + i.country + " · " else "") + (if (i.alive && i.verifiedPing >= 0) "${i.verifiedPing} мс · " else "") + (if (i.proxy && i.anon == 3) "elite · " else "") + i.host
 
     fun labeled(i: KeyItem): String = try {
         if (i.type == "vmess") {
