@@ -563,17 +563,30 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         stage = "Проверка отклика"; cChecked.set(0); checked = 0; toCheck = list.size
         val gate = Semaphore(KeySettings.threads(c))
         val timeout = KeySettings.timeoutMs(c).coerceAtMost(KeyQualityPolicy.CONNECT_TIMEOUT_MS)
+        // Multiple VLESS/Trojan/VMess configs often share a single host:port.
+        // A TCP preflight is about that endpoint, never about the credentials:
+        // probe each unique transport+host+port once and broadcast the result.
+        val endpoints = list.groupBy {
+            (if (it.udp) "udp|" else "tcp|") + it.host.lowercase(Locale.ROOT) + ":" + it.port
+        }
+        say("TCP-предпроверка: ${list.size} ключей · ${endpoints.size} уникальных адресов")
         coroutineScope {
-            list.map { k -> async {
+            endpoints.values.map { members -> async {
                 gate.acquire()
                 try {
                     ensureActive()
+                    val first = members.first()
                     val ok = kotlinx.coroutines.withTimeoutOrNull(timeout * 5L + 5000L) {
-                        KeyChecker.quickCheck(k, timeout)
+                        KeyChecker.quickCheck(first, timeout)
                     }
-                    if (ok == null) { k.ms = -2; k.checkedAt = System.currentTimeMillis() }
+                    if (ok == null) { first.ms = -2; first.checkedAt = System.currentTimeMillis() }
+                    for (other in members.drop(1)) {
+                        other.ms = first.ms
+                        other.ip = first.ip
+                        other.checkedAt = first.checkedAt
+                    }
                 } finally {
-                    cChecked.incrementAndGet()
+                    cChecked.addAndGet(members.size)
                     gate.release()
                     publish()
                 }
