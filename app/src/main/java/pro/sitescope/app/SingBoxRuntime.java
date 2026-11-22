@@ -76,5 +76,40 @@ public final class SingBoxRuntime {
         if (configFile != null) { configFile.delete(); configFile = null; }
     }
 
+
+    /** End-to-end health proof through this exact outbound, never direct TCP. */
+    public long probeOutbound() throws Exception {
+        if (!isRunning()) throw new IllegalStateException("sing-box не запущен");
+        Exception first = null;
+        for (String target : new String[]{"www.gstatic.com", "cp.cloudflare.com"}) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException("sing-box probe interrupted");
+            try (Socket socket = new Socket(new java.net.Proxy(
+                    java.net.Proxy.Type.SOCKS, new InetSocketAddress("127.0.0.1", port)))) {
+                long start = System.nanoTime();
+                socket.connect(InetSocketAddress.createUnresolved(target, 443), 6000);
+                socket.setSoTimeout(6000);
+                try (javax.net.ssl.SSLSocket ssl = (javax.net.ssl.SSLSocket)
+                        ((javax.net.ssl.SSLSocketFactory)javax.net.ssl.SSLSocketFactory.getDefault())
+                            .createSocket(socket, target, 443, true)) {
+                    ssl.setSoTimeout(6000);
+                    javax.net.ssl.SSLParameters params = ssl.getSSLParameters();
+                    params.setEndpointIdentificationAlgorithm("HTTPS");
+                    ssl.setSSLParameters(params);
+                    ssl.startHandshake();
+                    ssl.getOutputStream().write(("GET /generate_204 HTTP/1.1\r\nHost: " + target +
+                        "\r\nConnection: close\r\n\r\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                    ssl.getOutputStream().flush();
+                    String response = new java.io.BufferedReader(new java.io.InputStreamReader(
+                        ssl.getInputStream(), java.nio.charset.StandardCharsets.US_ASCII)).readLine();
+                    if (response != null && response.matches("HTTP/1\\.[01] 204(?:\\s.*)?"))
+                        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+                }
+            } catch (Exception error) {
+                if (first == null) first = error;
+            }
+        }
+        throw new IllegalStateException("sing-box не передал HTTPS-трафик через выбранный сервер", first);
+    }
+
     public int socksPort() { return port; }
 }
