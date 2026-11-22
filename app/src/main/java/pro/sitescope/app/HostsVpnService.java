@@ -38,6 +38,8 @@ public final class HostsVpnService extends VpnService {
     public static final String EXTRA_MODE = "mode";
     public static final String MODE_BASIC = "BASIC";
     public static final String MODE_XRAY = "XRAY";
+    public static final String MODE_SINGBOX = "SINGBOX";
+    public static final String EXTRA_SINGBOX_ID = "singbox_profile_id";
     public static final String PREFS = "hosts_manager_state";
     public static final String KEY_STATE = "lifecycleState";
     public static final String STATE_OFF = "OFF";
@@ -63,6 +65,7 @@ public final class HostsVpnService extends VpnService {
     private volatile Thread starter;
     private volatile int startRequest;
     private XrayRuntime xrayRuntime;
+    private SingBoxRuntime singBoxRuntime;
     private volatile Map<String,List<InetAddress>> overrides = new LinkedHashMap<String,List<InetAddress>>();
     private InetAddress upstream;
     private Network underlyingNetwork;
@@ -96,6 +99,11 @@ public final class HostsVpnService extends VpnService {
             return START_NOT_STICKY;
         }
         String requested = normalizeMode(intent == null ? null : intent.getStringExtra(EXTRA_MODE));
+        if (intent != null && intent.hasExtra(EXTRA_SINGBOX_ID)) {
+            String keyId = intent.getStringExtra(EXTRA_SINGBOX_ID);
+            if (keyId != null) getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(EXTRA_SINGBOX_ID, keyId).apply();
+        }
         if (requested.length() == 0) requested = normalizeMode(getSharedPreferences(PREFS, MODE_PRIVATE).getString("desiredMode", MODE_BASIC));
         if (requested.length() == 0) requested = MODE_BASIC;
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("desiredMode", requested).apply();
@@ -153,7 +161,7 @@ public final class HostsVpnService extends VpnService {
         synchronized (startupLock) {
             try {
                 ensureStartCurrent(request);
-                if (running || tunnel != null || xrayRuntime != null) stopVpn("Перезапуск VPN", false);
+                if (running || tunnel != null || xrayRuntime != null || singBoxRuntime != null) stopVpn("Перезапуск VPN", false);
                 ensureStartCurrent(request);
                 startMode(requested, request);
             } catch (Throwable e) {
@@ -163,7 +171,7 @@ public final class HostsVpnService extends VpnService {
                 }
                 String message = "Ошибка запуска " + requested + ": " + safeMessage(e);
                 VpnDiagnostics.log(this, "VPN_START_FAILED", message);
-                if (MODE_XRAY.equals(requested) && !(e instanceof VpnNetworkCoordinator.VpnSlotException)) {
+                if ((MODE_XRAY.equals(requested) || MODE_SINGBOX.equals(requested)) && !(e instanceof VpnNetworkCoordinator.VpnSlotException)) {
                     stopVpn(message, false);
                     startForeground(NOTIFICATION_ID, notification("XRAY недоступен · возврат в BASIC…"));
                     try {
@@ -208,6 +216,9 @@ public final class HostsVpnService extends VpnService {
         if (MODE_XRAY.equals(mode)) {
             VpnDiagnostics.log(this, "VPN_UNDERLAY_READY", VpnNetworkCoordinator.describe(this, underlay));
             startXrayVpn(generation, request, underlay);
+        } else if (MODE_SINGBOX.equals(mode)) {
+            VpnDiagnostics.log(this, "VPN_UNDERLAY_READY", VpnNetworkCoordinator.describe(this, underlay));
+            startSingBoxVpn(generation, request, underlay);
         } else startBasicVpn(generation, "BASIC · локальная hosts/DNS-подмена", underlay);
         ensureStartCurrent(request);
     }
@@ -236,6 +247,78 @@ public final class HostsVpnService extends VpnService {
         VpnDiagnostics.log(this, "BASIC_READY", "upstream=" + upstream.getHostAddress() + ", hosts=" + overrides.size());
         worker = new Thread(new Runnable() { @Override public void run() { packetLoop(local, token); } }, "SiteScopeHostsBasic");
         worker.start();
+    }
+
+    /**
+     * Dedicated full-tunnel mode. Reuses SiteScope's single Android TUN and
+     * HEV bridge, but routes all TCP/UDP through a separate sing-box process.
+     * The site-wide Xray runtime is never initialized in this mode.
+     */
+    private void startSingBoxVpn(final int token, final int request, Network underlay) throws Exception {
+        if (!supportsArm64()) throw new IllegalStateException("sing-box требуется arm64-v8a");
+        String selectedId = getSharedPreferences(PREFS, MODE_PRIVATE).getString(EXTRA_SINGBOX_ID, "");
+        pro.sitescope.app.keys.KeyItem key = null;
+        for (pro.sitescope.app.keys.KeyItem item : pro.sitescope.app.keys.KeyStore.INSTANCE.load(this)) {
+            if (item.getId().equals(selectedId)) { key = item; break; }
+        }
+        if (key == null || !pro.sitescope.app.keys.SingBoxConfig.INSTANCE.getTypes().contains(key.getType()))
+            throw new IllegalStateException("Сначала выберите профиль Hysteria2, TUIC, WireGuard, OpenVPN или AnyTLS");
+        if (!key.getAlive()) throw new IllegalStateException("Профиль не подтверждён проверкой подключения");
+        final String profileName = key.getName();
+        final String profileId = key.getId();
+        final String profileEndpoint = key.getHost() + ":" + key.getPort();
+        updateState(STATE_STARTING, false, MODE_SINGBOX, "Подготовка sing-box…", profileName, profileId, profileEndpoint, "sing-box 1.14.4");
+        Builder builder = new Builder().setSession("SiteScope sing-box").setMtu(1500)
+            .addAddress("10.10.14.1", 30).addRoute("0.0.0.0", 0).addDnsServer("1.1.1.1")
+            .addAddress("fc00::10:10:14:1", 126).addRoute("::", 0).addDnsServer("2606:4700:4700::1111");
+        if (Build.VERSION.SDK_INT >= 29) builder.setMetered(false);
+        if (underlay != null) builder.setUnderlyingNetworks(new Network[]{underlay});
+        applyAppScope(builder);
+        ParcelFileDescriptor local = builder.establish();
+        if (local == null) throw new IllegalStateException("Android не предоставил TUN sing-box");
+        tunnel = local;
+        if (underlay != null) setUnderlyingNetworks(new Network[]{underlay});
+        Thread.sleep(650L);
+        ensureStartCurrent(request);
+        singBoxRuntime = new SingBoxRuntime(this);
+        singBoxRuntime.start(local, key.getLink());
+        ensureStartCurrent(request);
+        if (!waitForVpnNetwork(3000L)) throw new IllegalStateException("Android не подтвердил VPN сеть sing-box");
+        activeMode = MODE_SINGBOX;
+        running = true;
+        updateNotification("sing-box · " + profileName);
+        updateState(STATE_ACTIVE, true, MODE_SINGBOX,
+            "sing-box · HEV и ядро работают · профиль " + profileName,
+            profileName, profileId, profileEndpoint, "sing-box 1.14.4");
+        watchdog = new Thread(new Runnable() { @Override public void run() {
+            try {
+                while (running && token == generation && MODE_SINGBOX.equals(activeMode)) {
+                    Thread.sleep(4000L);
+                    SingBoxRuntime current = singBoxRuntime;
+                    if (current == null || !current.isRunning() || !isVpnNetworkVisible()) {
+                        fallbackSingBoxToBasic(token, "sing-box или VPN-интерфейс остановился");
+                        return;
+                    }
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putLong("heartbeatAt", System.currentTimeMillis()).apply();
+                }
+            } catch (InterruptedException ignored) { }
+        } }, "SiteScopeSingBoxWatchdog");
+        watchdog.start();
+    }
+
+    private synchronized void fallbackSingBoxToBasic(int token, String message) {
+        if (!running || token != generation || !MODE_SINGBOX.equals(activeMode)) return;
+        VpnDiagnostics.log(this, "SINGBOX_FALLBACK", message);
+        stopVpn(message, false);
+        startForeground(NOTIFICATION_ID, notification("Возврат в BASIC…"));
+        try {
+            Network network = VpnNetworkCoordinator.awaitReady(this, 10000L, null, null);
+            generation++; loadOverrides();
+            startBasicVpn(generation, "Fallback BASIC · " + message, network);
+        } catch (Exception error) {
+            stopVpn("Не удалось восстановить BASIC: " + safeMessage(error), true, STATE_ERROR);
+            stopSelf();
+        }
     }
 
     private void startXrayVpn(final int token, final int request, Network underlay) throws Exception {
@@ -514,6 +597,7 @@ public final class HostsVpnService extends VpnService {
         if (healthProbe != null && healthProbe != Thread.currentThread()) healthProbe.interrupt(); healthProbe = null;
         pro.sitescope.app.vpn.TunnelProxy.remove(this);
         if (xrayRuntime != null) { xrayRuntime.stop(); xrayRuntime = null; }
+        if (singBoxRuntime != null) { singBoxRuntime.stop(); singBoxRuntime = null; }
         pro.sitescope.app.dpi.DpiChain.release();
         if (captureTee != null) { try { captureTee.stop(); } catch (Throwable ignored) { } captureTee = null; }
         pro.sitescope.app.vpn.CaptureHub.stop();
@@ -669,7 +753,7 @@ public final class HostsVpnService extends VpnService {
     }
 
     private static boolean supportsArm64() { for (String abi : Build.SUPPORTED_ABIS) if ("arm64-v8a".equalsIgnoreCase(abi)) return true; return false; }
-    private static String normalizeMode(String mode) { if (MODE_XRAY.equalsIgnoreCase(mode)) return MODE_XRAY; if (MODE_BASIC.equalsIgnoreCase(mode)) return MODE_BASIC; return ""; }
+    private static String normalizeMode(String mode) { if (MODE_XRAY.equalsIgnoreCase(mode)) return MODE_XRAY; if (MODE_SINGBOX.equalsIgnoreCase(mode)) return MODE_SINGBOX; if (MODE_BASIC.equalsIgnoreCase(mode)) return MODE_BASIC; return ""; }
     private static String safeMessage(Throwable e) { String value = e.getMessage(); return value == null || value.length() == 0 ? e.getClass().getSimpleName() : value; }
 
     @Override public void onRevoke() { cancelPendingStart(); stopVpn("VPN отозван системой", true); stopSelf(); super.onRevoke(); }
