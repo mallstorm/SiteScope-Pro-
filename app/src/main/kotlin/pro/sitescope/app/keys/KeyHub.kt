@@ -44,11 +44,26 @@ class KeyItem(val link: String, val name: String, val type: String, val host: St
     var validationAt = 0L
     var validationNote = ""
     val verifiedPing: Long get() = if (proxy) ms else validationMs
-    val alive: Boolean get() = if (proxy) ms >= 0 else validation == 1 &&
+    val alive: Boolean get() = if (proxy) ms in 0 until KeyQualityPolicy.MAX_WORKING_MS else
+        validation == 1 && validationMs in 0 until KeyQualityPolicy.MAX_WORKING_MS &&
         validationAt > System.currentTimeMillis() - 6L * 60 * 60 * 1000
     val proxy: Boolean get() = type == "http" || type == "socks"
     val udp: Boolean get() = type == "hysteria2" || type == "tuic" || type == "wireguard" || type == "openvpn"
     val v6: Boolean get() = host.contains(':')
+}
+
+/** Strict working-list threshold. Slower or timed-out entries stay in the candidate pool. */
+object KeyQualityPolicy {
+    const val MAX_WORKING_MS = 1000L
+    const val CONNECT_TIMEOUT_MS = 1000
+    fun fastEnough(delayMs: Long): Boolean = delayMs in 0 until MAX_WORKING_MS
+    fun className(delayMs: Long): String = when {
+        delayMs < 0 -> "Нет ответа"
+        delayMs <= 200 -> "Быстрый"
+        delayMs <= 600 -> "Нормальный"
+        delayMs < MAX_WORKING_MS -> "Медленный"
+        else -> "Слишком медленный"
+    }
 }
 
 object KeySettings {
@@ -59,7 +74,7 @@ object KeySettings {
     fun threads(c: Context) = p(c).getInt("threads", 24).coerceIn(4, 48)
     fun parallelSites(c: Context) = p(c).getInt("psites", 3).coerceIn(1, 4)
     fun keysLimit(c: Context) = p(c).getInt("klimit", 1500).coerceIn(200, 4000)
-    fun timeoutMs(c: Context) = p(c).getInt("timeout", 3500).coerceIn(1500, 8000)
+    fun timeoutMs(c: Context) = p(c).getInt("timeout", 1000).coerceIn(800, 8000)
     fun tlsCheck(c: Context) = p(c).getBoolean("tls", true)
     fun useSearch(c: Context) = p(c).getBoolean("search", true)
     fun proxyLimit(c: Context) = p(c).getInt("plimit", 400).coerceIn(100, 2000)
@@ -330,6 +345,28 @@ object KeyChecker {
             else -> checkTcp(item, timeout, tls)
         }
     }
+
+    /** Stage 1: inexpensive TCP connect latency. UDP protocols cannot be classified
+     * by a TCP port and must be verified by their actual sing-box transport.
+     */
+    suspend fun quickCheck(item: KeyItem, timeoutMs: Int = KeyQualityPolicy.CONNECT_TIMEOUT_MS) =
+        withContext(Dispatchers.IO) {
+            item.checkedAt = System.currentTimeMillis()
+            if (item.udp) { checkUdp(item); return@withContext }
+            val addr = resolve(item.host)
+            if (addr == null) {
+                item.ms = -2
+                return@withContext
+            }
+            item.ip = addr.hostAddress.orEmpty()
+            val start = System.nanoTime()
+            try {
+                Socket().use { it.connect(InetSocketAddress(addr, item.port), timeoutMs) }
+                item.ms = (System.nanoTime() - start) / 1_000_000
+            } catch (_: Exception) {
+                item.ms = -2
+            }
+        }
 
     private fun checkUdp(item: KeyItem) {
         item.checkedAt = System.currentTimeMillis()
