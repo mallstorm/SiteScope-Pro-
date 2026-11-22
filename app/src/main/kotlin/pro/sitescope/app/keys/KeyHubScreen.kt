@@ -68,12 +68,38 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
     var keysFound by mutableIntStateOf(0); var checked by mutableIntStateOf(0); var toCheck by mutableIntStateOf(0)
     var log by mutableStateOf<List<String>>(emptyList())
     var finishedNote by mutableStateOf("")
+    var pendingCount by mutableIntStateOf(0)
+    var uncheckedCount by mutableIntStateOf(0)
+    var duplicateCount by mutableIntStateOf(0)
+    private val pendingQueue = LinkedHashMap<String, KeyItem>()
     private var job: Job? = null
 
     init {
         blocked = KeyBlocklistStore.load(context)
         val excluded = blocked.mapTo(HashSet()) { it.fingerprint }
         items = KeyStore.load(context).filterNot { KeyBlocklistStore.fingerprint(it.link) in excluded }
+        for (key in KeyCandidateStore.load(context)) {
+            val fingerprint = KeyBlocklistStore.fingerprint(key.link)
+            if (fingerprint !in excluded) pendingQueue.putIfAbsent(fingerprint, key)
+        }
+        // Prior builds saved prechecked-but-unvalidated profiles in the working
+        // list. Migrate them to the durable queue without deleting user data.
+        for (key in items) if (!key.alive && key.validation == XrayKeyValidator.UNTESTED) {
+            val fingerprint = KeyBlocklistStore.fingerprint(key.link)
+            if (fingerprint !in pendingQueue) {
+                key.checkedAt = 0L
+                pendingQueue[fingerprint] = key
+            }
+        }
+        pendingCount = pendingQueue.size
+        uncheckedCount = pendingQueue.values.count { it.checkedAt <= 0L }
+        KeyCandidateStore.save(context, pendingQueue.values.toList())
+    }
+
+    private fun saveQueue() {
+        KeyCandidateStore.save(context, pendingQueue.values.toList())
+        pendingCount = pendingQueue.size
+        uncheckedCount = pendingQueue.values.count { it.checkedAt <= 0L }
     }
 
     private val lock = Any()
@@ -90,10 +116,17 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         if (!force && n - lastSave > 60_000) { lastSave = n; KeyStore.save(context, items) }
     }
 
-    fun stop() { job?.cancel(); SingBoxValidator.cancel(); stage = "Остановлено"; running = false; KeyStore.save(context, items); touch() }
+    fun stop() { job?.cancel(); SingBoxValidator.cancel(); stage = "Остановка…"; touch() }
 
     // Clearing the visible database never erases the persistent deny-list.
-    fun clearAll() { items = emptyList(); KeyStore.clear(context); touch() }
+    fun clearAll() {
+        items = emptyList()
+        pendingQueue.clear()
+        KeyStore.clear(context)
+        KeyCandidateStore.clear(context)
+        pendingCount = 0; uncheckedCount = 0
+        touch()
+    }
 
     private fun quarantine(candidates: List<KeyItem>, reason: (KeyItem) -> String): Int {
         if (candidates.isEmpty()) return 0
@@ -111,6 +144,8 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         blocked = entries.values.toList()
         val rejected = entries.keys
         items = items.filterNot { KeyBlocklistStore.fingerprint(it.link) in rejected }
+        for (fingerprint in rejected) pendingQueue.remove(fingerprint)
+        saveQueue()
         KeyStore.save(context, items)
         touch()
         return added
