@@ -401,10 +401,11 @@ private fun KeysTab(vm: KeyHubViewModel) {
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Text(k.host + ":" + k.port, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = FontFamily.Monospace)
-                            Text((TYPE_LABEL[k.type] ?: k.type) + (if (!k.proxy && k.validation == 1) " · HTTPS через Xray ✓" else if (!k.proxy && k.validation == 2) " · ${k.validationNote}" else if (k.tls == 1) " · TCP/TLS ✓" else "") + (if (k.proxy && k.ms >= 0) (ANON_LABEL[k.anon]?.let { " · $it" } ?: "") + (if (k.https == 1) " · HTTPS ✓" else if (k.https == 2) " · без HTTPS" else "") else "") + (if (k.v6) " · IPv6" else "") + " · " + k.source, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text((TYPE_LABEL[k.type] ?: k.type) + (if (!k.proxy && k.validation == 1) " · HTTPS через Xray ✓" else if (!k.proxy && (k.validation == 2 || k.validation == 3)) " · ${k.validationNote}" else if (k.tls == 1) " · TCP/TLS ✓" else "") + (if (k.proxy && k.ms >= 0) (ANON_LABEL[k.anon]?.let { " · $it" } ?: "") + (if (k.https == 1) " · HTTPS ✓" else if (k.https == 2) " · без HTTPS" else "") else "") + (if (k.v6) " · IPv6" else "") + " · " + k.source, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         when {
                             k.udp -> Pill("Не проверен", t.info, t.infoSoft)
+                            k.ms == -2L -> Pill("Нет TCP", t.bad, t.badSoft)
                             !k.proxy && k.validation == 2 -> Pill("Не работает", t.bad, t.badSoft)
                             !k.proxy && k.validation == 3 -> Pill("Ошибка теста", t.warn, t.warnSoft)
                             !k.proxy && !k.alive -> Pill("Не проверен", MaterialTheme.colorScheme.outline, MaterialTheme.colorScheme.surfaceContainerLow)
