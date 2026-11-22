@@ -26,6 +26,59 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
 
+      # Robolectric 4.14.1 uses framework SDK 28, 33, and 35 in these tests.
+      # Fetch verified jars once, then let each test JVM use only local copies.
+      - name: Cache Robolectric runtime Android images
+        uses: actions/cache@v4
+        with:
+          path: .robolectric-sdk-cache
+          key: robolectric-4.14.1-sdk-28-33-35-i7-v1
+
+      - name: Prefetch Robolectric SDK 28, 33, 35 with verified checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .robolectric-sdk-cache
+          versions=(
+            9-robolectric-4913185-2-i7
+            13-robolectric-9030017-i7
+            15-robolectric-12650502-i7
+          )
+          mirrors=(
+            https://maven-central.storage-download.googleapis.com/maven2
+            https://repo.maven.apache.org/maven2
+          )
+          for version in "${versions[@]}"; do
+            name="android-all-instrumented-$version.jar"
+            dest=".robolectric-sdk-cache/$name"
+            if [[ -s "$dest" ]] && unzip -tqq "$dest" >/dev/null 2>&1; then
+              echo "Cached $name"
+              continue
+            fi
+            rm -f "$dest"
+            ok=0
+            for mirror in "${mirrors[@]}"; do
+              url="$mirror/org/robolectric/android-all-instrumented/$version/$name"
+              tmp="$dest.tmp"
+              rm -f "$tmp"
+              echo "Fetching $name from $mirror"
+              if curl -fsSL --retry 4 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 "$url" -o "$tmp"; then
+                expected="$(curl -fsSL --retry 4 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 30 "$url.sha1" | tr -d '\r\n ' || true)"
+                if [[ "$expected" =~ ^[0-9a-fA-F]{40}$ ]] && echo "$expected  $tmp" | sha1sum -c - && unzip -tqq "$tmp" >/dev/null 2>&1; then
+                  mv "$tmp" "$dest"
+                  ok=1
+                  break
+                fi
+              fi
+              rm -f "$tmp"
+            done
+            if [[ "$ok" != 1 ]]; then
+              echo "::error::Failed to fetch verified Robolectric runtime $name"
+              exit 1
+            fi
+          done
+          du -sh .robolectric-sdk-cache
+
       - name: Restore original signing key (optional)
         env:
           P12_B64: ${{ secrets.SITESCOPE_SIGNING_P12_BASE64 }}
