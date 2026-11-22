@@ -585,30 +585,51 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
     /** Real proof: HTTPS response through a disposable local Xray SOCKS core.
      * The native core is used serially, not once per coroutine.
      */
+    /**
+     * v2rayNG-style bulk test. Ordinary Xray profiles use the native
+     * measureOutboundDelay API concurrently (up to 16), not a serial
+     * startLoop / SOCKS / stopLoop cycle for each candidate. sing-box stays
+     * serialized until its independent process pool is enabled.
+     */
     private suspend fun deepValidate(list: List<KeyItem>, limit: Int) {
         val eligible = list.filter { !it.proxy &&
             (if (it.type in SingBoxConfig.types) it.ms >= 0 || it.ms == -3L else !it.udp && it.ms >= 0) &&
             (it.validation != XrayKeyValidator.VERIFIED || !it.alive) }
         val candidates = eligible.take(limit)
         if (candidates.isEmpty()) return
-        stage = "Проверка VPN через ядра"
+        stage = "HTTP через VPN-ядра"
         cChecked.set(0); checked = 0; toCheck = candidates.size
-        say("Глубокая проверка: ${candidates.size} из ${eligible.size} кандидатов")
-        for (key in candidates) {
-            coroutineContext.ensureActive()
-            val result = withContext(Dispatchers.IO) {
-                if (key.type in SingBoxConfig.types) SingBoxValidator.check(context, key.link, 4500)
-                else XrayKeyValidator.check(context, key.link, 4500)
-            }
-            key.validation = result.status
-            key.validationMs = result.delayMs
-            key.validationAt = System.currentTimeMillis()
-            key.validationNote = result.reason
-            cChecked.incrementAndGet(); publish(true)
-            if (cChecked.get() % 10 == 0) KeyStore.save(context, items)
+        val xrayLimit = KeySettings.threads(context).coerceIn(1, 16)
+        val xrayGate = Semaphore(xrayLimit)
+        val singBoxGate = Semaphore(1)
+        say("Реальная проверка: ${candidates.size} · Xray параллельно до $xrayLimit потоков")
+        coroutineScope {
+            candidates.map { key -> async(Dispatchers.IO) {
+                val gate = if (key.type in SingBoxConfig.types) singBoxGate else xrayGate
+                gate.acquire()
+                try {
+                    ensureActive()
+                    val result = if (key.type in SingBoxConfig.types)
+                        SingBoxValidator.check(context, key.link, 4500)
+                    else XrayKeyValidator.checkNativeDelay(context, key.link)
+                    key.validation = result.status
+                    key.validationMs = result.delayMs
+                    key.validationAt = System.currentTimeMillis()
+                    key.validationNote = result.reason
+                } catch (cancel: kotlinx.coroutines.CancellationException) {
+                    throw cancel
+                } catch (error: Exception) {
+                    key.validation = XrayKeyValidator.INCONCLUSIVE
+                    key.validationMs = -1
+                    key.validationNote = "Ошибка теста: " + error.javaClass.simpleName
+                    key.validationAt = System.currentTimeMillis()
+                } finally {
+                    cChecked.incrementAndGet()
+                    gate.release()
+                    publish()
+                }
+            } }.awaitAll()
         }
-        if (eligible.size > candidates.size)
-            say("Ещё ${eligible.size - candidates.size} кандидатов не валидированы — выберите их и нажмите перепроверку")
     }
 
     /** Повторная проверка выбранных (или всех) ключей. */
