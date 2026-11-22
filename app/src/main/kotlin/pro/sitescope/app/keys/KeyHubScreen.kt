@@ -71,6 +71,8 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
     var pendingCount by mutableIntStateOf(0)
     var uncheckedCount by mutableIntStateOf(0)
     var duplicateCount by mutableIntStateOf(0)
+    var queueDone by mutableIntStateOf(0)
+    var queueTotal by mutableIntStateOf(0)
     private val pendingQueue = LinkedHashMap<String, KeyItem>()
     private var job: Job? = null
 
@@ -318,6 +320,8 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val total = all.size
+        queueTotal = total
+        queueDone = 0
         var processed = 0
         var accepted = 0
         var slow = 0
@@ -382,6 +386,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (invalid.isNotEmpty()) quarantine(invalid) { it.validationNote }
             processed += batch.size
+            queueDone = processed
             slow += batch.count { !it.alive && it.ms >= KeyQualityPolicy.MAX_WORKING_MS }
             saveQueue()
             KeyStore.save(context, items)
@@ -404,12 +409,12 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         val allowV6 = KeySettings.ipv6(c)
         running = true
         finishedNote = ""; log = emptyList(); KeyGuard.tripped = false
-        duplicateCount = 0
+        duplicateCount = 0; queueDone = 0; queueTotal = 0
         cPages.set(0); cSites.set(0); cKeys.set(0); cChecked.set(0)
         sitesFound = 0; sitesDone = 0; pages = 0; keysFound = 0; checked = 0; toCheck = 0
         job = viewModelScope.launch(Dispatchers.Default) {
+            val found = ConcurrentHashMap<String, KeyItem>()
             try {
-                val found = ConcurrentHashMap<String, KeyItem>()
                 val excluded = blocked.mapTo(HashSet()) { it.fingerprint }
                 // A single fingerprint set for the entire run: source A, source B,
                 // known working records, pending records, and permanent blacklist.
@@ -529,6 +534,15 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                 finishedNote = "Ошибка: " + (error.message ?: error.javaClass.simpleName)
                 stage = "Ошибка"
             } finally {
+                // Stopping during crawling still preserves everything collected.
+                if (found.isNotEmpty()) {
+                    try {
+                        for (key in found.values) {
+                            pendingQueue.putIfAbsent(KeyBlocklistStore.fingerprint(key.link), key)
+                        }
+                        saveQueue()
+                    } catch (_: Exception) { }
+                }
                 KeyStore.save(context, items)
                 running = false
                 publish(true)
@@ -723,6 +737,21 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
                 Spacer(Modifier.width(8.dp))
                 Text("Импорт WireGuard .conf / OpenVPN .ovpn")
             }
+            SoftCard(padding = 10.dp) {
+                Text("Очередь кандидатов: ${vm.pendingCount} · ещё не проверены: ${vm.uncheckedCount}",
+                    style = MaterialTheme.typography.bodyMedium)
+                if (vm.duplicateCount > 0) Text("Дубликатов отброшено: ${vm.duplicateCount}",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Все уникальные записи проходят TCP-предпроверку ≤1 с, затем реальный HTTP/HTTPS через прокси или VPN-ядро. Для UDP — сразу проверка через sing-box.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (vm.pendingCount > 0) {
+                    OutlinedButton(onClick = { vm.retryQueued() }, enabled = !vm.running) {
+                        Icon(Icons.Rounded.Refresh, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Повторить резерв (${vm.pendingCount})")
+                    }
+                }
+            }
             if (vm.running) {
                 SoftCard(color = t.infoSoft, padding = 12.dp) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -730,10 +759,9 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(vm.stage, style = MaterialTheme.typography.titleSmall)
-                            Text(when (vm.stage) {
-                                "Проверка отклика", "Проверка VPN через ядра" -> "${vm.checked} из ${vm.toCheck}"
-                                else -> "источников ${vm.sitesDone}/${vm.sitesFound} · страниц ${vm.pages} · найдено ${vm.keysFound}"
-                            }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (vm.queueTotal > 0) "Всего: ${vm.queueDone} из ${vm.queueTotal} · текущая партия ${vm.checked}/${vm.toCheck}"
+                                else "Источников ${vm.sitesDone}/${vm.sitesFound} · страниц ${vm.pages} · уникальных ${vm.keysFound}",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         OutlinedButton(onClick = { vm.stop() }) { Text("Стоп") }
                     }
@@ -801,7 +829,7 @@ private fun KeysTab(vm: KeyHubViewModel, onConnect: (KeyItem) -> Unit) {
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             MiniChip("Проверены", onlyAlive) { onlyAlive = !onlyAlive }
-            listOf(0 to "любой", 150 to "≤150", 300 to "≤300", 600 to "≤600").forEach { (v, l) -> MiniChip(l, maxMs == v) { maxMs = v } }
+            listOf(0 to "любой", 200 to "≤200", 600 to "≤600", 999 to "≤999").forEach { (v, l) -> MiniChip(l, maxMs == v) { maxMs = v } }
             listOf("по отклику", "по странам", "новые").forEachIndexed { i, l -> MiniChip(l, sort == i) { sort = i } }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -826,7 +854,8 @@ private fun KeysTab(vm: KeyHubViewModel, onConnect: (KeyItem) -> Unit) {
                             Text((TYPE_LABEL[k.type] ?: k.type) + (if (!k.proxy && k.validation == 1) " · HTTPS через ${if (k.type in SingBoxConfig.types) "sing-box" else "Xray"} ✓" else if (!k.proxy && (k.validation == 2 || k.validation == 3)) " · ${k.validationNote}" else if (k.tls == 1) " · TCP/TLS ✓" else "") + (if (k.proxy && k.ms >= 0) (ANON_LABEL[k.anon]?.let { " · $it" } ?: "") + (if (k.https == 1) " · HTTPS ✓" else if (k.https == 2) " · без HTTPS" else "") else "") + (if (k.v6) " · IPv6" else "") + " · " + k.source, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         when {
-                            k.alive -> Pill("${k.verifiedPing} мс ✓", if (k.verifiedPing <= 400) t.good else t.warn, if (k.verifiedPing <= 400) t.goodSoft else t.warnSoft)
+                            k.alive -> Pill("${k.verifiedPing} мс ✓", if (k.verifiedPing <= 200) t.good else if (k.verifiedPing <= 600) t.warn else t.bad, if (k.verifiedPing <= 200) t.goodSoft else if (k.verifiedPing <= 600) t.warnSoft else t.badSoft)
+                            k.verifiedPing >= KeyQualityPolicy.MAX_WORKING_MS -> Pill("Медленный ${k.verifiedPing} мс", t.bad, t.badSoft)
                             !k.proxy && k.validation == 2 -> Pill("Не работает", t.bad, t.badSoft)
                             !k.proxy && k.validation == 3 -> Pill("Ошибка теста", t.warn, t.warnSoft)
                             k.udp -> Pill("Не проверен", t.info, t.infoSoft)
@@ -1116,10 +1145,10 @@ private fun SettingsTab(vm: KeyHubViewModel) {
         Row(verticalAlignment = Alignment.CenterVertically) { Text("Искать сайты через поисковики", Modifier.weight(1f)); Switch(search, { search = it; KeySettings.put(c, "search", it) }) }
         SectionTitle("Проверка")
         slider("Параллельных проверок", threads, 4..48, "threads", { threads = it })
-        slider("Ключей за один запуск", klimit, 200..4000, "klimit", { klimit = it }, "В больших сборниках десятки тысяч ключей: проверяется случайная часть этого размера")
-        slider("Таймаут, мс", timeout, 1500..8000, "timeout", { timeout = it })
-        slider("Прокси за один запуск", plimit, 100..2000, "plimit", { plimit = it }, "В публичных списках тысячи адресов: проверяется случайная часть этого размера. Мёртвые прокси не сохраняются")
-        slider("VPN-ключей с полной проверкой", deep, 10..1000, "deepLimit", { deep = it }, "После предварительной проверки запускается Xray или sing-box для каждого кандидата. Остальные остаются НЕ ПРОВЕРЕНЫ. Выборочная перепроверка работает без ограничения.")
+        slider("Размер партии проверки", klimit, 200..4000, "klimit", { klimit = it }, "Проверяются все уникальные ключи, партия задаёт размер чекпоинта и нагрузку на память")
+        slider("Таймаут HTTP/HTTPS, мс", timeout, 800..8000, "timeout", { timeout = it }, "Быстрый TCP-фильтр: максимум 1000 мс. После него — реальная маршрутизация через ядро")
+
+        slider("VPN-ключей в подпартии", deep, 10..1000, "deepLimit", { deep = it }, "Лимит влияет только на разбиение проверки. Все быстрые VPN-профили будут проверены через Xray или sing-box")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("TLS-рукопожатие"); Text("Для ключей с TLS и Reality: отсекает серверы, которые только принимают порт", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Switch(tls, { tls = it; KeySettings.put(c, "tls", it) })
