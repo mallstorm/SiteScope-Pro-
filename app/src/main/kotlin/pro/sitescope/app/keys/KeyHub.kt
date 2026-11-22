@@ -89,7 +89,7 @@ object KeySettings {
 }
 
 object KeyStore {
-    private const val LIMIT = 4000
+    private const val LIMIT = 50000
     private fun file(c: Context) = File(c.filesDir, "keyhub.json")
 
     fun load(c: Context): List<KeyItem> = try {
