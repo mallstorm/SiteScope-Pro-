@@ -55,6 +55,7 @@ import java.io.File
 enum class VpnMode(val title: String, val text: String) {
     HOSTS("Свои адреса", "Подменяет адреса выбранных сайтов. Остальной трафик идёт как обычно."),
     SERVER("Через сервер", "Весь трафик телефона идёт через ваш сервер. Свои адреса и DNS действуют внутри туннеля."),
+    SINGBOX("sing-box", "Hysteria2, TUIC, WireGuard, OpenVPN и AnyTLS через проверенный ключ из раздела «Ключи»."),
     LOCAL("Без сервера", "Трафик идёт как обычно, но проходит через приложение: можно записать его и применить свои адреса.")
 }
 
@@ -109,6 +110,7 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
     val active: Boolean get() = lifecycle == HostsVpnService.STATE_ACTIVE
     val busy: Boolean get() = lifecycle == HostsVpnService.STATE_STARTING || lifecycle == HostsVpnService.STATE_STOPPING
     val serverActive: Boolean get() = active && runningMode == HostsVpnService.MODE_XRAY && runningProfileId.isNotEmpty()
+    val singBoxActive: Boolean get() = active && runningMode == HostsVpnService.MODE_SINGBOX
     private val captureDir get() = File(context.filesDir, "captures")
 
     init {
@@ -119,7 +121,11 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
             mitm = VpnSettings.mitm(context); blockQuic = VpnSettings.blockQuic(context); targets = VpnSettings.targetApps(context)
             if (mitm) caInstalled = Mitm.caInstalled(context)
             val desired = state.getString("desiredMode", HostsVpnService.MODE_BASIC)
-            mode = if (desired == HostsVpnService.MODE_XRAY) (if (VpnSettings.directMode(context)) VpnMode.LOCAL else VpnMode.SERVER) else VpnMode.HOSTS
+            mode = when (desired) {
+                HostsVpnService.MODE_XRAY -> if (VpnSettings.directMode(context)) VpnMode.LOCAL else VpnMode.SERVER
+                HostsVpnService.MODE_SINGBOX -> VpnMode.SINGBOX
+                else -> VpnMode.HOSTS
+            }
             reloadData()
         }
         viewModelScope.launch {
@@ -153,7 +159,7 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- включение и выключение ----------
     fun start() {
-        val service = if (mode == VpnMode.HOSTS) HostsVpnService.MODE_BASIC else HostsVpnService.MODE_XRAY
+        val service = when (mode) { VpnMode.HOSTS -> HostsVpnService.MODE_BASIC; VpnMode.SINGBOX -> HostsVpnService.MODE_SINGBOX; else -> HostsVpnService.MODE_XRAY }
         VpnSettings.setDirectMode(context, mode == VpnMode.LOCAL)
         try { XrayProfilePreflight.cancel() } catch (e: Throwable) { }
         state.edit().putString(HostsVpnService.KEY_STATE, HostsVpnService.STATE_STARTING).putBoolean("active", false).putString("mode", service)
@@ -174,7 +180,7 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
     fun applyLive() {
         if (!active) { appliedNote = "Сохранено. Начнёт действовать при включении."; return }
         context.startService(Intent(context, HostsVpnService::class.java).setAction(HostsVpnService.ACTION_RELOAD))
-        appliedNote = "Применено на лету, VPN не прерывался."
+        appliedNote = if (runningMode == HostsVpnService.MODE_SINGBOX) "sing-box переподключается для применения изменений" else "Применено на лету, VPN не прерывался."
     }
 
     // ---------- серверы ----------
@@ -406,6 +412,11 @@ fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () 
     }
     fun connect() {
         if (vm.mode == VpnMode.SERVER && vm.selectedServer.isEmpty()) { toast(context, "Сначала добавьте сервер"); tab = 1; return }
+        if (vm.mode == VpnMode.SINGBOX && context.getSharedPreferences(HostsVpnService.PREFS, Context.MODE_PRIVATE)
+                .getString(HostsVpnService.EXTRA_SINGBOX_ID, "").isNullOrBlank()) {
+            toast(context, "Сначала выберите проверенный ключ в разделе «Ключи»")
+            onKeys(); return
+        }
         val prepare = try { VpnService.prepare(context) } catch (e: Exception) { null }
         if (prepare != null) permission.launch(prepare) else vm.start()
     }
@@ -457,6 +468,7 @@ private fun StatusCard(vm: VpnViewModel, onConnect: () -> Unit, onReason: () -> 
         vm.lifecycle == HostsVpnService.STATE_STOPPING -> "Отключаемся…"
         vm.active && vm.runningMode == HostsVpnService.MODE_BASIC -> "Свои адреса действуют"
         vm.serverActive -> "Подключено через сервер"
+        vm.singBoxActive -> "Подключено через sing-box"
         vm.active -> "Трафик идёт через приложение"
         error -> "Не удалось подключиться"
         else -> "VPN выключен"
@@ -468,7 +480,7 @@ private fun StatusCard(vm: VpnViewModel, onConnect: () -> Unit, onReason: () -> 
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val sub = if (vm.serverActive && vm.runningProfile.isNotEmpty()) vm.runningProfile else vm.message
+                val sub = if ((vm.serverActive || vm.singBoxActive) && vm.runningProfile.isNotEmpty()) vm.runningProfile else vm.message
                 if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.width(8.dp))
