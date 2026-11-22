@@ -379,12 +379,13 @@ fun KeyHubScreen(onBack: () -> Unit, vm: KeyHubViewModel = viewModel()) {
     var tab by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         AppHeader("Ключи и прокси", "VLESS, VMess, SS, Trojan, SOCKS, HTTP, Hysteria2, WireGuard", onBack = onBack) {
-            HeaderChips(listOf("Поиск", "Ключи ${vm.items.size}", "Настройки"), tab, { tab = it }, listOf(Icons.Rounded.Search, Icons.Rounded.VpnKey, Icons.Rounded.Tune))
+            HeaderChips(listOf("Поиск", "Ключи ${vm.items.size}", "Чёрный список ${vm.blocked.size}", "Настройки"), tab, { tab = it }, listOf(Icons.Rounded.Search, Icons.Rounded.VpnKey, Icons.Rounded.Block, Icons.Rounded.Tune))
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (tab) {
                 0 -> SearchTab(vm, onShow = { tab = 1 })
                 1 -> KeysTab(vm)
+                2 -> BlacklistTab(vm)
                 else -> SettingsTab(vm)
             }
         }
@@ -551,7 +552,7 @@ private fun KeysTab(vm: KeyHubViewModel) {
                 OutlinedButton(onClick = { bestDialog = true }, contentPadding = PaddingValues(horizontal = 10.dp), enabled = alive.isNotEmpty()) { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Лучшие") }
                 OutlinedButton(onClick = { selected = if (selected.size == shown.size) emptySet() else shown.map { it.id }.toSet() }, contentPadding = PaddingValues(horizontal = 10.dp), enabled = shown.isNotEmpty()) { Text(if (selected.isNotEmpty() && selected.size == shown.size) "Снять" else "Все") }
                 IconButton(onClick = { vm.recheck(selected) }, enabled = !vm.running && all.isNotEmpty()) { Icon(Icons.Rounded.Refresh, "Полная перепроверка выделенных или всех") }
-                IconButton(onClick = { vm.remove(selected); selected = emptySet() }, enabled = selected.isNotEmpty()) { Icon(Icons.Rounded.Delete, "Удалить", tint = t.bad) }
+                IconButton(onClick = { vm.remove(selected); selected = emptySet() }, enabled = !vm.running && selected.isNotEmpty()) { Icon(Icons.Rounded.Block, "В чёрный список", tint = t.bad) }
                 Spacer(Modifier.weight(1f))
                 Button(onClick = { export = true }, enabled = chosen.any { it.alive }) { Icon(Icons.Rounded.IosShare, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Экспорт") }
             }
@@ -628,6 +629,146 @@ private fun ExportRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tit
             IconBadge(icon, tones.info, MaterialTheme.colorScheme.surfaceContainerLow, 36.dp)
             Spacer(Modifier.width(10.dp))
             Column { Text(title, style = MaterialTheme.typography.titleSmall); Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ Чёрный список — сохраняется отдельно от базы ключей
+
+@Composable
+private fun BlacklistTab(vm: KeyHubViewModel) {
+    val t = tones
+    var protocol by remember { mutableStateOf<String?>(null) }
+    var origin by remember { mutableStateOf("all") }
+    var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val all = vm.blocked
+    val protocols = remember(vm.version, all) { all.map { it.item.type }.distinct().sorted() }
+    val shown = remember(vm.version, all, protocol, origin) {
+        all.filter { (protocol == null || it.item.type == protocol) &&
+            (origin == "all" || (origin == "manual") == (it.reason == "Исключён вручную")) }
+            .sortedByDescending { it.blockedAt }
+    }
+    // Drop selections after successful restoration.
+    LaunchedEffect(all) { selected = selected.intersect(all.map { it.fingerprint }.toSet()) }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Постоянные исключения: ${all.size}", style = MaterialTheme.typography.titleMedium)
+                Text("При повторном поиске эти конфигурации пропускаются. Новый ключ на том же IP не блокируется.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.Rounded.Shield, null, tint = t.info)
+        }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            MiniChip("Все", origin == "all") { origin = "all" }
+            MiniChip("Удалённые вручную", origin == "manual") { origin = "manual" }
+            MiniChip("Не прошли тест", origin == "automatic") { origin = "automatic" }
+        }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            MiniChip("Все протоколы", protocol == null) { protocol = null }
+            protocols.forEach { kind ->
+                MiniChip(TYPE_LABEL[kind] ?: kind, protocol == kind) {
+                    protocol = if (protocol == kind) null else kind
+                }
+            }
+        }
+        if (vm.running) {
+            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(vm.stage, style = MaterialTheme.typography.labelMedium)
+                if (vm.toCheck > 0) {
+                    Text("${vm.checked} из ${vm.toCheck}", style = MaterialTheme.typography.bodySmall)
+                    LinearProgressIndicator(
+                        progress = { (vm.checked / vm.toCheck.toFloat()).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                OutlinedButton(onClick = { vm.stop() }) { Text("Остановить") }
+            }
+        } else if (vm.finishedNote.isNotBlank() && vm.stage == "Готово") {
+            Text(vm.finishedNote, Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                style = MaterialTheme.typography.bodySmall, color = t.good)
+        }
+        if (shown.isEmpty()) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text(if (all.isEmpty()) "Чёрный список пуст" else "По выбранным фильтрам записей нет",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else LazyColumn(
+            Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            items(shown, key = { it.fingerprint }) { entry ->
+                val k = entry.item
+                val on = entry.fingerprint in selected
+                SoftCard(
+                    padding = 10.dp,
+                    color = if (on) t.infoSoft else MaterialTheme.colorScheme.surfaceContainerLowest,
+                    onClick = {
+                        selected = if (on) selected - entry.fingerprint else selected + entry.fingerprint
+                    }
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = on, onCheckedChange = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (k.country.length == 2) Countries.flag(k.country) else "🌐")
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("${TYPE_LABEL[k.type] ?: k.type} · ${k.host}:${k.port}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(entry.reason, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                            if (entry.lastCheckAt > 0) {
+                                Text("Повторная проверка: ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(entry.lastCheckAt))}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (k.validationNote.isNotBlank() && k.validationNote != entry.reason)
+                                Text(k.validationNote, style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                        }
+                        Pill("Исключён", t.bad, t.badSoft)
+                    }
+                }
+            }
+        }
+        Surface(tonalElevation = 3.dp) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        selected = if (selected.size == shown.size &&
+                            shown.all { it.fingerprint in selected })
+                            emptySet() else shown.map { it.fingerprint }.toSet()
+                    }, enabled = shown.isNotEmpty() && !vm.running,
+                    contentPadding = PaddingValues(horizontal = 12.dp)
+                ) { Text(if (selected.isEmpty()) "Выбрать" else "Все / снять") }
+                Spacer(Modifier.weight(1f))
+                Button(
+                    onClick = { vm.recheckBlocked(selected) },
+                    enabled = !vm.running && all.isNotEmpty()
+                ) {
+                    Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (selected.isEmpty()) "Проверить все" else "Проверить (${selected.size})")
+                }
+            }
         }
     }
 }
