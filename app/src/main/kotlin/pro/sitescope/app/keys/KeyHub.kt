@@ -47,7 +47,7 @@ class KeyItem(val link: String, val name: String, val type: String, val host: St
     val alive: Boolean get() = if (proxy) ms >= 0 else validation == 1 &&
         validationAt > System.currentTimeMillis() - 6L * 60 * 60 * 1000
     val proxy: Boolean get() = type == "http" || type == "socks"
-    val udp: Boolean get() = type == "hysteria2" || type == "tuic" || type == "wireguard"
+    val udp: Boolean get() = type == "hysteria2" || type == "tuic" || type == "wireguard" || type == "openvpn"
     val v6: Boolean get() = host.contains(':')
 }
 
@@ -117,7 +117,7 @@ object KeyCrawler {
     private val cpuGate = kotlinx.coroutines.sync.Semaphore(2)
     internal const val UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
     private const val MAX_BYTES = 2_000_000
-    private val KEY_RE = Regex("(?i)(?<![A-Za-z0-9])(vless|vmess|trojan|ss|hysteria2|hysteria|hy2|tuic|wireguard|wg|socks)://[^\\s\"'<>\\\\`|]{6,}")
+    private val KEY_RE = Regex("(?i)(?<![A-Za-z0-9])(vless|vmess|trojan|ss|hysteria2|hysteria|hy2|tuic|wireguard|wg|anytls|socks)://[^\\s\"'<>\\\\`|]{6,}")
     private val PROXY_RE = Regex("(?i)(?<![A-Za-z0-9])(socks5h?|socks4a?|https?)://((?:\\d{1,3}\\.){3}\\d{1,3}|\\[[0-9a-fA-F:]{3,39}\\]):(\\d{2,5})(?!\\d)")
     private val PLAIN_RE = Regex("(?<![\\w.:@/\\[=-])(?:((?:\\d{1,3}\\.){3}\\d{1,3})|\\[([0-9a-fA-F:]{3,39})\\]):(\\d{2,5})(?!\\d)")
     private val URL_RE = Regex("https?://[^\\s\"'<>\\\\)\\]]{12,}")
@@ -275,7 +275,7 @@ object KeyCrawler {
             val now = System.currentTimeMillis()
             val item: KeyItem? = when (type) {
                 "socks4" -> null
-                "socks", "http", "hysteria2", "tuic", "wireguard" -> {
+                "socks", "http", "hysteria2", "tuic", "wireguard", "anytls" -> {
                     val m = HP_RE.find(link) ?: return null
                     val host = m.groupValues[1].trim('[', ']'); val port = m.groupValues[2].toIntOrNull() ?: 0
                     val name = link.substringAfter('#', "").let { try { URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it } }.ifBlank { host }
@@ -469,7 +469,7 @@ object KeyExport {
     fun hostPort(items: List<KeyItem>) = items.filter { it.proxy }.joinToString("\n") { (if (it.host.contains(':')) "[" + it.host + "]" else it.host) + ":" + it.port }
     /** Ссылка для добавления в «Серверы»; null — ядро не поддерживает протокол. */
     fun profileLink(k: KeyItem): String? = when {
-        k.udp -> null
+        k.type in SingBoxConfig.types -> null
         k.type == "http" -> "httpproxy://" + labeled(k).removePrefix("http://")
         else -> labeled(k)
     }
