@@ -8,6 +8,7 @@ object KeySources {
     val XRAY_TYPES = setOf("vless", "vmess", "trojan", "ss")
     val UDP_TYPES = setOf("hysteria2", "tuic", "wireguard")
     val PROXY_TYPES = setOf("socks", "http")
+    val SINGBOX_TYPES = setOf("hysteria2", "tuic", "wireguard", "openvpn", "anytls")
 
     val kinds = listOf(
         KeyKind("xray", "VLESS, VMess, Trojan, SS", "Ключи Xray / v2rayNG", XRAY_TYPES, listOf(
@@ -56,7 +57,10 @@ object KeySources {
             "https://api.proxyscrape.com/v2/?request=getproxies&protocol=socks5&timeout=10000&country=all",
             "https://www.proxy-list.download/api/v1/get?type=https&anon=elite", "https://www.proxy-list.download/api/v1/get?type=http&anon=elite",
             "https://www.proxy-list.download/api/v1/get?type=socks5&anon=elite")),
-        KeyKind("sub", "Подписки", "Готовые сборники и ссылки-подписки на страницах", XRAY_TYPES + UDP_TYPES, listOf(
+        KeyKind("anytls", "AnyTLS", "TLS-туннели через sing-box", setOf("anytls"), listOf(
+            GH + "kasesm/Free-Config/main/all_raw.txt",
+            GH + "0xRadikal/Free-v2ray-Configs/main/verified/configs.txt")),
+        KeyKind("sub", "Подписки", "Готовые сборники и ссылки-подписки на страницах", XRAY_TYPES + UDP_TYPES + setOf("anytls"), listOf(
             GH + "mahdibland/V2RayAggregator/master/sub/sub_merge.txt", GH + "peasoft/NoMoreWalls/master/list_raw.txt", GH + "ermaozi/get_subscribe/main/subscribe/v2ray.txt",
             GH + "Pawdroid/Free-servers/main/sub", GH + "freefq/free/master/v2", GH + "barry-far/V2ray-Config/main/All_Configs_Sub.txt", GH + "mrvcoder/V2rayCollector/main/mixed_iran.txt",
             GH + "0xRadikal/Free-v2ray-Configs/main/verified/configs.txt",
