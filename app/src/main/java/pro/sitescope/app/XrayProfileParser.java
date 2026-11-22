@@ -140,7 +140,11 @@ public final class XrayProfileParser {
         String hostPort;
         int at = body.lastIndexOf('@');
         if (at >= 0) {
-            credentials = new String(decodeBase64(body.substring(0, at)), StandardCharsets.UTF_8);
+            String rawCredentials = body.substring(0, at);
+            // SIP002 links can contain either URL-safe base64 or plaintext
+            // method:password. The old parser discarded valid plaintext keys.
+            credentials = rawCredentials.contains(":") ? decode(rawCredentials)
+                    : new String(decodeBase64(rawCredentials), StandardCharsets.UTF_8);
             hostPort = body.substring(at + 1);
         } else {
             String decoded = new String(decodeBase64(body), StandardCharsets.UTF_8);
