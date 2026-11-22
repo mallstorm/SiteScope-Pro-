@@ -156,6 +156,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                 // Проверка
                 checkItems(fresh)
                 deepValidate(fresh, KeySettings.deepLimit(c))
+                KeyChecker.geo(c, fresh.filter { it.alive })
                 val drop = fresh.filter { it.proxy && (it.ms == -2L || (eliteOnly && it.anon != 3)) }.map { it.id }.toSet()
                 if (drop.isNotEmpty()) items = items.filter { it.id !in drop }
                 val liveNow = fresh.count { it.alive && it.id !in drop }
@@ -308,13 +309,13 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text(vm.stage, style = MaterialTheme.typography.titleSmall)
                             Text(when (vm.stage) {
-                                "Проверка отклика" -> "${vm.checked} из ${vm.toCheck}"
+                                "Проверка отклика", "Проверка VPN через Xray" -> "${vm.checked} из ${vm.toCheck}"
                                 else -> "источников ${vm.sitesDone}/${vm.sitesFound} · страниц ${vm.pages} · найдено ${vm.keysFound}"
                             }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         OutlinedButton(onClick = { vm.stop() }) { Text("Стоп") }
                     }
-                    if (vm.stage == "Проверка отклика" && vm.toCheck > 0) LinearProgressIndicator(progress = { vm.checked / vm.toCheck.toFloat() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                    if ((vm.stage == "Проверка отклика" || vm.stage == "Проверка VPN через Xray") && vm.toCheck > 0) LinearProgressIndicator(progress = { vm.checked / vm.toCheck.toFloat() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 }
             }
             if (vm.finishedNote.isNotEmpty() && !vm.running) {
@@ -327,7 +328,7 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
                 }
             }
             if (vm.log.isNotEmpty()) SoftCard(padding = 10.dp) { vm.log.take(8).forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
-            Text("Читаются только открытые страницы и публичные списки. Прокси проверяются реальным запросом через них (ip-api.com, httpbin.org), ключи — доступностью порта и TLS. Чужие серверы видят ваш трафик: не используйте их для входов и платежей. Hysteria2, TUIC и WireGuard только собираются в список для экспорта.",
+            Text("Читаются только открытые страницы и публичные списки. Прокси проверяются реальным запросом через них (ip-api.com, httpbin.org), ключи Xray — реальным HTTPS-запросом через встроенное ядро после TCP-предпроверки. Чужие серверы видят ваш трафик: не используйте их для входов и платежей. Hysteria2, TUIC и WireGuard только собираются в список для экспорта.",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
         }
         if (!vm.running) Surface(tonalElevation = 3.dp) {
@@ -349,7 +350,7 @@ private fun KeysTab(vm: KeyHubViewModel) {
     var elite by remember { mutableStateOf(false) }
     var httpsOnly by remember { mutableStateOf(false) }
     var v6Only by remember { mutableStateOf(false) }
-    var onlyAlive by remember { mutableStateOf(true) }
+    var onlyAlive by remember { mutableStateOf(false) }
     var maxMs by remember { mutableIntStateOf(0) }
     var sort by remember { mutableIntStateOf(0) }
     var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -361,23 +362,23 @@ private fun KeysTab(vm: KeyHubViewModel) {
     val countries = remember(vm.version) { alive.groupBy { it.country }.map { it.key to it.value.size }.sortedByDescending { it.second } }
     val types = remember(vm.version) { all.map { it.type }.distinct().sortedBy { TYPE_LABEL.keys.indexOf(it) } }
     val shown = remember(vm.version, country, protocol, onlyAlive, maxMs, sort, elite, httpsOnly, v6Only) {
-        all.filter { (!onlyAlive || it.alive || it.ms == -3L) && (country == null || it.country == country) && (protocol == null || it.type == protocol) && (maxMs == 0 || (it.ms in 0..maxMs.toLong())) &&
+        all.filter { (!onlyAlive || it.alive) && (country == null || it.country == country) && (protocol == null || it.type == protocol) && (maxMs == 0 || (it.alive && it.verifiedPing in 0..maxMs.toLong())) &&
             (!elite || it.anon == 3) && (!httpsOnly || it.https == 1) && (!v6Only || it.v6) }
-            .let { l -> when (sort) { 0 -> l.sortedWith(compareBy<KeyItem> { if (it.ms < 0) Long.MAX_VALUE else it.ms }); 1 -> l.sortedWith(compareBy<KeyItem>({ it.country.ifEmpty { "ZZ" } }, { if (it.ms < 0) Long.MAX_VALUE else it.ms })); else -> l.sortedByDescending { it.foundAt } } }
+            .let { l -> when (sort) { 0 -> l.sortedWith(compareBy<KeyItem> { if (it.verifiedPing < 0) Long.MAX_VALUE else it.verifiedPing }); 1 -> l.sortedWith(compareBy<KeyItem>({ it.country.ifEmpty { "ZZ" } }, { if (it.verifiedPing < 0) Long.MAX_VALUE else it.verifiedPing })); else -> l.sortedByDescending { it.foundAt } } }
     }
     val chosen = all.filter { it.id in selected }
 
     Column(Modifier.fillMaxSize()) {
         // фиксированная верхняя часть
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Stat("Всего", all.size.toString(), Modifier.weight(1f)); Stat("Живых", alive.size.toString(), Modifier.weight(1f), t.good); Stat("Стран", countries.count { it.first.length == 2 }.toString(), Modifier.weight(1f)); Stat("Выбрано", selected.size.toString(), Modifier.weight(1f), t.info)
+            Stat("Всего", all.size.toString(), Modifier.weight(1f)); Stat("Рабочих", alive.size.toString(), Modifier.weight(1f), t.good); Stat("Стран", countries.count { it.first.length == 2 }.toString(), Modifier.weight(1f)); Stat("Выбрано", selected.size.toString(), Modifier.weight(1f), t.info)
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             MiniChip("Все страны", country == null) { country = null }
             countries.forEach { (code, n) -> MiniChip((if (code.length == 2) Countries.flag(code) else "🌐") + " $n", country == code) { country = if (country == code) null else code } }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            MiniChip("Живые", onlyAlive) { onlyAlive = !onlyAlive }
+            MiniChip("Проверены", onlyAlive) { onlyAlive = !onlyAlive }
             listOf(0 to "любой", 150 to "≤150", 300 to "≤300", 600 to "≤600").forEach { (v, l) -> MiniChip(l, maxMs == v) { maxMs = v } }
             listOf("по отклику", "по странам", "новые").forEachIndexed { i, l -> MiniChip(l, sort == i) { sort = i } }
         }
@@ -400,14 +401,15 @@ private fun KeysTab(vm: KeyHubViewModel) {
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Text(k.host + ":" + k.port, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = FontFamily.Monospace)
-                            Text((TYPE_LABEL[k.type] ?: k.type) + (if (k.tls == 1) " · TLS ✓" else if (k.tls == 2) " · TLS ✗" else "") + (if (k.proxy && k.ms >= 0) (ANON_LABEL[k.anon]?.let { " · $it" } ?: "") + (if (k.https == 1) " · HTTPS ✓" else if (k.https == 2) " · без HTTPS" else "") else "") + (if (k.v6) " · IPv6" else "") + " · " + k.source, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text((TYPE_LABEL[k.type] ?: k.type) + (if (!k.proxy && k.validation == 1) " · HTTPS через Xray ✓" else if (!k.proxy && k.validation == 2) " · ${k.validationNote}" else if (k.tls == 1) " · TCP/TLS ✓" else "") + (if (k.proxy && k.ms >= 0) (ANON_LABEL[k.anon]?.let { " · $it" } ?: "") + (if (k.https == 1) " · HTTPS ✓" else if (k.https == 2) " · без HTTPS" else "") else "") + (if (k.v6) " · IPv6" else "") + " · " + k.source, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         when {
-                            k.ms == -1L -> Pill("—", MaterialTheme.colorScheme.outline, MaterialTheme.colorScheme.surfaceContainerLow)
-                            k.ms == -3L -> Pill("UDP", t.info, t.infoSoft)
-                            k.ms == -2L -> Pill("нет", t.bad, t.badSoft)
-                            k.tls == 2 -> Pill("TLS ✗", t.warn, t.warnSoft)
-                            else -> Pill("${k.ms} мс", if (k.ms <= 150) t.good else if (k.ms <= 400) t.warn else t.bad, if (k.ms <= 150) t.goodSoft else if (k.ms <= 400) t.warnSoft else t.badSoft)
+                            k.udp -> Pill("Не проверен", t.info, t.infoSoft)
+                            !k.proxy && k.validation == 2 -> Pill("Не работает", t.bad, t.badSoft)
+                            !k.proxy && k.validation == 3 -> Pill("Ошибка теста", t.warn, t.warnSoft)
+                            !k.proxy && !k.alive -> Pill("Не проверен", MaterialTheme.colorScheme.outline, MaterialTheme.colorScheme.surfaceContainerLow)
+                            k.ms < 0 -> Pill("нет", t.bad, t.badSoft)
+                            else -> Pill("${k.verifiedPing} мс", if (k.verifiedPing <= 150) t.good else if (k.verifiedPing <= 400) t.warn else t.bad, if (k.verifiedPing <= 150) t.goodSoft else if (k.verifiedPing <= 400) t.warnSoft else t.badSoft)
                         }
                     }
                 }
@@ -421,7 +423,7 @@ private fun KeysTab(vm: KeyHubViewModel) {
                 IconButton(onClick = { vm.recheck(selected) }, enabled = !vm.running && all.isNotEmpty()) { Icon(Icons.Rounded.Refresh, "Перепроверить") }
                 IconButton(onClick = { vm.remove(selected); selected = emptySet() }, enabled = selected.isNotEmpty()) { Icon(Icons.Rounded.Delete, "Удалить", tint = t.bad) }
                 Spacer(Modifier.weight(1f))
-                Button(onClick = { export = true }, enabled = chosen.isNotEmpty()) { Icon(Icons.Rounded.IosShare, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Экспорт") }
+                Button(onClick = { export = true }, enabled = chosen.any { it.alive }) { Icon(Icons.Rounded.IosShare, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Экспорт") }
             }
         }
     }
@@ -430,10 +432,10 @@ private fun KeysTab(vm: KeyHubViewModel) {
         text = { Column { Text("Сколько самых быстрых ключей взять из каждой страны (среди показанных):", style = MaterialTheme.typography.bodyMedium)
             Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf(1, 3, 5, 10).forEach { n -> MiniChip("$n", false) {
-                    selected = shown.filter { it.alive }.groupBy { it.country }.flatMap { (_, v) -> v.sortedBy { it.ms }.take(n) }.map { it.id }.toSet(); bestDialog = false
+                    selected = shown.filter { it.alive }.groupBy { it.country }.flatMap { (_, v) -> v.sortedBy { it.verifiedPing }.take(n) }.map { it.id }.toSet(); bestDialog = false
                 } } } } },
         confirmButton = { TextButton(onClick = { bestDialog = false }) { Text("Закрыть") } })
-    if (export) ExportSheet(vm, chosen) { export = false }
+    if (export) ExportSheet(vm, chosen.filter { it.alive }) { export = false }
 }
 
 @Composable
