@@ -15,13 +15,26 @@ object KeySources {
             GH + "barry-far/V2ray-Config/main/Splitted-By-Protocol/trojan.txt", GH + "barry-far/V2ray-Config/main/Splitted-By-Protocol/ss.txt",
             GH + "Delta-Kronecker/V2Ray-Config/main/config/protocols/vless.txt", GH + "Delta-Kronecker/V2Ray-Config/main/config/protocols/vmess.txt",
             GH + "Delta-Kronecker/V2Ray-Config/main/config/protocols/trojan.txt", GH + "Delta-Kronecker/V2Ray-Config/main/config/protocols/ss.txt",
-            GH + "ts-sf/fly/main/v2")),
+            GH + "ts-sf/fly/main/v2",
+            // Additional active public feeds; each entry is revalidated locally.
+            GH + "0xRadikal/Free-v2ray-Configs/main/protocols/vless.txt",
+            GH + "0xRadikal/Free-v2ray-Configs/main/protocols/vmess.txt",
+            GH + "0xRadikal/Free-v2ray-Configs/main/protocols/trojan.txt",
+            GH + "0xRadikal/Free-v2ray-Configs/main/protocols/shadowsocks.txt",
+            GH + "kasesm/Free-Config/main/vless_raw.txt",
+            GH + "kasesm/Free-Config/main/vmess_raw.txt",
+            GH + "kasesm/Free-Config/main/trojan_raw.txt",
+            GH + "kasesm/Free-Config/main/ss_raw.txt")),
         KeyKind("udp", "Hysteria2, TUIC, WireGuard", "Быстрые UDP-протоколы, отклик не проверяется", UDP_TYPES, listOf(
-            GH + "barry-far/V2ray-Config/main/All_Configs_Sub.txt", GH + "mrvcoder/V2rayCollector/main/mixed_iran.txt", GH + "mahdibland/V2RayAggregator/master/sub/sub_merge_base64.txt")),
+            GH + "barry-far/V2ray-Config/main/All_Configs_Sub.txt", GH + "mrvcoder/V2rayCollector/main/mixed_iran.txt", GH + "mahdibland/V2RayAggregator/master/sub/sub_merge_base64.txt",
+            GH + "0xRadikal/Free-v2ray-Configs/main/protocols/hysteria2.txt",
+            GH + "0xRadikal/Free-v2ray-Configs/main/protocols/tuic.txt",
+            GH + "PrinceVSFX/Hysteria2-Configs/main/Configs_list.txt")),
         KeyKind("socks", "SOCKS5", "Открытые серверы IPv4 и IPv6", setOf("socks"), listOf(
             GH + "TheSpeedX/PROXY-List/master/socks5.txt", GH + "monosans/proxy-list/main/proxies/socks5.txt", GH + "hookzof/socks5_list/master/proxy.txt",
             GH + "roosterkid/openproxylist/main/SOCKS5_RAW.txt", GH + "proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt",
-            GH + "vakhov/fresh-proxy-list/master/socks5.txt", GH + "zloi-user/hideip.me/master/socks5.txt", GH + "iplocate/free-proxy-list/main/all-proxies.txt")),
+            GH + "vakhov/fresh-proxy-list/master/socks5.txt", GH + "zloi-user/hideip.me/master/socks5.txt", GH + "iplocate/free-proxy-list/main/all-proxies.txt",
+            GH + "0xRadikal/Free-v2ray-Configs/main/protocols/socks.txt")),
         KeyKind("http", "HTTP и HTTPS", "Прокси с проверкой HTTPS", setOf("http"), listOf(
             GH + "TheSpeedX/PROXY-List/master/http.txt", GH + "monosans/proxy-list/main/proxies/http.txt", GH + "proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
             GH + "clarketm/proxy-list/master/proxy-list-raw.txt", GH + "jetkai/proxy-list/main/online-proxies/txt/proxies-https.txt", GH + "roosterkid/openproxylist/main/HTTPS_RAW.txt",
@@ -34,7 +47,12 @@ object KeySources {
             "https://www.proxy-list.download/api/v1/get?type=socks5&anon=elite")),
         KeyKind("sub", "Подписки", "Готовые сборники и ссылки-подписки на страницах", XRAY_TYPES + UDP_TYPES, listOf(
             GH + "mahdibland/V2RayAggregator/master/sub/sub_merge.txt", GH + "peasoft/NoMoreWalls/master/list_raw.txt", GH + "ermaozi/get_subscribe/main/subscribe/v2ray.txt",
-            GH + "Pawdroid/Free-servers/main/sub", GH + "freefq/free/master/v2", GH + "barry-far/V2ray-Config/main/All_Configs_Sub.txt", GH + "mrvcoder/V2rayCollector/main/mixed_iran.txt"))
+            GH + "Pawdroid/Free-servers/main/sub", GH + "freefq/free/master/v2", GH + "barry-far/V2ray-Config/main/All_Configs_Sub.txt", GH + "mrvcoder/V2rayCollector/main/mixed_iran.txt",
+            GH + "0xRadikal/Free-v2ray-Configs/main/verified/configs.txt",
+            GH + "0xRadikal/Free-v2ray-Configs/main/fast/configs.txt",
+            GH + "0xRadikal/Free-v2ray-Configs/main/top100.txt",
+            GH + "kasesm/Free-Config/main/all_raw.txt",
+            GH + "kasesm/Free-Config/main/high_volume_raw.txt"))
     )
 
     fun byId(id: String) = kinds.firstOrNull { it.id == id }
