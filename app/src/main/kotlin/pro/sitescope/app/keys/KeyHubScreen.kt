@@ -64,10 +64,21 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
 
     init { items = KeyStore.load(context) }
 
-    private fun say(t: String) { log = (listOf(t) + log).take(40) }
-    private fun touch() { version++ }
+    private val lock = Any()
+    private fun say(t: String) { synchronized(lock) { log = (listOf(t) + log).take(40) } }
+    private fun touch() { synchronized(lock) { version++ } }
+    private val cPages = AtomicInteger(); private val cSites = AtomicInteger(); private val cKeys = AtomicInteger(); private val cChecked = AtomicInteger()
+    @Volatile private var lastPub = 0L; @Volatile private var lastTouch = 0L; @Volatile private var lastSave = 0L
+    /** Счётчики на экране обновляются не чаще раза в 0,4 с, чтобы не перегружать интерфейс. */
+    private fun publish(force: Boolean = false) {
+        val n = android.os.SystemClock.elapsedRealtime()
+        if (!force && n - lastPub < 400) return
+        lastPub = n; pages = cPages.get(); sitesDone = cSites.get(); keysFound = cKeys.get(); checked = cChecked.get()
+        if (force || n - lastTouch > 1500) { lastTouch = n; touch() }
+        if (!force && n - lastSave > 60_000) { lastSave = n; KeyStore.save(context, items) }
+    }
 
-    fun stop() { job?.cancel(); stage = "Остановлено"; running = false }
+    fun stop() { job?.cancel(); stage = "Остановлено"; running = false; KeyStore.save(context, items); touch() }
 
     fun clearAll() { items = emptyList(); KeyStore.clear(context); touch() }
     fun remove(ids: Set<String>) { items = items.filter { it.id !in ids }; KeyStore.save(context, items); touch() }
@@ -79,21 +90,21 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         val chosenKinds = kindIds.mapNotNull { KeySources.byId(it) }
         val types = chosenKinds.flatMap { it.types }.toSet().ifEmpty { KeySources.XRAY_TYPES }
         val followSubs = "sub" in kindIds; val eliteOnly = "elite" in kindIds; val allowV6 = KeySettings.ipv6(c)
-        running = true; finishedNote = ""; log = emptyList()
+        running = true; finishedNote = ""; log = emptyList(); KeyGuard.tripped = false
+        cPages.set(0); cSites.set(0); cKeys.set(0); cChecked.set(0)
         sitesFound = 0; sitesDone = 0; pages = 0; keysFound = 0; checked = 0; toCheck = 0
-        job = viewModelScope.launch {
+        // Вся работа идёт в фоне: главный поток отвечает только за экран.
+        job = viewModelScope.launch(Dispatchers.Default) {
             try {
                 val found = ConcurrentHashMap<String, KeyItem>()
                 val subSeen = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
-                // 1. Источники
                 stage = "Поиск сайтов"
                 val sites = LinkedHashMap<String, String>()
                 fun norm(s: String) = if (s.startsWith("http")) s else if (s.startsWith("t.me/") || s.startsWith("@")) "https://t.me/s/" + s.removePrefix("@").removePrefix("t.me/").removePrefix("s/") else "https://$s"
                 for (s in sources) { val u = norm(s); sites.putIfAbsent(u, KeySources.label(u)) }
                 for (k in chosenKinds) for (u in k.sources) sites.putIfAbsent(u, KeySources.label(u))
                 val presetCount = sites.size
-                val wantSearch = KeySettings.useSearch(c)
-                if (wantSearch) {
+                if (KeySettings.useSearch(c)) {
                     val max = KeySettings.maxSites(c)
                     val hits = withContext(Dispatchers.IO) { KeyCrawler.search(query.trim(), max, types) }
                     say("Поисковики: найдено ${hits.size} ссылок")
@@ -102,65 +113,78 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                     for (h in hits) { val host = KeyCrawler.hostOf(h); if (host.isNotEmpty() && hosts.add(host)) { sites[h] = host; added++ }; if (added >= max) break }
                 }
                 sitesFound = sites.size
-                if (sites.isEmpty()) { finishedNote = "Источники не найдены. Добавьте свои или проверьте интернет"; stage = "Готово"; running = false; return@launch }
+                if (sites.isEmpty()) { finishedNote = "Источники не найдены. Добавьте свои или проверьте интернет"; stage = "Готово"; return@launch }
                 if (presetCount > 0) say("Готовых источников: $presetCount")
-                // 2. Обход
+                // Обход
                 stage = "Сканирование сайтов"
                 val pagesCap = KeySettings.pagesPerSite(c); val depth = KeySettings.depth(c)
-                val gate = Semaphore(4)
-                val pageCount = AtomicInteger(0)
+                val gate = Semaphore(KeySettings.parallelSites(c))
                 coroutineScope {
                     sites.entries.map { (url, label) ->
                         async {
                             gate.acquire()
                             try {
                                 ensureActive()
+                                if (KeyGuard.tripped) return@async
                                 var own = 0
-                                KeyCrawler.crawl(url, pagesCap, depth, types, KeySources.proxyTypesFor(url, types), followSubs, subSeen, { pages = pageCount.incrementAndGet() }) { keys ->
-                                    for (k in keys) {
-                                        if (found.size > 60000) break
-                                        KeyCrawler.parse(k, label, allowV6)?.let { if (found.putIfAbsent(it.id, it) == null) { own++; keysFound = found.size } }
+                                try {
+                                    KeyCrawler.crawl(url, pagesCap, depth, types, KeySources.proxyTypesFor(url, types), followSubs, subSeen, { cPages.incrementAndGet(); publish() }) { keys ->
+                                        for (k in keys) {
+                                            if (found.size >= 30000) break
+                                            KeyCrawler.parse(k, label, allowV6)?.let { if (found.putIfAbsent(it.id, it) == null) { own++; cKeys.set(found.size) } }
+                                        }
+                                        publish()
                                     }
-                                }
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { say("$label: ошибка") } catch (e: OutOfMemoryError) { KeyGuard.tripped = true }
                                 if (own > 0) say("$label: +$own")
-                            } finally { sitesDone++; gate.release() }
+                            } finally { cSites.incrementAndGet(); publish(); gate.release() }
                         }
                     }.awaitAll()
                 }
-                // Слияние с базой: уже проверенные сохраняют результат. Прокси проверяем в пределах лимита.
+                publish(true)
+                if (KeyGuard.tripped) say("Мало памяти: сбор остановлен досрочно, найденное проверяется")
+                // Слияние с базой: уже проверенные сохраняют результат. Проверяем не больше лимитов.
                 val old = items.associateBy { it.id }
                 val fresh0 = found.values.filter { it.id !in old }
-                val limit = KeySettings.proxyLimit(c)
-                val freshProxy = fresh0.filter { it.proxy }.shuffled().take(limit)
-                val fresh = fresh0.filter { !it.proxy } + freshProxy
+                val proxyLimit = KeySettings.proxyLimit(c); val keyLimit = KeySettings.keysLimit(c)
+                val fresh = fresh0.filter { !it.proxy }.shuffled().take(keyLimit) + fresh0.filter { it.proxy }.shuffled().take(proxyLimit)
                 items = old.values.toList() + fresh; touch()
-                say("Новых: ${fresh0.size}, уже были: ${found.size - fresh0.size}" + if (fresh0.count { it.proxy } > limit) " · прокси к проверке: $limit" else "")
-                // 3. Проверка
+                say("Новых: ${fresh0.size}, уже были: ${found.size - fresh0.size}" + if (fresh.size < fresh0.size) " · к проверке: ${fresh.size}" else "")
+                val foundTotal = found.size
+                found.clear()
+                // Проверка
                 checkItems(fresh)
-                // Мёртвые прокси не храним; в режиме «элитные» оставляем только анонимные.
                 val drop = fresh.filter { it.proxy && (it.ms == -2L || (eliteOnly && it.anon != 3)) }.map { it.id }.toSet()
-                if (drop.isNotEmpty()) { items = items.filter { it.id !in drop }; touch() }
-                val live = items.filter { it.alive && found.containsKey(it.id) }
-                finishedNote = "Найдено ${found.size} · живых ${live.size}" + (live.count { it.proxy && it.anon == 3 }.let { if (it > 0) " · элитных $it" else "" })
+                if (drop.isNotEmpty()) items = items.filter { it.id !in drop }
+                val liveNow = fresh.count { it.alive && it.id !in drop }
+                finishedNote = "Найдено $foundTotal · проверено ${fresh.size} · живых $liveNow" + (fresh.count { it.proxy && it.anon == 3 && it.id !in drop }.let { if (it > 0) " · элитных $it" else "" })
                 stage = "Готово"
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
-            } catch (e: Exception) { finishedNote = "Ошибка: " + (e.message ?: e.javaClass.simpleName); stage = "Ошибка" }
-            finally { KeyStore.save(context, items); running = false; touch() }
+            } catch (e: OutOfMemoryError) { finishedNote = "Не хватило памяти: выберите режим «Щадящая» в настройках"; stage = "Ошибка" }
+            catch (e: Exception) { finishedNote = "Ошибка: " + (e.message ?: e.javaClass.simpleName); stage = "Ошибка" }
+            finally { KeyStore.save(context, items); running = false; publish(true) }
         }
     }
 
     private suspend fun checkItems(list: List<KeyItem>) {
         if (list.isEmpty()) return
         val c = context
-        stage = "Проверка отклика"; checked = 0; toCheck = list.size
+        stage = "Проверка отклика"; cChecked.set(0); checked = 0; toCheck = list.size
         val gate = Semaphore(KeySettings.threads(c)); val timeout = KeySettings.timeoutMs(c); val tls = KeySettings.tlsCheck(c)
         coroutineScope {
-            list.map { k -> async { gate.acquire(); try { ensureActive(); KeyChecker.check(k, timeout, tls) } finally { checked++; gate.release(); if (checked % 25 == 0) touch() } } }.awaitAll()
+            list.map { k -> async {
+                gate.acquire()
+                try {
+                    ensureActive()
+                    val ok = kotlinx.coroutines.withTimeoutOrNull(timeout * 6L + 5000) { KeyChecker.check(k, timeout, tls) }
+                    if (ok == null) { k.ms = -2; k.checkedAt = System.currentTimeMillis() }
+                } finally { cChecked.incrementAndGet(); gate.release(); publish() }
+            } }.awaitAll()
         }
         stage = "Определение стран"
         KeyChecker.geo(c, list.filter { it.alive || it.ms == -3L })
-        touch()
+        publish(true)
     }
 
     /** Повторная проверка выбранных (или всех) ключей. */
@@ -168,11 +192,11 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         if (running) return
         running = true; finishedNote = ""
         val list = items.filter { ids.isEmpty() || it.id in ids }
-        job = viewModelScope.launch {
+        job = viewModelScope.launch(Dispatchers.Default) {
             try { list.forEach { it.country = if (it.alive) it.country else "" }; checkItems(list); finishedNote = "Проверено ${list.size} · живых ${list.count { it.alive }}"; stage = "Готово" }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) { finishedNote = "Ошибка: " + (e.message ?: "") }
-            finally { KeyStore.save(context, items); running = false; touch() }
+            finally { KeyStore.save(context, items); running = false; publish(true) }
         }
     }
 
@@ -454,6 +478,8 @@ private fun SettingsTab(vm: KeyHubViewModel) {
     var threads by remember { mutableIntStateOf(KeySettings.threads(c)) }
     var timeout by remember { mutableIntStateOf(KeySettings.timeoutMs(c)) }
     var plimit by remember { mutableIntStateOf(KeySettings.proxyLimit(c)) }
+    var klimit by remember { mutableIntStateOf(KeySettings.keysLimit(c)) }
+    var psites by remember { mutableIntStateOf(KeySettings.parallelSites(c)) }
     var tls by remember { mutableStateOf(KeySettings.tlsCheck(c)) }
     var search by remember { mutableStateOf(KeySettings.useSearch(c)) }
     var confirm by remember { mutableStateOf(false) }
@@ -463,15 +489,29 @@ private fun SettingsTab(vm: KeyHubViewModel) {
         if (hint.isNotEmpty()) Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
+        SectionTitle("Нагрузка")
+        // (потоки проверки, сайтов одновременно, ключей и прокси за запуск, таймаут)
+        val presets = listOf("Щадящая" to listOf(12, 2, 600, 200, 4500), "Обычная" to listOf(24, 3, 1500, 400, 3500), "Максимум" to listOf(40, 4, 3000, 1000, 3000))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            presets.forEach { (name, v) ->
+                MiniChip(name, threads == v[0] && psites == v[1] && klimit == v[2] && plimit == v[3] && timeout == v[4]) {
+                    threads = v[0]; psites = v[1]; klimit = v[2]; plimit = v[3]; timeout = v[4]
+                    KeySettings.put(c, "threads", v[0]); KeySettings.put(c, "psites", v[1]); KeySettings.put(c, "klimit", v[2]); KeySettings.put(c, "plimit", v[3]); KeySettings.put(c, "timeout", v[4])
+                }
+            }
+        }
+        Text("Если приложение тормозит или зависает — выберите «Щадящая». «Максимум» подходит для мощных телефонов с 6 ГБ памяти и больше. Сбор идёт в фоне и сам останавливается при нехватке памяти.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
         SectionTitle("Обход сайтов")
+        slider("Сайтов одновременно", psites, 1..4, "psites", { psites = it })
         slider("Страниц на сайт", pages, 1..50, "pages", { pages = it }, "Не больше 50 страниц на каждый сайт")
         slider("Глубина ссылок", depth, 0..3, "depth", { depth = it }, "0 — только указанная страница, 1 — плюс страницы, на которые она ссылается")
         slider("Сайтов за запуск", sites, 1..40, "sites", { sites = it })
         Row(verticalAlignment = Alignment.CenterVertically) { Text("Искать сайты через поисковики", Modifier.weight(1f)); Switch(search, { search = it; KeySettings.put(c, "search", it) }) }
         SectionTitle("Проверка")
-        slider("Параллельных проверок", threads, 4..64, "threads", { threads = it })
+        slider("Параллельных проверок", threads, 4..48, "threads", { threads = it })
+        slider("Ключей за один запуск", klimit, 200..4000, "klimit", { klimit = it }, "В больших сборниках десятки тысяч ключей: проверяется случайная часть этого размера")
         slider("Таймаут, мс", timeout, 1500..8000, "timeout", { timeout = it })
-        slider("Прокси за один запуск", plimit, 100..3000, "plimit", { plimit = it }, "В публичных списках тысячи адресов: проверяется случайная часть этого размера. Мёртвые прокси не сохраняются")
+        slider("Прокси за один запуск", plimit, 100..2000, "plimit", { plimit = it }, "В публичных списках тысячи адресов: проверяется случайная часть этого размера. Мёртвые прокси не сохраняются")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("TLS-рукопожатие"); Text("Для ключей с TLS и Reality: отсекает серверы, которые только принимают порт", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Switch(tls, { tls = it; KeySettings.put(c, "tls", it) })

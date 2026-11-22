@@ -5,6 +5,7 @@ import android.content.Context
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -47,11 +48,13 @@ object KeySettings {
     fun pagesPerSite(c: Context) = p(c).getInt("pages", 10).coerceIn(1, 50)
     fun depth(c: Context) = p(c).getInt("depth", 1).coerceIn(0, 3)
     fun maxSites(c: Context) = p(c).getInt("sites", 15).coerceIn(1, 40)
-    fun threads(c: Context) = p(c).getInt("threads", 24).coerceIn(4, 64)
+    fun threads(c: Context) = p(c).getInt("threads", 24).coerceIn(4, 48)
+    fun parallelSites(c: Context) = p(c).getInt("psites", 3).coerceIn(1, 4)
+    fun keysLimit(c: Context) = p(c).getInt("klimit", 1500).coerceIn(200, 4000)
     fun timeoutMs(c: Context) = p(c).getInt("timeout", 3500).coerceIn(1500, 8000)
     fun tlsCheck(c: Context) = p(c).getBoolean("tls", true)
     fun useSearch(c: Context) = p(c).getBoolean("search", true)
-    fun proxyLimit(c: Context) = p(c).getInt("plimit", 400).coerceIn(100, 3000)
+    fun proxyLimit(c: Context) = p(c).getInt("plimit", 400).coerceIn(100, 2000)
     fun ipv6(c: Context) = p(c).getBoolean("ipv6", true)
     fun kinds(c: Context): Set<String> = p(c).getString("kinds", "xray")!!.split(',').filter { it.isNotBlank() }.toSet()
     fun lastQuery(c: Context) = p(c).getString("query", "")!!
@@ -75,7 +78,7 @@ object KeyStore {
         }
     } catch (e: Exception) { emptyList() }
 
-    fun save(c: Context, items: List<KeyItem>) {
+    @Synchronized fun save(c: Context, items: List<KeyItem>) {
         val keep = items.sortedWith(compareByDescending<KeyItem> { it.alive }.thenByDescending { it.foundAt }).take(LIMIT)
         val a = JSONArray()
         keep.forEach { a.put(JSONObject().put("link", it.link).put("name", it.name).put("type", it.type).put("host", it.host).put("port", it.port).put("source", it.source).put("foundAt", it.foundAt)
@@ -86,7 +89,19 @@ object KeyStore {
 }
 
 /** Поиск сайтов, обход страниц и извлечение ключей. */
+/** Защита от нехватки памяти: при малом остатке куче сбор останавливается, а не роняет приложение. */
+object KeyGuard {
+    @Volatile var tripped = false
+    fun low(): Boolean {
+        val rt = Runtime.getRuntime()
+        val free = rt.maxMemory() - (rt.totalMemory() - rt.freeMemory())
+        if (free < 48L * 1024 * 1024) { tripped = true; return true }
+        return false
+    }
+}
+
 object KeyCrawler {
+    private val cpuGate = kotlinx.coroutines.sync.Semaphore(2)
     internal const val UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
     private const val MAX_BYTES = 2_000_000
     private val KEY_RE = Regex("(?i)(?<![A-Za-z0-9])(vless|vmess|trojan|ss|hysteria2|hysteria|hy2|tuic|wireguard|wg|socks)://[^\\s\"'<>\\\\`|]{6,}")
@@ -101,21 +116,26 @@ object KeyCrawler {
     private val BLOCKED_HOSTS = listOf("google.", "bing.com", "duckduckgo.", "yandex.", "facebook.", "instagram.", "youtube.", "youtu.be", "twitter.", "x.com", "wikipedia.", "microsoft.", "apple.com", "amazon.", "tiktok.", "vk.com", "reddit.com/r/", "play.google")
 
     fun fetch(url: String): String? {
+        var c: HttpURLConnection? = null
         return try {
-            val c = URL(url.replaceFirst("http://", "https://")).openConnection() as HttpURLConnection
+            val deadline = System.nanoTime() + 30_000_000_000L
+            c = URL(url.replaceFirst("http://", "https://")).openConnection() as HttpURLConnection
             c.connectTimeout = 7000; c.readTimeout = 9000; c.instanceFollowRedirects = true
             c.setRequestProperty("User-Agent", UA); c.setRequestProperty("Accept-Language", "en,ru;q=0.8")
-            if (c.responseCode !in 200..299) { c.disconnect(); return null }
+            if (c.responseCode !in 200..299) { try { c.errorStream?.close() } catch (e: Exception) { }; return null }
             val ct = c.contentType.orEmpty().lowercase()
-            if (ct.isNotEmpty() && !(ct.startsWith("text") || ct.contains("json") || ct.contains("xml") || ct.contains("octet") || ct.contains("yaml"))) { c.disconnect(); return null }
+            if (ct.isNotEmpty() && !(ct.startsWith("text") || ct.contains("json") || ct.contains("xml") || ct.contains("octet") || ct.contains("yaml"))) return null
             val out = java.io.ByteArrayOutputStream()
-            c.inputStream.use { s -> val buf = ByteArray(16384); var n: Int; while (s.read(buf).also { n = it } > 0 && out.size() < MAX_BYTES) out.write(buf, 0, n) }
-            c.disconnect()
+            c.inputStream.use { st ->
+                val buf = ByteArray(16384); var n: Int
+                while (out.size() < MAX_BYTES && System.nanoTime() < deadline) { n = st.read(buf); if (n <= 0) break; out.write(buf, 0, n) }
+            }
             out.toString("UTF-8")
-        } catch (e: Exception) { null }
+        } catch (e: Exception) { null } catch (e: OutOfMemoryError) { null } finally { try { c?.disconnect() } catch (e: Exception) { } }
     }
 
     fun unescape(s: String): String {
+        if (s.indexOf('&') < 0 && s.indexOf('\\') < 0) return s
         var t = s.replace("\\u0026", "&").replace("\\/", "/").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&#x2F;", "/").replace("&#43;", "+")
         t = Regex("&#x([0-9a-fA-F]+);").replace(t) { m -> try { String(Character.toChars(m.groupValues[1].toInt(16))) } catch (e: Exception) { "" } }
         t = Regex("&#(\\d+);").replace(t) { m -> try { String(Character.toChars(m.groupValues[1].toInt())) } catch (e: Exception) { "" } }
@@ -135,19 +155,19 @@ object KeyCrawler {
             for (m in KEY_RE.findAll(text)) {
                 if (canon(m.groupValues[1]) !in kinds) continue
                 found += m.value.trimEnd('.', ',', ';', ')', ']', '}', '!', ':')
-                if (found.size > 40000) return
+                if (found.size > 20000) return
             }
             for (m in PROXY_RE.findAll(text)) {
                 val t = canon(m.groupValues[1]); if (t !in kinds) continue
                 found += (if (t == "socks") "socks5" else "http") + "://" + m.groupValues[2] + ":" + m.groupValues[3]
-                if (found.size > 40000) return
+                if (found.size > 20000) return
             }
             if (proxyTypes.isNotEmpty()) {
                 val rest = PROXY_RE.replace(text, " ")
                 for (m in PLAIN_RE.findAll(rest)) {
                     val host = m.groupValues[1].ifEmpty { "[" + m.groupValues[2] + "]" }
                     for (t in proxyTypes) found += (if (t == "socks") "socks5" else "http") + "://" + host + ":" + m.groupValues[3]
-                    if (found.size > 40000) return
+                    if (found.size > 20000) return
                 }
             }
         }
@@ -191,14 +211,15 @@ object KeyCrawler {
         while (queue.isNotEmpty() && count < pages) {
             coroutineContext.ensureActive()
             val (url, d) = queue.removeFirst()
+            if (KeyGuard.low()) { System.gc(); kotlinx.coroutines.delay(400); if (KeyGuard.low()) return }
             val body = withContext(Dispatchers.IO) { fetch(url) } ?: continue
             count++; onPage(count)
-            val keys = extract(body, kinds, proxyTypes)
+            val keys = cpuGate.withPermit { withContext(Dispatchers.Default) { extract(body, kinds, proxyTypes) } }
             if (keys.isNotEmpty()) onKeys(keys)
             if (followSubs) for (sub in subLinks(body, url)) {
                 if (!subSeen.add(sub)) continue
                 val text = withContext(Dispatchers.IO) { fetch(sub) } ?: continue
-                val more = extract(text, kinds, proxyTypes)
+                val more = cpuGate.withPermit { withContext(Dispatchers.Default) { extract(text, kinds, proxyTypes) } }
                 if (more.isNotEmpty()) onKeys(more)
                 kotlinx.coroutines.delay(150)
             }
@@ -299,9 +320,17 @@ object KeyChecker {
 
     private fun checkUdp(item: KeyItem) {
         item.checkedAt = System.currentTimeMillis()
-        val addr = try { InetAddress.getByName(item.host) } catch (e: Exception) { null }
+        val addr = resolve(item.host)
         if (addr == null) { item.ms = -2; return }
         item.ip = addr.hostAddress.orEmpty(); item.ms = -3
+    }
+
+    private val dnsGate = java.util.concurrent.Semaphore(12)
+    private val IP_RE = Regex("^[0-9.]+$|:")
+    private fun resolve(host: String): InetAddress? {
+        if (IP_RE.containsMatchIn(host)) return try { InetAddress.getByName(host) } catch (e: Exception) { null }
+        dnsGate.acquire()
+        try { return InetAddress.getByName(host) } catch (e: Exception) { return null } finally { dnsGate.release() }
     }
 
     @Volatile private var realIp: String? = null
@@ -317,14 +346,22 @@ object KeyChecker {
         c.connectTimeout = timeout; c.readTimeout = timeout; c.instanceFollowRedirects = false; c.useCaches = false
         c.setRequestProperty("User-Agent", KeyCrawler.UA); c.setRequestProperty("Connection", "close")
         val code = c.responseCode
-        val body = if (code in 200..299) c.inputStream.use { it.bufferedReader().readText().take(8000) } else ""
+        var body = ""
+        if (code in 200..299) {
+            val deadline = System.nanoTime() + timeout * 2_000_000L
+            c.inputStream.use { st ->
+                val out = java.io.ByteArrayOutputStream(); val buf = ByteArray(2048); var n: Int
+                while (out.size() < 8000 && System.nanoTime() < deadline) { n = st.read(buf); if (n <= 0) break; out.write(buf, 0, n) }
+                body = out.toString("UTF-8")
+            }
+        } else try { c.errorStream?.close() } catch (e: Exception) { }
         c.disconnect(); code to body
     } catch (e: Exception) { null }
 
     /** Реальная проверка прокси: запрос через него, выходной IP и страна, поддержка HTTPS и уровень анонимности. */
     private fun checkProxy(item: KeyItem, timeout: Int) {
         item.checkedAt = System.currentTimeMillis(); item.anon = 0; item.https = 0
-        val addr = try { InetAddress.getByName(item.host) } catch (e: Exception) { null }
+        val addr = resolve(item.host)
         if (addr == null) { item.ms = -2; return }
         item.ip = addr.hostAddress.orEmpty()
         try { Socket().use { it.connect(InetSocketAddress(addr, item.port), timeout) } } catch (e: Exception) { item.ms = -2; return }
@@ -353,7 +390,7 @@ object KeyChecker {
     }
 
     private fun checkTcp(item: KeyItem, timeout: Int, tls: Boolean) {
-        val addr = try { InetAddress.getByName(item.host) } catch (e: Exception) { null }
+        val addr = resolve(item.host)
         if (addr == null) { item.ms = -2; item.checkedAt = System.currentTimeMillis(); return }
         item.ip = addr.hostAddress.orEmpty()
         val samples = ArrayList<Long>()
