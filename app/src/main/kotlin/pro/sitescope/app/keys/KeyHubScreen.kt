@@ -140,7 +140,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                 // Мёртвые прокси не храним; в режиме «элитные» оставляем только анонимные.
                 val drop = fresh.filter { it.proxy && (it.ms == -2L || (eliteOnly && it.anon != 3)) }.map { it.id }.toSet()
                 if (drop.isNotEmpty()) { items = items.filter { it.id !in drop }; touch() }
-                val live = items.filter { it.alive && it.id in found }
+                val live = items.filter { it.alive && found.containsKey(it.id) }
                 finishedNote = "Найдено ${found.size} · живых ${live.size}" + (live.count { it.proxy && it.anon == 3 }.let { if (it > 0) " · элитных $it" else "" })
                 stage = "Готово"
             } catch (e: kotlinx.coroutines.CancellationException) {
