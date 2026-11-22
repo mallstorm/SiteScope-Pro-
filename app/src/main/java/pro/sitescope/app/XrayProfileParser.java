@@ -33,7 +33,8 @@ public final class XrayProfileParser {
         if (lower.startsWith("vmess://")) return parseVmess(raw);
         if (lower.startsWith("trojan://")) return parseTrojan(raw);
         if (lower.startsWith("ss://")) return parseShadowsocks(raw);
-        throw new IllegalArgumentException("Поддерживаются VLESS, VMess, Trojan, Shadowsocks и полный Xray JSON");
+        if (lower.startsWith("socks5://") || lower.startsWith("socks://") || lower.startsWith("httpproxy://")) return parseProxy(raw);
+        throw new IllegalArgumentException("Поддерживаются VLESS, VMess, Trojan, Shadowsocks, SOCKS5, HTTP и полный Xray JSON");
     }
 
     private static ParsedProfile parseJson(String raw) throws Exception {
@@ -167,6 +168,32 @@ public final class XrayProfileParser {
             if (protocol.length() > 0 && !"freedom".equals(protocol) && !"blackhole".equals(protocol) && !"dns".equals(protocol)) return o;
         }
         throw new IllegalArgumentException("В Xray JSON не найден прокси-outbound");
+    }
+
+    /** SOCKS5 (socks5://[user:pass@]host:port, socks://base64@host:port) и HTTP-прокси (httpproxy://host:port). */
+    private static ParsedProfile parseProxy(String raw) throws Exception {
+        boolean socks = raw.toLowerCase(Locale.US).startsWith("socks");
+        String body = raw.substring(raw.indexOf("://") + 3);
+        String name = "";
+        int hash = body.indexOf('#');
+        if (hash >= 0) { name = decode(body.substring(hash + 1)); body = body.substring(0, hash); }
+        int question = body.indexOf('?'); if (question >= 0) body = body.substring(0, question);
+        int slash = body.indexOf('/'); if (slash >= 0) body = body.substring(0, slash);
+        String user = "", pass = "", hostPort = body;
+        int at = body.lastIndexOf('@');
+        if (at >= 0) {
+            String cred = body.substring(0, at); hostPort = body.substring(at + 1);
+            String text = cred.contains(":") ? cred : new String(decodeBase64(cred), StandardCharsets.UTF_8);
+            int colon = text.indexOf(':');
+            if (colon >= 0) { user = decode(text.substring(0, colon)); pass = decode(text.substring(colon + 1)); } else user = text;
+        }
+        HostPort hp = splitHostPort(hostPort, socks ? 1080 : 8080);
+        JSONObject server = new JSONObject();
+        server.put("address", hp.host); server.put("port", hp.port);
+        if (user.length() > 0) server.put("users", new JSONArray().put(new JSONObject().put("user", user).put("pass", pass).put("level", 0)));
+        JSONObject outbound = taggedOutbound(socks ? "socks" : "http");
+        outbound.put("settings", new JSONObject().put("servers", new JSONArray().put(server)));
+        return result(socks ? "SOCKS5" : "HTTP", name, hp.host, hp.port, outbound);
     }
 
     private static JSONObject taggedOutbound(String protocol) throws Exception {

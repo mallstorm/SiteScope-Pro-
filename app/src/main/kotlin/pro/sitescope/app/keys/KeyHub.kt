@@ -16,6 +16,7 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.Proxy
 import java.net.Socket
 import java.net.URI
 import java.net.URL
@@ -29,11 +30,16 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 import kotlin.coroutines.coroutineContext
 
-/** Найденный ключ и результат его проверки. ms: -1 не проверен, -2 не отвечает. */
+/** Найденный ключ и результат его проверки. ms: -1 не проверен, -2 не отвечает, -3 UDP-протокол (отклик не проверяется). */
 class KeyItem(val link: String, val name: String, val type: String, val host: String, val port: Int, val source: String, val foundAt: Long) {
     var ip = ""; var country = ""; var ms = -1L; var tls = 0; var checkedAt = 0L
+    var anon = 0    // прокси: 0 неизвестно, 1 прозрачный, 2 анонимный, 3 элитный
+    var https = 0   // прокси: 0 не проверялся, 1 HTTPS работает, 2 нет
     val id: String get() = type + "|" + host + ":" + port + "|" + Integer.toHexString(link.substringBefore('#').hashCode())
     val alive: Boolean get() = ms >= 0 && tls != 2
+    val proxy: Boolean get() = type == "http" || type == "socks"
+    val udp: Boolean get() = type == "hysteria2" || type == "tuic" || type == "wireguard"
+    val v6: Boolean get() = host.contains(':')
 }
 
 object KeySettings {
@@ -45,7 +51,10 @@ object KeySettings {
     fun timeoutMs(c: Context) = p(c).getInt("timeout", 3500).coerceIn(1500, 8000)
     fun tlsCheck(c: Context) = p(c).getBoolean("tls", true)
     fun useSearch(c: Context) = p(c).getBoolean("search", true)
-    fun lastQuery(c: Context) = p(c).getString("query", "vless")!!
+    fun proxyLimit(c: Context) = p(c).getInt("plimit", 400).coerceIn(100, 3000)
+    fun ipv6(c: Context) = p(c).getBoolean("ipv6", true)
+    fun kinds(c: Context): Set<String> = p(c).getString("kinds", "xray")!!.split(',').filter { it.isNotBlank() }.toSet()
+    fun lastQuery(c: Context) = p(c).getString("query", "")!!
     fun lastSources(c: Context) = p(c).getString("sources", "")!!
     fun put(c: Context, k: String, v: Int) { p(c).edit().putInt(k, v).apply() }
     fun put(c: Context, k: String, v: Boolean) { p(c).edit().putBoolean(k, v).apply() }
@@ -61,7 +70,7 @@ object KeyStore {
         (0 until a.length()).map { i ->
             val o = a.getJSONObject(i)
             KeyItem(o.getString("link"), o.optString("name"), o.optString("type"), o.optString("host"), o.optInt("port"), o.optString("source"), o.optLong("foundAt")).also {
-                it.ip = o.optString("ip"); it.country = o.optString("country"); it.ms = o.optLong("ms", -1); it.tls = o.optInt("tls"); it.checkedAt = o.optLong("checkedAt")
+                it.ip = o.optString("ip"); it.country = o.optString("country"); it.ms = o.optLong("ms", -1); it.tls = o.optInt("tls"); it.checkedAt = o.optLong("checkedAt"); it.anon = o.optInt("anon"); it.https = o.optInt("https")
             }
         }
     } catch (e: Exception) { emptyList() }
@@ -70,7 +79,7 @@ object KeyStore {
         val keep = items.sortedWith(compareByDescending<KeyItem> { it.alive }.thenByDescending { it.foundAt }).take(LIMIT)
         val a = JSONArray()
         keep.forEach { a.put(JSONObject().put("link", it.link).put("name", it.name).put("type", it.type).put("host", it.host).put("port", it.port).put("source", it.source).put("foundAt", it.foundAt)
-            .put("ip", it.ip).put("country", it.country).put("ms", it.ms).put("tls", it.tls).put("checkedAt", it.checkedAt)) }
+            .put("ip", it.ip).put("country", it.country).put("ms", it.ms).put("tls", it.tls).put("checkedAt", it.checkedAt).put("anon", it.anon).put("https", it.https)) }
         try { file(c).writeText(a.toString()) } catch (e: Exception) { }
     }
     fun clear(c: Context) { file(c).delete() }
@@ -78,9 +87,14 @@ object KeyStore {
 
 /** Поиск сайтов, обход страниц и извлечение ключей. */
 object KeyCrawler {
-    private const val UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+    internal const val UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
     private const val MAX_BYTES = 2_000_000
-    private val KEY_RE = Regex("(?i)(?<![A-Za-z0-9])(vless|vmess|trojan|ss)://[^\\s\"'<>\\\\`|]{8,}")
+    private val KEY_RE = Regex("(?i)(?<![A-Za-z0-9])(vless|vmess|trojan|ss|hysteria2|hysteria|hy2|tuic|wireguard|wg|socks)://[^\\s\"'<>\\\\`|]{6,}")
+    private val PROXY_RE = Regex("(?i)(?<![A-Za-z0-9])(socks5h?|socks4a?|https?)://((?:\\d{1,3}\\.){3}\\d{1,3}|\\[[0-9a-fA-F:]{3,39}\\]):(\\d{2,5})(?!\\d)")
+    private val PLAIN_RE = Regex("(?<![\\w.:@/\\[=-])(?:((?:\\d{1,3}\\.){3}\\d{1,3})|\\[([0-9a-fA-F:]{3,39})\\]):(\\d{2,5})(?!\\d)")
+    private val URL_RE = Regex("https?://[^\\s\"'<>\\\\)\\]]{12,}")
+    private val SUB_HINT = listOf("subscri", "/sub", "sub?", "sub=", "sub/", "v2ray", "clash", "singbox", "sing-box", "xray", "vless", "configs", "token=")
+    private val HP_RE = Regex("^[a-zA-Z0-9]+://(?:[^@/?#]*@)?(\\[[0-9a-fA-F:]+\\]|[^:/?#\\[\\]]+):(\\d{1,5})")
     private val HREF_RE = Regex("(?i)href\\s*=\\s*[\"']([^\"'#\\s]+)")
     private val SKIP_EXT = Regex("(?i)\\.(png|jpe?g|gif|svg|webp|ico|css|js|woff2?|ttf|pdf|zip|rar|7z|apk|exe|mp4|mp3|mkv)(\\?.*)?$")
     private val HINTS = listOf("vless", "vmess", "trojan", "vpn", "key", "kluch", "proxy", "config", "sub", "free", "v2ray", "xray", "raw", "list", "mirror", "subscription", "sing")
@@ -108,24 +122,51 @@ object KeyCrawler {
         return t
     }
 
-    /** Ключи из текста страницы, включая base64-подписки. */
-    fun extract(body: String, protocols: Set<String>): List<String> {
+    fun canon(scheme: String) = when (scheme.lowercase()) {
+        "socks5", "socks5h", "socks" -> "socks"; "socks4", "socks4a" -> "socks4"; "http", "https" -> "http"
+        "hy2", "hysteria", "hysteria2" -> "hysteria2"; "wg", "wireguard" -> "wireguard"; else -> scheme.lowercase()
+    }
+
+    /** Ключи и прокси из текста страницы, включая base64-подписки и списки ip:port. */
+    fun extract(body: String, kinds: Set<String>, proxyTypes: Set<String>): List<String> {
         val found = LinkedHashSet<String>()
-        fun scan(text: String) {
-            for (m in KEY_RE.findAll(unescape(text))) {
-                if (m.groupValues[1].lowercase() !in protocols) continue
+        fun scan(raw: String) {
+            val text = unescape(raw)
+            for (m in KEY_RE.findAll(text)) {
+                if (canon(m.groupValues[1]) !in kinds) continue
                 found += m.value.trimEnd('.', ',', ';', ')', ']', '}', '!', ':')
+                if (found.size > 40000) return
+            }
+            for (m in PROXY_RE.findAll(text)) {
+                val t = canon(m.groupValues[1]); if (t !in kinds) continue
+                found += (if (t == "socks") "socks5" else "http") + "://" + m.groupValues[2] + ":" + m.groupValues[3]
+                if (found.size > 40000) return
+            }
+            if (proxyTypes.isNotEmpty()) {
+                val rest = PROXY_RE.replace(text, " ")
+                for (m in PLAIN_RE.findAll(rest)) {
+                    val host = m.groupValues[1].ifEmpty { "[" + m.groupValues[2] + "]" }
+                    for (t in proxyTypes) found += (if (t == "socks") "socks5" else "http") + "://" + host + ":" + m.groupValues[3]
+                    if (found.size > 40000) return
+                }
             }
         }
         scan(body)
         val plain = body.trim()
         if (plain.length > 120 && !plain.contains("://") && plain.all { it.isLetterOrDigit() || it in "+/=_-\r\n " }) {
+            val b64 = plain.filter { !it.isWhitespace() }.let { it.take(it.length / 4 * 4) }
             for (flags in intArrayOf(Base64.DEFAULT, Base64.URL_SAFE)) {
-                try { scan(String(Base64.decode(plain, flags))); break } catch (e: Exception) { }
+                try { scan(String(Base64.decode(b64, flags))); break } catch (e: Exception) { }
             }
         }
         return found.toList()
     }
+
+    /** Ссылки на подписки и списки внутри страницы (допускаются другие сайты). */
+    fun subLinks(body: String, base: String): List<String> = URL_RE.findAll(unescape(body)).map { it.value.trimEnd('.', ',', ';') }.filter { u ->
+        val l = u.lowercase()
+        u != base && !SKIP_EXT.containsMatchIn(l) && (SUB_HINT.any { l.contains(it) } || l.endsWith(".txt")) && BLOCKED_HOSTS.none { hostOf(u).contains(it.removeSuffix("/r/")) }
+    }.distinct().take(8).toList()
 
     fun links(base: String, body: String): List<String> {
         val host = hostOf(base)
@@ -143,7 +184,7 @@ object KeyCrawler {
     fun hostOf(url: String) = try { URI(url).host.orEmpty().removePrefix("www.").lowercase() } catch (e: Exception) { "" }
 
     /** Обход одного сайта в ширину: не больше [pages] страниц и [depth] уровней ссылок. */
-    suspend fun crawl(start: String, pages: Int, depth: Int, protocols: Set<String>, onPage: (Int) -> Unit, onKeys: (List<String>) -> Unit) {
+    suspend fun crawl(start: String, pages: Int, depth: Int, kinds: Set<String>, proxyTypes: Set<String>, followSubs: Boolean, subSeen: MutableSet<String>, onPage: (Int) -> Unit, onKeys: (List<String>) -> Unit) {
         val seen = HashSet<String>(); val queue = ArrayDeque<Pair<String, Int>>()
         queue.add(start to 0); seen += start
         var count = 0
@@ -152,8 +193,15 @@ object KeyCrawler {
             val (url, d) = queue.removeFirst()
             val body = withContext(Dispatchers.IO) { fetch(url) } ?: continue
             count++; onPage(count)
-            val keys = extract(body, protocols)
+            val keys = extract(body, kinds, proxyTypes)
             if (keys.isNotEmpty()) onKeys(keys)
+            if (followSubs) for (sub in subLinks(body, url)) {
+                if (!subSeen.add(sub)) continue
+                val text = withContext(Dispatchers.IO) { fetch(sub) } ?: continue
+                val more = extract(text, kinds, proxyTypes)
+                if (more.isNotEmpty()) onKeys(more)
+                kotlinx.coroutines.delay(150)
+            }
             if (d < depth) for (l in links(url, body)) if (seen.add(l)) queue.add(l to d + 1)
             kotlinx.coroutines.delay(250)
         }
@@ -166,8 +214,13 @@ object KeyCrawler {
         return try { String(Base64.decode(URLDecoder.decode(enc, "UTF-8").removePrefix("a1"), Base64.URL_SAFE or Base64.NO_PADDING)) } catch (e: Exception) { u }
     }
 
-    fun search(query: String, limit: Int): List<String> {
-        val variants = listOf(query, "$query free keys list", "$query подписка бесплатно ключи", "$query github raw subscription")
+    fun search(query: String, limit: Int, kinds: Set<String> = emptySet()): List<String> {
+        val variants = ArrayList<String>()
+        if (query.isNotBlank()) variants += listOf(query, "$query free keys list", "$query подписка бесплатно ключи", "$query github raw subscription")
+        if ("socks" in kinds) variants += "free socks5 proxy list ip port"
+        if ("http" in kinds) variants += "free https proxy list ip port elite"
+        if (kinds.any { it in KeySources.UDP_TYPES }) variants += "hysteria2 tuic free config subscription"
+        if (kinds.any { it in KeySources.XRAY_TYPES }) variants += "free vless vmess trojan subscription list"
         val out = LinkedHashSet<String>()
         for (q in variants) {
             val e = URLEncoder.encode(q, "UTF-8")
@@ -182,16 +235,34 @@ object KeyCrawler {
         return out.filter { u -> u.startsWith("http") && BLOCKED_HOSTS.none { hostOf(u).contains(it.removeSuffix("/r/")) } }
     }
 
-    fun parse(link: String, source: String): KeyItem? = try {
-        val p = XrayProfileParser.parse(link)
-        val ep = p.endpoint
-        val host = ep.substringBeforeLast(':', ep).trim('[', ']'); val port = ep.substringAfterLast(':', "").toIntOrNull() ?: 0
-        if (host.isEmpty() || port !in 1..65535 || isPrivate(host)) null
-        else KeyItem(link, p.name.ifBlank { host }, link.substringBefore("://").lowercase(), host, port, source, System.currentTimeMillis())
-    } catch (e: Exception) { null }
+    fun parse(link: String, source: String, allowV6: Boolean = true): KeyItem? {
+        try {
+            val type = canon(link.substringBefore("://"))
+            val now = System.currentTimeMillis()
+            val item: KeyItem? = when (type) {
+                "socks4" -> null
+                "socks", "http", "hysteria2", "tuic", "wireguard" -> {
+                    val m = HP_RE.find(link) ?: return null
+                    val host = m.groupValues[1].trim('[', ']'); val port = m.groupValues[2].toIntOrNull() ?: 0
+                    val name = link.substringAfter('#', "").let { try { URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it } }.ifBlank { host }
+                    val canonical = if ((type == "socks" || type == "http") && !m.value.contains('@')) (if (type == "socks") "socks5" else "http") + "://" + (if (host.contains(':')) "[$host]" else host) + ":" + port else link
+                    if (host.isEmpty() || port !in 1..65535 || isPrivate(host)) null else KeyItem(canonical, name, type, host, port, source, now)
+                }
+                else -> {
+                    val p = XrayProfileParser.parse(link)
+                    val ep = p.endpoint
+                    val host = ep.substringBeforeLast(':', ep).trim('[', ']'); val port = ep.substringAfterLast(':', "").toIntOrNull() ?: 0
+                    if (host.isEmpty() || port !in 1..65535 || isPrivate(host)) null else KeyItem(link, p.name.ifBlank { host }, type, host, port, source, now)
+                }
+            }
+            return if (item != null && !allowV6 && item.v6) null else item
+        } catch (e: Exception) { return null }
+    }
 
     private fun isPrivate(h: String) = h == "localhost" || h.startsWith("127.") || h.startsWith("10.") || h.startsWith("192.168.") || h == "0.0.0.0" ||
-        Regex("^172\\.(1[6-9]|2\\d|3[01])\\.").containsMatchIn(h) || h.endsWith(".local") || h.contains("example.")
+        Regex("^172\\.(1[6-9]|2\\d|3[01])\\.").containsMatchIn(h) || h.endsWith(".local") || h.contains("example.") ||
+        h == "::1" || h.startsWith("fe80") || h.startsWith("fc") && h.contains(':') || h.startsWith("fd") && h.contains(':') ||
+        Regex("^(0|127|169\\.254|22[4-9]|23\\d|24\\d|25[0-5])\\.").containsMatchIn(h)
 }
 
 /** Проверка отклика: TCP-подключение (медиана трёх замеров) и TLS-рукопожатие для ключей с TLS/Reality. */
@@ -219,8 +290,71 @@ object KeyChecker {
     }
 
     suspend fun check(item: KeyItem, timeout: Int, tls: Boolean) = withContext(Dispatchers.IO) {
+        when {
+            item.proxy -> checkProxy(item, timeout)
+            item.udp -> checkUdp(item)
+            else -> checkTcp(item, timeout, tls)
+        }
+    }
+
+    private fun checkUdp(item: KeyItem) {
+        item.checkedAt = System.currentTimeMillis()
         val addr = try { InetAddress.getByName(item.host) } catch (e: Exception) { null }
-        if (addr == null) { item.ms = -2; item.checkedAt = System.currentTimeMillis(); return@withContext }
+        if (addr == null) { item.ms = -2; return }
+        item.ip = addr.hostAddress.orEmpty(); item.ms = -3
+    }
+
+    @Volatile private var realIp: String? = null
+    private fun myIp(): String {
+        realIp?.let { return it }
+        val v = try { JSONObject(KeyCrawler.fetch("https://api.country.is/") ?: "{}").optString("ip") } catch (e: Exception) { "" }
+        if (v.isNotEmpty()) realIp = v
+        return v
+    }
+
+    private fun viaProxy(url: String, proxy: Proxy, timeout: Int): Pair<Int, String>? = try {
+        val c = URL(url).openConnection(proxy) as HttpURLConnection
+        c.connectTimeout = timeout; c.readTimeout = timeout; c.instanceFollowRedirects = false; c.useCaches = false
+        c.setRequestProperty("User-Agent", KeyCrawler.UA); c.setRequestProperty("Connection", "close")
+        val code = c.responseCode
+        val body = if (code in 200..299) c.inputStream.use { it.bufferedReader().readText().take(8000) } else ""
+        c.disconnect(); code to body
+    } catch (e: Exception) { null }
+
+    /** Реальная проверка прокси: запрос через него, выходной IP и страна, поддержка HTTPS и уровень анонимности. */
+    private fun checkProxy(item: KeyItem, timeout: Int) {
+        item.checkedAt = System.currentTimeMillis(); item.anon = 0; item.https = 0
+        val addr = try { InetAddress.getByName(item.host) } catch (e: Exception) { null }
+        if (addr == null) { item.ms = -2; return }
+        item.ip = addr.hostAddress.orEmpty()
+        try { Socket().use { it.connect(InetSocketAddress(addr, item.port), timeout) } } catch (e: Exception) { item.ms = -2; return }
+        val proxy = Proxy(if (item.type == "socks") Proxy.Type.SOCKS else Proxy.Type.HTTP, InetSocketAddress(addr, item.port))
+        val t0 = System.nanoTime()
+        var exit = ""; var cc = ""
+        viaProxy("http://ip-api.com/json?fields=status,query,countryCode", proxy, timeout)?.let { r ->
+            if (r.first == 200) try { val j = JSONObject(r.second); if (j.optString("status") == "success") { exit = j.optString("query"); cc = j.optString("countryCode") } } catch (e: Exception) { }
+        }
+        if (exit.isEmpty()) viaProxy("http://httpbin.org/ip", proxy, timeout)?.let { r ->
+            if (r.first == 200) exit = try { JSONObject(r.second).optString("origin").substringBefore(',').trim() } catch (e: Exception) { "" }
+        }
+        if (exit.isEmpty()) { item.ms = -2; return }
+        item.ms = (System.nanoTime() - t0) / 1_000_000
+        if (cc.length == 2) item.country = cc.uppercase()
+        val real = myIp()
+        var anon = if (real.isNotEmpty() && exit == real) 1 else 3
+        val h = viaProxy("http://httpbin.org/headers", proxy, timeout)
+        if (h != null && h.first == 200) {
+            val low = h.second.lowercase()
+            if (real.isNotEmpty() && h.second.contains(real)) anon = 1
+            else if (anon == 3 && listOf("\"via\"", "x-forwarded", "\"forwarded\"", "x-real-ip", "proxy-connection", "client-ip", "x-proxy").any { low.contains(it) }) anon = 2
+        } else if (item.type != "socks" && anon != 1) anon = 0
+        item.anon = anon
+        item.https = viaProxy("https://www.gstatic.com/generate_204", proxy, timeout)?.let { if (it.first == 204) 1 else 2 } ?: 2
+    }
+
+    private fun checkTcp(item: KeyItem, timeout: Int, tls: Boolean) {
+        val addr = try { InetAddress.getByName(item.host) } catch (e: Exception) { null }
+        if (addr == null) { item.ms = -2; item.checkedAt = System.currentTimeMillis(); return }
         item.ip = addr.hostAddress.orEmpty()
         val samples = ArrayList<Long>()
         repeat(3) {
@@ -271,7 +405,7 @@ object KeyChecker {
 
 /** Экспорт: понятные имена, подписка base64 и локальная подписка по Wi-Fi. */
 object KeyExport {
-    fun label(i: KeyItem): String = (if (i.country.length == 2) Countries.flag(i.country) + " " + i.country + " · " else "") + (if (i.ms >= 0) "${i.ms} мс · " else "") + i.host
+    fun label(i: KeyItem): String = (if (i.country.length == 2) Countries.flag(i.country) + " " + i.country + " · " else "") + (if (i.ms >= 0) "${i.ms} мс · " else "") + (if (i.proxy && i.anon == 3) "elite · " else "") + i.host
 
     fun labeled(i: KeyItem): String = try {
         if (i.type == "vmess") {
@@ -280,7 +414,15 @@ object KeyExport {
         } else i.link.substringBefore('#') + "#" + URLEncoder.encode(label(i), "UTF-8").replace("+", "%20")
     } catch (e: Exception) { i.link }
 
-    fun text(items: List<KeyItem>) = items.joinToString("\n") { labeled(it) }
+    fun text(items: List<KeyItem>) = items.joinToString("\n") { k -> labeled(k).let { if (k.type == "socks" && it.startsWith("socks5://")) "socks://" + it.removePrefix("socks5://") else it } }
+    /** Простой список host:port для ручного добавления прокси. */
+    fun hostPort(items: List<KeyItem>) = items.filter { it.proxy }.joinToString("\n") { (if (it.host.contains(':')) "[" + it.host + "]" else it.host) + ":" + it.port }
+    /** Ссылка для добавления в «Серверы»; null — ядро не поддерживает протокол. */
+    fun profileLink(k: KeyItem): String? = when {
+        k.udp -> null
+        k.type == "http" -> "httpproxy://" + labeled(k).removePrefix("http://")
+        else -> labeled(k)
+    }
     fun subscription(items: List<KeyItem>) = Base64.encodeToString(text(items).toByteArray(), Base64.NO_WRAP)
 }
 
