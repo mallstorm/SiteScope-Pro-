@@ -275,27 +275,161 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Retry checked-but-slow and inconclusive candidates without re-downloading lists. */
+    fun retryQueued() {
+        if (running || pendingQueue.isEmpty()) return
+        for (item in pendingQueue.values) {
+            item.checkedAt = 0
+            item.ms = -1
+            item.validation = XrayKeyValidator.UNTESTED
+            item.validationMs = -1
+            item.validationAt = 0
+            item.validationNote = ""
+        }
+        saveQueue()
+        running = true
+        job = viewModelScope.launch(Dispatchers.Default) {
+            try { processPending() }
+            catch (cancel: kotlinx.coroutines.CancellationException) {
+                stage = "Остановлено"
+                throw cancel
+            } catch (error: Exception) {
+                stage = "Ошибка"
+                finishedNote = "Ошибка: " + (error.message ?: "неизвестно")
+            } finally {
+                KeyStore.save(context, items)
+                running = false
+                publish(true)
+            }
+        }
+    }
+
+    /**
+     * Every unique candidate reaches a latency preflight, then eligible TCP
+     * profiles get a routed HTTP/HTTPS test. UDP transports skip TCP-only probes.
+     * Slow/unreachable entries are retained for explicit retries, not blacklisted.
+     * A completed batch is checkpointed before processing the next one.
+     */
+    private suspend fun processPending() {
+        val all = pendingQueue.values.filter { it.checkedAt <= 0L }
+        if (all.isEmpty()) {
+            stage = "Готово"
+            finishedNote = "Непроверенных нет · медленные можно повторить отдельно"
+            return
+        }
+        val total = all.size
+        var processed = 0
+        var accepted = 0
+        var slow = 0
+        val batchSize = KeySettings.keysLimit(context).coerceIn(100, 1500)
+        val timeout = KeySettings.timeoutMs(context).coerceAtLeast(1500)
+        say("Очередь: $total уникальных соединений · проверяем без пропусков")
+        for (batch in all.chunked(batchSize)) {
+            coroutineContext.ensureActive()
+            checkItems(batch)
+            coroutineContext.ensureActive()
+            val fast = batch.filter {
+                (it.udp && it.type in SingBoxConfig.types && it.ms == -3L) ||
+                    (!it.udp && KeyQualityPolicy.fastEnough(it.ms))
+            }
+            val proxies = fast.filter { it.proxy }
+            if (proxies.isNotEmpty()) {
+                stage = "Проверка HTTP/HTTPS через прокси"
+                cChecked.set(0); checked = 0; toCheck = proxies.size
+                val gate = Semaphore(KeySettings.threads(context).coerceAtMost(16))
+                coroutineScope {
+                    proxies.map { key -> async {
+                        gate.acquire()
+                        try {
+                            ensureActive()
+                            KeyChecker.check(key, timeout, true)
+                        } catch (cancel: kotlinx.coroutines.CancellationException) {
+                            throw cancel
+                        } catch (_: Exception) {
+                            key.ms = -2
+                        } finally {
+                            cChecked.incrementAndGet()
+                            gate.release()
+                            publish()
+                        }
+                    } }.awaitAll()
+                }
+            }
+            // The deep-limit setting sizes Xray/sing-box checkpoints, but it
+            // does NOT truncate the set of profiles that get a real HTTPS test.
+            val vpnKeys = fast.filter { !it.proxy }
+            for (group in vpnKeys.chunked(KeySettings.deepLimit(context).coerceAtLeast(1))) {
+                coroutineContext.ensureActive()
+                deepValidate(group, group.size)
+            }
+            val good = fast.filter { it.alive }
+            if (good.isNotEmpty()) {
+                val merged = items.associateByTo(LinkedHashMap()) { KeyBlocklistStore.fingerprint(it.link) }
+                for (item in good) {
+                    merged[KeyBlocklistStore.fingerprint(item.link)] = item
+                    pendingQueue.remove(KeyBlocklistStore.fingerprint(item.link))
+                }
+                items = merged.values.toList()
+                accepted += good.size
+                KeyChecker.geo(context, good)
+            }
+            // A failed network test can be temporary. Only permanently malformed
+            // or unsupported configurations go on the automatic deny-list.
+            val invalid = batch.filter { item ->
+                item.validation == XrayKeyValidator.FAILED &&
+                    (item.validationNote.contains("Некорректн", ignoreCase = true) ||
+                        item.validationNote.contains("не поддержива", ignoreCase = true))
+            }
+            if (invalid.isNotEmpty()) quarantine(invalid) { it.validationNote }
+            processed += batch.size
+            slow += batch.count { !it.alive && it.ms >= KeyQualityPolicy.MAX_WORKING_MS }
+            saveQueue()
+            KeyStore.save(context, items)
+            say("Проверено $processed/$total · рабочих $accepted · медленных $slow · осталось ${uncheckedCount}")
+            publish(true)
+        }
+        stage = "Готово"
+        finishedNote = "Проверено $processed · рабочих $accepted · медленных $slow · в резерве $pendingCount"
+    }
+
     fun start(query: String, kindIds: Set<String>, sources: List<String>) {
         if (running) return
         val c = context
-        KeySettings.put(c, "query", query); KeySettings.put(c, "sources", sources.joinToString("\n")); KeySettings.put(c, "kinds", kindIds.joinToString(","))
+        KeySettings.put(c, "query", query)
+        KeySettings.put(c, "sources", sources.joinToString("\n"))
+        KeySettings.put(c, "kinds", kindIds.joinToString(","))
         val chosenKinds = kindIds.mapNotNull { KeySources.byId(it) }
         val types = chosenKinds.flatMap { it.types }.toSet().ifEmpty { KeySources.XRAY_TYPES }
-        val followSubs = "sub" in kindIds; val eliteOnly = "elite" in kindIds; val allowV6 = KeySettings.ipv6(c)
-        running = true; finishedNote = ""; log = emptyList(); KeyGuard.tripped = false
+        val followSubs = "sub" in kindIds
+        val allowV6 = KeySettings.ipv6(c)
+        running = true
+        finishedNote = ""; log = emptyList(); KeyGuard.tripped = false
+        duplicateCount = 0
         cPages.set(0); cSites.set(0); cKeys.set(0); cChecked.set(0)
         sitesFound = 0; sitesDone = 0; pages = 0; keysFound = 0; checked = 0; toCheck = 0
-        // Вся работа идёт в фоне: главный поток отвечает только за экран.
         job = viewModelScope.launch(Dispatchers.Default) {
             try {
                 val found = ConcurrentHashMap<String, KeyItem>()
                 val excluded = blocked.mapTo(HashSet()) { it.fingerprint }
+                // A single fingerprint set for the entire run: source A, source B,
+                // known working records, pending records, and permanent blacklist.
+                val alreadyKnown = HashSet<String>()
+                alreadyKnown.addAll(excluded)
+                alreadyKnown.addAll(pendingQueue.keys)
+                alreadyKnown.addAll(items.map { KeyBlocklistStore.fingerprint(it.link) })
+                val seen = ConcurrentHashMap.newKeySet<String>()
+                seen.addAll(alreadyKnown)
+                val duplicates = AtomicInteger()
+                val oldMatches = AtomicInteger()
                 val subSeen = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
                 stage = "Поиск сайтов"
                 val sites = LinkedHashMap<String, String>()
                 fun norm(s: String) = if (s.startsWith("http")) s else if (s.startsWith("t.me/") || s.startsWith("@")) "https://t.me/s/" + s.removePrefix("@").removePrefix("t.me/").removePrefix("s/") else "https://$s"
-                for (s in sources) { val u = norm(s); sites.putIfAbsent(u, KeySources.label(u)) }
-                for (k in chosenKinds) for (u in k.sources) sites.putIfAbsent(u, KeySources.label(u))
+                for (source in sources) {
+                    val url = norm(source)
+                    sites.putIfAbsent(url, KeySources.label(url))
+                }
+                for (kind in chosenKinds) for (url in kind.sources) sites.putIfAbsent(url, KeySources.label(url))
                 val presetCount = sites.size
                 if (KeySettings.useSearch(c)) {
                     val max = KeySettings.maxSites(c)
@@ -303,14 +437,27 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                     say("Поисковики: найдено ${hits.size} ссылок")
                     val hosts = HashSet(sites.values)
                     var added = 0
-                    for (h in hits) { val host = KeyCrawler.hostOf(h); if (host.isNotEmpty() && hosts.add(host)) { sites[h] = host; added++ }; if (added >= max) break }
+                    for (hit in hits) {
+                        val host = KeyCrawler.hostOf(hit)
+                        if (host.isNotEmpty() && hosts.add(host)) { sites[hit] = host; added++ }
+                        if (added >= max) break
+                    }
                 }
                 sitesFound = sites.size
-                if (sites.isEmpty()) { finishedNote = "Источники не найдены. Добавьте свои или проверьте интернет"; stage = "Готово"; return@launch }
+                if (sites.isEmpty()) {
+                    if (pendingQueue.values.any { it.checkedAt <= 0L }) {
+                        say("Источники не найдены, проверяем сохранённую очередь")
+                        processPending()
+                    } else {
+                        finishedNote = "Источники не найдены"
+                        stage = "Готово"
+                    }
+                    return@launch
+                }
                 if (presetCount > 0) say("Готовых источников: $presetCount")
-                // Обход
                 stage = "Сканирование сайтов"
-                val pagesCap = KeySettings.pagesPerSite(c); val depth = KeySettings.depth(c)
+                val pagesCap = KeySettings.pagesPerSite(c)
+                val depth = KeySettings.depth(c)
                 val gate = Semaphore(KeySettings.parallelSites(c))
                 coroutineScope {
                     sites.entries.map { (url, label) ->
@@ -321,56 +468,71 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                                 if (KeyGuard.tripped) return@async
                                 var own = 0
                                 try {
-                                    KeyCrawler.crawl(url, pagesCap, depth, types, KeySources.proxyTypesFor(url, types), followSubs, subSeen, { cPages.incrementAndGet(); publish() }) { keys ->
-                                        for (k in keys) {
+                                    KeyCrawler.crawl(url, pagesCap, depth, types,
+                                        KeySources.proxyTypesFor(url, types), followSubs,
+                                        subSeen, { cPages.incrementAndGet(); publish() }) { keys ->
+                                        for (link in keys) {
                                             if (found.size >= 30000) break
-                                            if (KeyBlocklistStore.fingerprint(k) in excluded) continue
-                                            KeyCrawler.parse(k, label, allowV6)?.let { if (found.putIfAbsent(it.id, it) == null) { own++; cKeys.set(found.size) } }
+                                            val fingerprint = KeyBlocklistStore.fingerprint(link)
+                                            if (!seen.add(fingerprint)) {
+                                                if (fingerprint in alreadyKnown) oldMatches.incrementAndGet()
+                                                else duplicates.incrementAndGet()
+                                                continue
+                                            }
+                                            val parsed = KeyCrawler.parse(link, label, allowV6)
+                                            if (parsed == null) {
+                                                seen.remove(fingerprint)
+                                                continue
+                                            }
+                                            found[fingerprint] = parsed
+                                            own++
+                                            cKeys.set(found.size)
                                         }
                                         publish()
                                     }
-                                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { say("$label: ошибка") } catch (e: OutOfMemoryError) { KeyGuard.tripped = true }
+                                } catch (cancel: kotlinx.coroutines.CancellationException) {
+                                    throw cancel
+                                } catch (_: Exception) {
+                                    say("$label: ошибка")
+                                } catch (_: OutOfMemoryError) {
+                                    KeyGuard.tripped = true
+                                }
                                 if (own > 0) say("$label: +$own")
-                            } finally { cSites.incrementAndGet(); publish(); gate.release() }
+                            } finally {
+                                cSites.incrementAndGet()
+                                publish()
+                                gate.release()
+                            }
                         }
                     }.awaitAll()
                 }
                 publish(true)
-                if (KeyGuard.tripped) say("Мало памяти: сбор остановлен досрочно, найденное проверяется")
-                // Слияние с базой: уже проверенные сохраняют результат. Проверяем не больше лимитов.
-                val old = items.filterNot { KeyBlocklistStore.fingerprint(it.link) in excluded }.associateBy { it.id }
-                val fresh0 = found.values.filter { it.id !in old }
-                val proxyLimit = KeySettings.proxyLimit(c); val keyLimit = KeySettings.keysLimit(c)
-                val fresh = fresh0.filter { !it.proxy }.shuffled().take(keyLimit) + fresh0.filter { it.proxy }.shuffled().take(proxyLimit)
-                items = old.values.toList() + fresh; touch()
-                say("Новых: ${fresh0.size}, уже были: ${found.size - fresh0.size}" + if (fresh.size < fresh0.size) " · к проверке: ${fresh.size}" else "")
-                val foundTotal = found.size
+                if (KeyGuard.tripped) say("Мало памяти: сбор остановлен досрочно")
+                val fresh = found.values.toList()
+                for (key in fresh) {
+                    pendingQueue.putIfAbsent(KeyBlocklistStore.fingerprint(key.link), key)
+                }
+                // Persist ALL new unique records before the first network probe.
+                // A stopped/crashed scan can resume without discarding discovery.
+                saveQueue()
+                duplicateCount = duplicates.get()
+                say("Уникальных новых: ${fresh.size} · в базе: ${oldMatches.get()} · дубликатов отброшено: ${duplicates.get()}")
                 found.clear()
-                // Проверка
-                checkItems(fresh)
-                deepValidate(fresh, KeySettings.deepLimit(c))
-                KeyChecker.geo(c, fresh.filter { it.alive })
-                // Only verified failures enter the permanent blacklist.
-                // Inconclusive tests and unsupported UDP protocols remain unverified.
-                val rejected = fresh.filter { key ->
-                    (!key.udp && key.ms == -2L) ||
-                        (!key.proxy && key.validation == XrayKeyValidator.FAILED)
-                }
-                val newlyExcluded = quarantine(rejected) { key ->
-                    if (key.ms == -2L) "Не отвечает при проверке" else
-                        key.validationNote.ifBlank { "VPN-профиль не установил соединение" }
-                }
-                val eliteDrop = fresh.filter { it.proxy && eliteOnly && it.anon != 3 }
-                    .map { it.id }.toSet()
-                if (eliteDrop.isNotEmpty()) items = items.filter { it.id !in eliteDrop }
-                val liveNow = fresh.count { it.alive && it.id !in eliteDrop }
-                finishedNote = "Найдено $foundTotal · проверено ${fresh.size} · рабочих $liveNow · исключено $newlyExcluded"
-                stage = "Готово"
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: OutOfMemoryError) { finishedNote = "Не хватило памяти: выберите режим «Щадящая» в настройках"; stage = "Ошибка" }
-            catch (e: Exception) { finishedNote = "Ошибка: " + (e.message ?: e.javaClass.simpleName); stage = "Ошибка" }
-            finally { KeyStore.save(context, items); running = false; publish(true) }
+                processPending()
+            } catch (cancel: kotlinx.coroutines.CancellationException) {
+                stage = "Остановлено"
+                throw cancel
+            } catch (error: OutOfMemoryError) {
+                finishedNote = "Не хватило памяти: попробуйте меньше потоков"
+                stage = "Ошибка"
+            } catch (error: Exception) {
+                finishedNote = "Ошибка: " + (error.message ?: error.javaClass.simpleName)
+                stage = "Ошибка"
+            } finally {
+                KeyStore.save(context, items)
+                running = false
+                publish(true)
+            }
         }
     }
 
