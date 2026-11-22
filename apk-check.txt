@@ -1,0 +1,46 @@
+apk=app/build/outputs/apk/release/app-release.apk build-tools=/usr/local/lib/android/sdk/build-tools/37.0.0
+--- apksigner verify
+Verifies
+Verified using v1 scheme (JAR signing): false
+Verified using v2 scheme (APK Signature Scheme v2): false
+Verified using v3 scheme (APK Signature Scheme v3): true
+Verified using v3.1 scheme (APK Signature Scheme v3.1): false
+Verified using v3.2 scheme (APK Signature Scheme v3.2): false
+Verified using v4 scheme (APK Signature Scheme v4): false
+Verified for SourceStamp: false
+Number of signers: 1
+V3.0 Signer: certificate DN: CN=SiteScope Pro Beta
+V3.0 Signer: certificate SHA-256 digest: 360362d9ca07580604c0cb1948800e6a56903a9df974c7ed189306bf4a730775
+V3.0 Signer: certificate SHA-1 digest: 5fa3f5f83197478f7329c052828119214aeccc0a
+V3.0 Signer: certificate MD5 digest: 309102a2f1a01c7161110295b1e7ce8c
+V3.0 Signer: key algorithm: RSA
+V3.0 Signer: key size (bits): 2048
+V3.0 Signer: public key SHA-256 digest: ca657be3bffe4a85fc4a4144f55c0793a79462ad250b981a5c8797c94179eb61
+V3.0 Signer: public key SHA-1 digest: 99a1353f248f3293b3121d8d08021094fb3dacc8
+V3.0 Signer: public key MD5 digest: 471aab644739472ff01da7a2bd81d966
+--- zipalign
+80633308 resources.arsc (OK)
+81673594 META-INF/CERT.SF (OK - compressed)
+81706722 META-INF/CERT.RSA (OK - compressed)
+81707827 META-INF/MANIFEST.MF (OK - compressed)
+Verification successful
+--- aapt2 badging
+package: name='pro.sitescope.app.next' versionCode='1000209' versionName='2.0.0-alpha1-side' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'
+targetSdkVersion:'36'
+uses-permission: name='android.permission.CHANGE_NETWORK_STATE'
+uses-permission: name='android.permission.INTERNET'
+uses-permission: name='android.permission.CAMERA'
+uses-permission: name='android.permission.ACCESS_NETWORK_STATE'
+uses-permission: name='android.permission.ACCESS_WIFI_STATE'
+uses-permission: name='android.permission.CHANGE_WIFI_STATE'
+uses-permission: name='android.permission.CHANGE_WIFI_MULTICAST_STATE'
+uses-permission: name='android.permission.ACCESS_FINE_LOCATION'
+uses-permission: name='android.permission.ACCESS_COARSE_LOCATION'
+uses-permission: name='android.permission.WAKE_LOCK'
+uses-permission: name='android.permission.FOREGROUND_SERVICE'
+uses-permission: name='android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE'
+uses-permission: name='android.permission.FOREGROUND_SERVICE_SPECIAL_USE'
+uses-permission: name='android.permission.POST_NOTIFICATIONS'
+uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+uses-permission: name='pro.sitescope.app.next.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'
+native-code: 'arm64-v8a'
