@@ -2,6 +2,9 @@
 
 package pro.sitescope.app.site
 
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
@@ -148,7 +151,19 @@ private fun ColumnScope.ReportView(vm: SiteViewModel, r: Report, state: AppState
                 )
             }
         }
-        HeaderChips(titles, tab, { tab = it }, icons)
+        var sectionMenu by remember { mutableStateOf(false) }
+        Box {
+            Row(Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.18f)).clickable { sectionMenu = true }.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(icons[tab.coerceIn(0, icons.lastIndex)], null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(titles[tab.coerceIn(0, titles.lastIndex)], color = Color.White, style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.width(6.dp))
+                Icon(Icons.Rounded.ExpandMore, null, tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+            DropdownMenu(expanded = sectionMenu, onDismissRequest = { sectionMenu = false }) {
+                titles.forEachIndexed { i, title -> DropdownMenuItem(text = { Text(title) }, leadingIcon = { Icon(icons[i], null) }, onClick = { tab = i; sectionMenu = false }) }
+            }
+        }
     }
     if (vm.running) Box(Modifier.padding(16.dp, 10.dp, 16.dp, 0.dp)) { LoadingCard(vm.stage, vm.stageDetail, onCancel = { vm.cancel() }) }
 

@@ -44,20 +44,23 @@ fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewMo
     LifecycleResumeEffect(vm) { vm.loadProfiles(); onPauseOrDispose { } }
     LaunchedEffect(startTargets) { if (!startTargets.isNullOrBlank()) vm.targets = startTargets }
     Column(Modifier.fillMaxSize()) {
-        AppHeader("Моя сеть", "LAN, сервисы и подключения") {
-            HeaderChips(listOf("Устройства", "Сканер", "Подключения"), if (tab < 3) tab else -1, { tab = it },
-                listOf(Icons.Rounded.Devices, Icons.Rounded.NetworkCheck, Icons.Rounded.Link))
-            Spacer(Modifier.height(6.dp))
-            HeaderChips(listOf("Скорость", "Доступ извне", "Роутеры"), if (tab >= 3) tab - 3 else -1, { tab = it + 3 },
-                listOf(Icons.Rounded.Speed, Icons.Rounded.Public, Icons.Rounded.Router))
+        AppHeader("Моя сеть", "Кто подключён и что открыто", onBack = if (tab in listOf(2, 4, 5)) ({ tab = 6 }) else null) {
+            HeaderChips(listOf("Устройства", "Порты", "Скорость", "Ещё"), when (tab) { 0 -> 0; 1 -> 1; 3 -> 2; else -> 3 }, { i -> tab = when (i) { 0 -> 0; 1 -> 1; 2 -> 3; else -> 6 } },
+                listOf(Icons.Rounded.Devices, Icons.Rounded.NetworkCheck, Icons.Rounded.Speed, Icons.Rounded.MoreHoriz))
         }
+        androidx.activity.compose.BackHandler(enabled = tab in listOf(2, 4, 5)) { tab = 6 }
         when (tab) {
             0 -> DevicesTab(vm, onTab = { tab = it })
             1 -> ScannerTab(vm)
             2 -> ConnectionsTab(vm)
             3 -> SpeedScreen()
             4 -> ExposureScreen()
-            else -> RouterScreen()
+            5 -> RouterScreen()
+            else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
+                ActionRow(Icons.Rounded.Link, "Подключения", "SSH, файлы, экран и камеры устройств", { tab = 2 })
+                ActionRow(Icons.Rounded.Public, "Доступ извне", "Видны ли ваши сервисы из интернета", { tab = 4 })
+                ActionRow(Icons.Rounded.Router, "Роутеры", "Состояние и настройки роутера", { tab = 5 })
+            }
         }
     }
 }

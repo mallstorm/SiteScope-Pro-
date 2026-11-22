@@ -76,18 +76,12 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
             actions = {
                 if (vm.channels.isNotEmpty()) {
                     IconButton(onClick = { addSheet = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.Add, "Добавить плейлист") }
+                    IconButton(onClick = { if (vm.checking) vm.stopCheck() else { vm.startCheck(vm.channels.toList()); toast(context, "Проверяем все каналы") } }, modifier = Modifier.size(40.dp)) { Icon(if (vm.checking) Icons.Rounded.Stop else Icons.Rounded.VerifiedUser, "Проверить все каналы") }
+                    IconButton(onClick = { recordsSheet = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.FiberManualRecord, "Записи") }
                     IconButton(onClick = { manageSheet = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.Tune, "Источники и настройки") }
                 }
             }
         ) {
-            HeaderChips(listOf("Каналы", "Источники", "Проверка", "Локальная сеть", "Записи"), 0, { index ->
-                when (index) {
-                    1 -> manageSheet = true
-                    2 -> if (vm.checking) vm.stopCheck() else if (vm.channels.isNotEmpty()) { vm.startCheck(vm.channels.toList()); toast(context, "Проверяем все каналы") } else toast(context, "Сначала добавьте плейлист")
-                    3 -> state.openRoute("tvlan")
-                    4 -> recordsSheet = true
-                }
-            }, listOf(Icons.Rounded.LiveTv, Icons.Rounded.Layers, Icons.Rounded.VerifiedUser, Icons.Rounded.AccountTree, Icons.Rounded.FiberManualRecord))
         }
         if (vm.busy.isNotEmpty()) Box(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) { LoadingCard(vm.busy) }
 
