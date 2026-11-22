@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [redesign, redesign-v2, main, feature/verified-key-hub-sources, feature/singbox-multiengine, feature/singbox-full-vpn]
+    branches: [redesign, redesign-v2, main, feature/verified-key-hub-sources, feature/singbox-multiengine, feature/singbox-full-vpn, feature/keyhub-exhaustive-scan]
   workflow_dispatch:
 
 permissions:
@@ -18,8 +18,8 @@ jobs:
     timeout-minutes: 40
     env:
       # Ветка redesign-v2 публикует логи и сборку отдельно, чтобы не затирать результаты redesign.
-      LOGS_BRANCH: ${{ github.ref_name == 'feature/singbox-full-vpn' && 'ci-logs-singbox-vpn' || github.ref_name == 'feature/singbox-multiengine' && 'ci-logs-singbox' || github.ref_name == 'redesign-v2' && 'ci-logs-v2' || github.ref_name == 'feature/verified-key-hub-sources' && 'ci-logs-verified-keys' || 'ci-logs' }}
-      RELEASE_TAG: ${{ github.ref_name == 'feature/singbox-full-vpn' && 'beta-singbox-vpn' || github.ref_name == 'feature/singbox-multiengine' && 'beta-singbox' || github.ref_name == 'redesign-v2' && 'beta-v2' || github.ref_name == 'feature/verified-key-hub-sources' && 'beta-verified-keys' || 'beta' }}
+      LOGS_BRANCH: ${{ github.ref_name == 'feature/keyhub-exhaustive-scan' && 'ci-logs-keyhub-exhaustive' || github.ref_name == 'feature/singbox-full-vpn' && 'ci-logs-singbox-vpn' || github.ref_name == 'feature/singbox-multiengine' && 'ci-logs-singbox' || github.ref_name == 'redesign-v2' && 'ci-logs-v2' || github.ref_name == 'feature/verified-key-hub-sources' && 'ci-logs-verified-keys' || 'ci-logs' }}
+      RELEASE_TAG: ${{ github.ref_name == 'feature/keyhub-exhaustive-scan' && 'beta-keyhub-exhaustive' || github.ref_name == 'feature/singbox-full-vpn' && 'beta-singbox-vpn' || github.ref_name == 'feature/singbox-multiengine' && 'beta-singbox' || github.ref_name == 'redesign-v2' && 'beta-v2' || github.ref_name == 'feature/verified-key-hub-sources' && 'beta-verified-keys' || 'beta' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
