@@ -95,7 +95,8 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         }
         pendingCount = pendingQueue.size
         uncheckedCount = pendingQueue.values.count { it.checkedAt <= 0L }
-        KeyCandidateStore.save(context, pendingQueue.values.toList())
+        // Legacy queue additions are durably saved at the first scan/retry.
+        // Do not serialize tens of thousands of keys on the Android UI thread.
     }
 
     private fun saveQueue() {
@@ -478,17 +479,23 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                                         subSeen, { cPages.incrementAndGet(); publish() }) { keys ->
                                         for (link in keys) {
                                             if (found.size >= 30000) break
-                                            val fingerprint = KeyBlocklistStore.fingerprint(link)
-                                            if (!seen.add(fingerprint)) {
-                                                if (fingerprint in alreadyKnown) oldMatches.incrementAndGet()
+                                            val rawFingerprint = KeyBlocklistStore.fingerprint(link)
+                                            if (rawFingerprint in seen) {
+                                                if (rawFingerprint in alreadyKnown) oldMatches.incrementAndGet()
                                                 else duplicates.incrementAndGet()
                                                 continue
                                             }
-                                            val parsed = KeyCrawler.parse(link, label, allowV6)
-                                            if (parsed == null) {
-                                                seen.remove(fingerprint)
+                                            val parsed = KeyCrawler.parse(link, label, allowV6) ?: continue
+                                            // Aliases such as socks:// and socks5:// must
+                                            // resolve to the SAME configuration identity.
+                                            val fingerprint = KeyBlocklistStore.fingerprint(parsed.link)
+                                            if (!seen.add(fingerprint)) {
+                                                if (fingerprint in alreadyKnown) oldMatches.incrementAndGet()
+                                                else duplicates.incrementAndGet()
+                                                seen.add(rawFingerprint)
                                                 continue
                                             }
+                                            if (rawFingerprint != fingerprint) seen.add(rawFingerprint)
                                             found[fingerprint] = parsed
                                             own++
                                             cKeys.set(found.size)
