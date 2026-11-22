@@ -389,7 +389,7 @@ private fun KeysTab(vm: KeyHubViewModel) {
         }
         if (vm.running) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (shown.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-            Text(if (all.isEmpty()) "Ключей пока нет. Запустите поиск на первой вкладке." else "Нет ключей под выбранные фильтры", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (all.isEmpty()) "Ключей пока нет. Запустите поиск на первой вкладке." else if (onlyAlive) "Подтверждённых подключений нет. Выключите фильтр и запустите перепроверку." else "Нет ключей под выбранные фильтры", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(shown, key = { it.id }) { k ->
                 val on = k.id in selected
@@ -420,7 +420,7 @@ private fun KeysTab(vm: KeyHubViewModel) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = { bestDialog = true }, contentPadding = PaddingValues(horizontal = 10.dp), enabled = alive.isNotEmpty()) { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Лучшие") }
                 OutlinedButton(onClick = { selected = if (selected.size == shown.size) emptySet() else shown.map { it.id }.toSet() }, contentPadding = PaddingValues(horizontal = 10.dp), enabled = shown.isNotEmpty()) { Text(if (selected.isNotEmpty() && selected.size == shown.size) "Снять" else "Все") }
-                IconButton(onClick = { vm.recheck(selected) }, enabled = !vm.running && all.isNotEmpty()) { Icon(Icons.Rounded.Refresh, "Перепроверить") }
+                IconButton(onClick = { vm.recheck(selected) }, enabled = !vm.running && all.isNotEmpty()) { Icon(Icons.Rounded.Refresh, "Полная перепроверка выделенных или всех") }
                 IconButton(onClick = { vm.remove(selected); selected = emptySet() }, enabled = selected.isNotEmpty()) { Icon(Icons.Rounded.Delete, "Удалить", tint = t.bad) }
                 Spacer(Modifier.weight(1f))
                 Button(onClick = { export = true }, enabled = chosen.any { it.alive }) { Icon(Icons.Rounded.IosShare, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Экспорт") }
@@ -514,6 +514,7 @@ private fun SettingsTab(vm: KeyHubViewModel) {
     var timeout by remember { mutableIntStateOf(KeySettings.timeoutMs(c)) }
     var plimit by remember { mutableIntStateOf(KeySettings.proxyLimit(c)) }
     var klimit by remember { mutableIntStateOf(KeySettings.keysLimit(c)) }
+    var deep by remember { mutableIntStateOf(KeySettings.deepLimit(c)) }
     var psites by remember { mutableIntStateOf(KeySettings.parallelSites(c)) }
     var tls by remember { mutableStateOf(KeySettings.tlsCheck(c)) }
     var search by remember { mutableStateOf(KeySettings.useSearch(c)) }
@@ -547,6 +548,7 @@ private fun SettingsTab(vm: KeyHubViewModel) {
         slider("Ключей за один запуск", klimit, 200..4000, "klimit", { klimit = it }, "В больших сборниках десятки тысяч ключей: проверяется случайная часть этого размера")
         slider("Таймаут, мс", timeout, 1500..8000, "timeout", { timeout = it })
         slider("Прокси за один запуск", plimit, 100..2000, "plimit", { plimit = it }, "В публичных списках тысячи адресов: проверяется случайная часть этого размера. Мёртвые прокси не сохраняются")
+        slider("VPN-ключей с полной проверкой", deep, 10..1000, "deepLimit", { deep = it }, "После TCP-проверки запускается реальный Xray для каждого кандидата. Остальные остаются НЕ ПРОВЕРЕНЫ. Выборочная перепроверка работает без ограничения.")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("TLS-рукопожатие"); Text("Для ключей с TLS и Reality: отсекает серверы, которые только принимают порт", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Switch(tls, { tls = it; KeySettings.put(c, "tls", it) })
