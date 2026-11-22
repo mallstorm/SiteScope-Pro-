@@ -540,19 +540,24 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         if (list.isEmpty()) return
         val c = context
         stage = "Проверка отклика"; cChecked.set(0); checked = 0; toCheck = list.size
-        val gate = Semaphore(KeySettings.threads(c)); val timeout = KeySettings.timeoutMs(c); val tls = KeySettings.tlsCheck(c)
+        val gate = Semaphore(KeySettings.threads(c))
+        val timeout = KeySettings.timeoutMs(c).coerceAtMost(KeyQualityPolicy.CONNECT_TIMEOUT_MS)
         coroutineScope {
             list.map { k -> async {
                 gate.acquire()
                 try {
                     ensureActive()
-                    val ok = kotlinx.coroutines.withTimeoutOrNull(timeout * 6L + 5000) { KeyChecker.check(k, timeout, tls) }
+                    val ok = kotlinx.coroutines.withTimeoutOrNull(timeout * 5L + 5000L) {
+                        KeyChecker.quickCheck(k, timeout)
+                    }
                     if (ok == null) { k.ms = -2; k.checkedAt = System.currentTimeMillis() }
-                } finally { cChecked.incrementAndGet(); gate.release(); publish() }
+                } finally {
+                    cChecked.incrementAndGet()
+                    gate.release()
+                    publish()
+                }
             } }.awaitAll()
         }
-        stage = "Определение стран"
-        KeyChecker.geo(c, list.filter { it.alive || it.ms == -3L })
         publish(true)
     }
 
@@ -594,12 +599,18 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 list.forEach { it.validation = 0; it.validationMs = -1L; it.validationAt = 0; it.validationNote = ""; it.country = "" }
                 checkItems(list)
-                deepValidate(list, list.size)
-                val failed = list.filter {
-                    (!it.udp && it.ms == -2L) || (!it.proxy && it.validation == XrayKeyValidator.FAILED)
+                val fast = list.filter {
+                    (it.udp && it.type in SingBoxConfig.types && it.ms == -3L) ||
+                        (!it.udp && KeyQualityPolicy.fastEnough(it.ms))
                 }
-                quarantine(failed) { it.validationNote.ifBlank { "Не работает после повторной проверки" } }
-                finishedNote = "Проверено ${list.size} · рабочих ${list.count { it.alive }} · исключено ${failed.size}"
+                for (proxy in fast.filter { it.proxy }) KeyChecker.check(proxy, KeySettings.timeoutMs(context).coerceAtLeast(1500), true)
+                deepValidate(fast, fast.size)
+                val recovered = fast.filter { it.alive }
+                val rejected = list.filter { !it.alive }
+                for (key in rejected) pendingQueue[KeyBlocklistStore.fingerprint(key.link)] = key
+                items = items.filterNot { it in rejected }
+                saveQueue()
+                finishedNote = "Проверено ${list.size} · рабочих ${recovered.size} · в резерве ${rejected.size}"
                 stage = "Готово"
             }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
