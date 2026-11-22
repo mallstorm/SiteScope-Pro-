@@ -54,6 +54,7 @@ private val ANON_LABEL = mapOf(1 to "прозрачный", 2 to "анонимн
 class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
     private val context: Context get() = getApplication()
     var items by mutableStateOf<List<KeyItem>>(emptyList())
+    var blocked by mutableStateOf<List<BlockedKey>>(emptyList())
     var version by mutableIntStateOf(0)
     var running by mutableStateOf(false)
     var stage by mutableStateOf("")
@@ -63,7 +64,11 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
     var finishedNote by mutableStateOf("")
     private var job: Job? = null
 
-    init { items = KeyStore.load(context) }
+    init {
+        blocked = KeyBlocklistStore.load(context)
+        val excluded = blocked.mapTo(HashSet()) { it.fingerprint }
+        items = KeyStore.load(context).filterNot { KeyBlocklistStore.fingerprint(it.link) in excluded }
+    }
 
     private val lock = Any()
     private fun say(t: String) { synchronized(lock) { log = (listOf(t) + log).take(40) } }
@@ -81,8 +86,115 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stop() { job?.cancel(); stage = "Остановлено"; running = false; KeyStore.save(context, items); touch() }
 
+    // Clearing the visible database never erases the persistent deny-list.
     fun clearAll() { items = emptyList(); KeyStore.clear(context); touch() }
-    fun remove(ids: Set<String>) { items = items.filter { it.id !in ids }; KeyStore.save(context, items); touch() }
+
+    private fun quarantine(candidates: List<KeyItem>, reason: (KeyItem) -> String): Int {
+        if (candidates.isEmpty()) return 0
+        val entries = blocked.associateBy { it.fingerprint }.toMutableMap()
+        var added = 0
+        for (key in candidates) {
+            val fingerprint = KeyBlocklistStore.fingerprint(key.link)
+            if (fingerprint !in entries) {
+                entries[fingerprint] = BlockedKey(key, reason(key))
+                added++
+            }
+        }
+        // Persist tombstones first, to prevent resurrection on partial failure.
+        KeyBlocklistStore.save(context, entries.values.toList())
+        blocked = entries.values.toList()
+        val rejected = entries.keys
+        items = items.filterNot { KeyBlocklistStore.fingerprint(it.link) in rejected }
+        KeyStore.save(context, items)
+        touch()
+        return added
+    }
+
+    /** Trash means 'exclude permanently', not just remove the card from UI. */
+    fun remove(ids: Set<String>) {
+        if (running || ids.isEmpty()) return
+        quarantine(items.filter { it.id in ids }) { "Исключён вручную" }
+    }
+
+    /** Only real routed traffic can restore a blacklisted profile. */
+    fun recheckBlocked(ids: Set<String>) {
+        if (running) return
+        val candidates = blocked.filter { ids.isEmpty() || it.fingerprint in ids }
+        if (candidates.isEmpty()) return
+        running = true
+        finishedNote = ""
+        stage = "Проверка чёрного списка"
+        cChecked.set(0); checked = 0; toCheck = candidates.size
+        job = viewModelScope.launch(Dispatchers.Default) {
+            val remaining = blocked.associateBy { it.fingerprint }.toMutableMap()
+            val recovered = ArrayList<KeyItem>()
+            var attempts = 0
+            try {
+                val timeout = KeySettings.timeoutMs(context)
+                val checkTls = KeySettings.tlsCheck(context)
+                for (entry in candidates) {
+                    coroutineContext.ensureActive()
+                    val key = entry.item
+                    key.ms = -1L
+                    key.validation = 0; key.validationMs = -1L
+                    key.validationAt = 0L; key.validationNote = ""
+                    try {
+                        KeyChecker.check(key, timeout, checkTls)
+                        if (!key.proxy && !key.udp && key.ms >= 0) {
+                            val result = withContext(Dispatchers.IO) {
+                                XrayKeyValidator.check(context, key.link, timeout)
+                            }
+                            key.validation = result.status
+                            key.validationMs = result.delayMs
+                            key.validationAt = System.currentTimeMillis()
+                            key.validationNote = result.reason
+                        } else if (key.udp) {
+                            key.validation = XrayKeyValidator.INCONCLUSIVE
+                            key.validationNote = "Полная UDP-проверка пока недоступна"
+                        }
+                    } catch (cancel: kotlinx.coroutines.CancellationException) {
+                        throw cancel
+                    } catch (error: Exception) {
+                        key.validation = XrayKeyValidator.INCONCLUSIVE
+                        key.validationNote = "Ошибка проверки: " + (error.message ?: "нет ответа")
+                    }
+                    if (key.alive) {
+                        remaining.remove(entry.fingerprint)
+                        recovered += key
+                    } else {
+                        remaining[entry.fingerprint] = entry.copy(lastCheckAt = System.currentTimeMillis())
+                    }
+                    attempts++
+                    cChecked.incrementAndGet(); publish(true)
+                    if (attempts % 10 == 0) {
+                        KeyBlocklistStore.save(context, remaining.values.toList())
+                        blocked = remaining.values.toList()
+                    }
+                }
+                if (recovered.isNotEmpty()) KeyChecker.geo(context, recovered)
+                finishedNote = "Проверено ${attempts} · восстановлено ${recovered.size} · осталось ${remaining.size}"
+                stage = "Готово"
+            } catch (cancel: kotlinx.coroutines.CancellationException) {
+                stage = "Остановлено"
+                throw cancel
+            } catch (error: Exception) {
+                finishedNote = "Ошибка проверки: " + (error.message ?: "неизвестно")
+                stage = "Ошибка"
+            } finally {
+                // Also keep progress after cancellation of a long batch.
+                try {
+                    KeyBlocklistStore.save(context, remaining.values.toList())
+                    blocked = remaining.values.toList()
+                    if (recovered.isNotEmpty()) {
+                        items = (items + recovered).distinctBy { KeyBlocklistStore.fingerprint(it.link) }
+                        KeyStore.save(context, items)
+                    }
+                } finally {
+                    running = false; publish(true)
+                }
+            }
+        }
+    }
 
     fun start(query: String, kindIds: Set<String>, sources: List<String>) {
         if (running) return
