@@ -7,6 +7,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
+import java.net.URI
 
 /** One permanently excluded *configuration*, never an entire server/IP. */
 data class BlockedKey(
@@ -41,7 +42,22 @@ object KeyBlocklistStore {
                 "vmess|" + json.keys().asSequence().toList().sorted()
                     .joinToString("|") { name -> "$name=" + json.opt(name) }
             } catch (_: Exception) { raw }
-        } else raw
+        } else {
+            // Query parameter order and fragment labels are not part of the
+            // actual VPN credentials. Different UUID/password still remains new.
+            try {
+                val uri = URI(raw)
+                val host = uri.host ?: ""
+                if (host.isBlank()) raw else {
+                    val authority = (uri.rawUserInfo?.let { "$it@" } ?: "") +
+                        (if (host.contains(':')) "[$host]" else host.lowercase()) +
+                        (if (uri.port > 0) ":${uri.port}" else "")
+                    val query = uri.rawQuery?.split('&')?.sorted()?.joinToString("&").orEmpty()
+                    uri.scheme.lowercase() + "://" + authority + uri.rawPath.orEmpty() +
+                        (if (query.isNotEmpty()) "?$query" else "")
+                }
+            } catch (_: Exception) { raw }
+        }
         return MessageDigest.getInstance("SHA-256").digest(material.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
@@ -49,7 +65,6 @@ object KeyBlocklistStore {
     @Synchronized
     fun load(context: Context): List<BlockedKey> {
         val atomic = file(context)
-        if (!atomic.baseFile.exists()) return emptyList()
         return try {
             val contents = atomic.openRead().use { it.readBytes().toString(Charsets.UTF_8) }
             val array = JSONArray(contents)
