@@ -48,8 +48,10 @@ class ScannerParallelTest {
                         try {
                             // A server handler is not a client-side scanner worker.
                             // Track only the lifetime of the accepted connection.
-                            // Sleeping after a fast TCP connect artificially overlaps
-                            // handlers even when ScannerEngine obeys concurrency.
+                            // Hold the client-side passive read for a short
+                            // deterministic interval, then wait for EOF before
+                            // decrementing the number of live connections.
+                            Thread.sleep(150)
                             it.getOutputStream().write("SSH-2.0-Test\r\n".toByteArray())
                             it.getOutputStream().flush()
                             it.soTimeout = 2500
