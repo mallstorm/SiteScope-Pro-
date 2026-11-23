@@ -34,6 +34,8 @@ import kotlin.coroutines.coroutineContext
 /** Найденный ключ и результат его проверки. ms: -1 не проверен, -2 не отвечает, -3 UDP-протокол (отклик не проверяется). */
 class KeyItem(val link: String, val name: String, val type: String, val host: String, val port: Int, val source: String, val foundAt: Long) {
     var ip = ""; var country = ""; var ms = -1L; var tls = 0; var checkedAt = 0L
+    @Transient var origin = ""   // откуда пришёл адрес (категория источника); не сохраняется
+    val fp: String by lazy(LazyThreadSafetyMode.NONE) { KeyBlocklistStore.fingerprint(link) }
     var anon = 0    // прокси: 0 неизвестно, 1 прозрачный, 2 анонимный, 3 элитный
     var https = 0   // прокси: 0 не проверялся, 1 HTTPS работает, 2 нет
     val id: String get() = type + "|" + host + ":" + port + "|" + Integer.toHexString(link.substringBefore('#').hashCode())
@@ -72,12 +74,17 @@ object KeySettings {
     fun depth(c: Context) = p(c).getInt("depth", 1).coerceIn(0, 3)
     fun maxSites(c: Context) = p(c).getInt("sites", 15).coerceIn(1, 40)
     fun threads(c: Context) = p(c).getInt("threads", 24).coerceIn(4, 48)
-    fun parallelSites(c: Context) = p(c).getInt("psites", 3).coerceIn(1, 4)
+    fun parallelSites(c: Context) = p(c).getInt("psites", 4).coerceIn(1, 6)
+    fun tcpThreads(c: Context) = p(c).getInt("tcpThreads", 64).coerceIn(16, 128)
+    fun xrayThreads(c: Context) = p(c).getInt("xthreads", 12).coerceIn(2, 16)
+    fun singThreads(c: Context) = p(c).getInt("sthreads", 3).coerceIn(1, 6)
+    fun proxyThreads(c: Context) = p(c).getInt("pthreads", 32).coerceIn(8, 64)
+    fun maxCollect(c: Context) = p(c).getInt("collect", 40000).coerceIn(1000, 60000)
     fun keysLimit(c: Context) = p(c).getInt("klimit", 1500).coerceIn(200, 4000)
     fun timeoutMs(c: Context) = p(c).getInt("timeout", 1000).coerceIn(800, 8000)
     fun tlsCheck(c: Context) = p(c).getBoolean("tls", true)
     fun useSearch(c: Context) = p(c).getBoolean("search", true)
-    fun proxyLimit(c: Context) = p(c).getInt("plimit", 400).coerceIn(100, 2000)
+    fun proxyLimit(c: Context) = p(c).getInt("plimit", 3000).coerceIn(100, 20000)
     fun deepLimit(c: Context) = p(c).getInt("deepLimit", 120).coerceIn(10, 4000)
     fun ipv6(c: Context) = p(c).getBoolean("ipv6", true)
     fun kinds(c: Context): Set<String> = p(c).getString("kinds", "xray")!!.split(',').filter { it.isNotBlank() }.toSet()

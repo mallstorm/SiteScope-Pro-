@@ -73,30 +73,37 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
     var duplicateCount by mutableIntStateOf(0)
     var queueDone by mutableIntStateOf(0)
     var queueTotal by mutableIntStateOf(0)
-    private val pendingQueue = LinkedHashMap<String, KeyItem>()
+    var loading by mutableStateOf(true)
+    var crawling by mutableStateOf(false)
+    var originStats by mutableStateOf<Map<String, StatView>>(emptyMap())
+    var typeStats by mutableStateOf<Map<String, StatView>>(emptyMap())
+    var aliveNow by mutableIntStateOf(0); var slowNow by mutableIntStateOf(0); var deferredNow by mutableIntStateOf(0)
+    private val pendingQueue = ConcurrentHashMap<String, KeyItem>()
+    private val known = ConcurrentHashMap.newKeySet<String>()
     private var job: Job? = null
 
     init {
-        blocked = KeyBlocklistStore.load(context)
-        val excluded = blocked.mapTo(HashSet()) { it.fingerprint }
-        items = KeyStore.load(context).filterNot { KeyBlocklistStore.fingerprint(it.link) in excluded }
-        for (key in KeyCandidateStore.load(context)) {
-            val fingerprint = KeyBlocklistStore.fingerprint(key.link)
-            if (fingerprint !in excluded) pendingQueue.putIfAbsent(fingerprint, key)
+        // База может быть огромной: читаем её в фоне, чтобы экран открывался мгновенно.
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val list = KeyBlocklistStore.load(context)
+                val excluded = list.mapTo(HashSet()) { it.fingerprint }
+                val loaded = KeyStore.load(context).filter { it.fp !in excluded }
+                for (key in KeyCandidateStore.load(context)) if (key.fp !in excluded) pendingQueue.putIfAbsent(key.fp, key)
+                // Старые сборки сохраняли непроверенные профили в рабочем списке: переносим их в очередь.
+                for (key in loaded) if (!key.alive && key.validation == XrayKeyValidator.UNTESTED && key.fp !in pendingQueue) {
+                    key.checkedAt = 0L
+                    pendingQueue[key.fp] = key
+                }
+                known.addAll(loaded.map { it.fp })
+                blocked = list
+                items = loaded
+                pendingCount = pendingQueue.size
+                uncheckedCount = pendingQueue.values.count { it.checkedAt <= 0L }
+            } catch (_: Exception) {
+            } catch (_: OutOfMemoryError) {
+            } finally { loading = false }
         }
-        // Prior builds saved prechecked-but-unvalidated profiles in the working
-        // list. Migrate them to the durable queue without deleting user data.
-        for (key in items) if (!key.alive && key.validation == XrayKeyValidator.UNTESTED) {
-            val fingerprint = KeyBlocklistStore.fingerprint(key.link)
-            if (fingerprint !in pendingQueue) {
-                key.checkedAt = 0L
-                pendingQueue[fingerprint] = key
-            }
-        }
-        pendingCount = pendingQueue.size
-        uncheckedCount = pendingQueue.values.count { it.checkedAt <= 0L }
-        // Legacy queue additions are durably saved at the first scan/retry.
-        // Do not serialize tens of thousands of keys on the Android UI thread.
     }
 
     private fun saveQueue() {
@@ -108,15 +115,13 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
     private val lock = Any()
     private fun say(t: String) { synchronized(lock) { log = (listOf(t) + log).take(40) } }
     private fun touch() { synchronized(lock) { version++ } }
-    private val cPages = AtomicInteger(); private val cSites = AtomicInteger(); private val cKeys = AtomicInteger(); private val cChecked = AtomicInteger()
-    @Volatile private var lastPub = 0L; @Volatile private var lastTouch = 0L; @Volatile private var lastSave = 0L
-    /** Счётчики на экране обновляются не чаще раза в 0,4 с, чтобы не перегружать интерфейс. */
+    private val cPages = AtomicInteger(); private val cSites = AtomicInteger(); private val cSitesTotal = AtomicInteger(); private val cKeys = AtomicInteger()
+    @Volatile private var lastPub = 0L
+    /** Счётчики сбора на экране обновляются не чаще раза в 0,4 с. */
     private fun publish(force: Boolean = false) {
         val n = android.os.SystemClock.elapsedRealtime()
         if (!force && n - lastPub < 400) return
-        lastPub = n; pages = cPages.get(); sitesDone = cSites.get(); keysFound = cKeys.get(); checked = cChecked.get()
-        if (force || n - lastTouch > 1500) { lastTouch = n; touch() }
-        if (!force && n - lastSave > 60_000) { lastSave = n; KeyStore.save(context, items) }
+        lastPub = n; pages = cPages.get(); sitesDone = cSites.get(); sitesFound = cSitesTotal.get(); keysFound = cKeys.get()
     }
 
     fun stop() { job?.cancel(); SingBoxValidator.cancel(); stage = "Остановка…"; touch() }
@@ -124,7 +129,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
     // Clearing the visible database never erases the persistent deny-list.
     fun clearAll() {
         items = emptyList()
-        pendingQueue.clear()
+        pendingQueue.clear(); known.clear()
         KeyStore.clear(context)
         KeyCandidateStore.clear(context)
         pendingCount = 0; uncheckedCount = 0
@@ -146,7 +151,8 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         KeyBlocklistStore.save(context, entries.values.toList())
         blocked = entries.values.toList()
         val rejected = entries.keys
-        items = items.filterNot { KeyBlocklistStore.fingerprint(it.link) in rejected }
+        items = items.filterNot { it.fp in rejected }
+        known.removeAll(rejected)
         for (fingerprint in rejected) pendingQueue.remove(fingerprint)
         saveQueue()
         KeyStore.save(context, items)
@@ -268,7 +274,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                     KeyBlocklistStore.save(context, remaining.values.toList())
                     blocked = remaining.values.toList()
                     if (recovered.isNotEmpty()) {
-                        items = (items + recovered).distinctBy { KeyBlocklistStore.fingerprint(it.link) }
+                        items = (items + recovered).distinctBy { it.fp }; known.addAll(recovered.map { it.fp })
                         KeyStore.save(context, items)
                     }
                 } finally {
@@ -278,128 +284,148 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Retry checked-but-slow and inconclusive candidates without re-downloading lists. */
-    fun retryQueued() {
-        if (running || pendingQueue.isEmpty()) return
-        for (item in pendingQueue.values) {
-            item.checkedAt = 0
-            item.ms = -1
-            item.validation = XrayKeyValidator.UNTESTED
-            item.validationMs = -1
-            item.validationAt = 0
-            item.validationNote = ""
-        }
+    // ------------------------------------------------------------------ Конвейер
+
+    private class Src(val url: String, val label: String, val kind: String)
+    private val settledQ = java.util.concurrent.ConcurrentLinkedQueue<KeyItem>()
+    private val stateLock = Any()
+    private var pipe: KeyPipeline? = null
+    private var lastDisk = 0L
+    private var changed = false
+
+    private fun resetKey(k: KeyItem) {
+        k.checkedAt = 0L; k.ms = -1L; k.tls = 0; k.anon = 0; k.https = 0
+        k.validation = XrayKeyValidator.UNTESTED; k.validationMs = -1L; k.validationAt = 0L; k.validationNote = ""
+    }
+
+    private fun persist() {
         saveQueue()
-        running = true
+        KeyStore.save(context, items)
+        lastDisk = android.os.SystemClock.elapsedRealtime()
+        changed = false
+    }
+
+    /** Раз в ~0,7 с: готовые ключи попадают в список, остальные — в резерв, счётчики обновляются. */
+    private suspend fun flush(final: Boolean) {
+        val done = ArrayList<KeyItem>()
+        var e = settledQ.poll()
+        while (e != null) { done += e; e = settledQ.poll() }
+        val good = done.filter { it.alive }
+        val bad = done.filter { !it.alive }
+        if (good.isNotEmpty()) {
+            val noCountry = good.filter { it.country.isEmpty() }
+            if (noCountry.isNotEmpty()) try { KeyChecker.geo(context, noCountry) } catch (_: Exception) { }
+        }
+        var invalid: List<KeyItem> = emptyList()
+        synchronized(stateLock) {
+            if (good.isNotEmpty()) {
+                val fresh = good.filter { known.add(it.fp) }
+                for (k in good) pendingQueue.remove(k.fp)
+                if (fresh.isNotEmpty()) items = items + fresh
+            }
+            if (bad.isNotEmpty()) {
+                val drop = HashSet<String>()
+                for (k in bad) { pendingQueue[k.fp] = k; if (known.remove(k.fp)) drop += k.fp }
+                if (drop.isNotEmpty()) items = items.filterNot { it.fp in drop }
+                // В чёрный список — только заведомо некорректные и неподдерживаемые конфигурации.
+                invalid = bad.filter { k ->
+                    k.validation == XrayKeyValidator.FAILED &&
+                        (k.validationNote.contains("Некорректн", ignoreCase = true) || k.validationNote.contains("не поддержива", ignoreCase = true))
+                }
+            }
+            if (done.isNotEmpty()) changed = true
+        }
+        if (invalid.isNotEmpty()) quarantine(invalid) { it.validationNote }
+        pipe?.let { p ->
+            originStats = p.byOrigin.mapValues { it.value.view() }
+            typeStats = p.byType.mapValues { it.value.view() }
+            checked = p.settled.get(); toCheck = p.found.get() - p.deferred.get()
+            aliveNow = p.alive.get(); slowNow = p.slow.get(); deferredNow = p.deferred.get()
+        }
+        pendingCount = pendingQueue.size
+        uncheckedCount = pendingQueue.values.count { it.checkedAt <= 0L }
+        publish(true)
+        if (done.isNotEmpty() || final) touch()
+        if (final || (changed && android.os.SystemClock.elapsedRealtime() - lastDisk > 45_000)) persist()
+    }
+
+    /** Запускает конвейер: [feed] подаёт адреса (из сбора или из очереди), проверка идёт параллельно. */
+    private suspend fun runPipeline(feed: suspend (route: (KeyItem, String) -> Unit) -> Unit): KeyPipeline {
+        val c = context
+        val timeout = KeySettings.timeoutMs(c)
+        val cfg = PipelineConfig(KeySettings.tcpThreads(c), timeout.coerceAtMost(KeyQualityPolicy.CONNECT_TIMEOUT_MS),
+            KeySettings.xrayThreads(c), KeySettings.singThreads(c), KeySettings.proxyThreads(c), timeout.coerceAtLeast(2000),
+            KeySettings.proxyLimit(c), KeySettings.tlsCheck(c))
+        val p = KeyPipeline(c, cfg, ::say) { settledQ.add(it) }
+        pipe = p
+        originStats = emptyMap(); typeStats = emptyMap(); aliveNow = 0; slowNow = 0; deferredNow = 0; checked = 0; toCheck = 0
+        kotlinx.coroutines.coroutineScope {
+            val flusher = launch(Dispatchers.IO) { while (true) { kotlinx.coroutines.delay(700); flush(false) } }
+            try {
+                p.execute(feed)
+            } finally {
+                flusher.cancel(); flusher.join()
+                withContext(kotlinx.coroutines.NonCancellable) { flush(true) }
+            }
+        }
+        return p
+    }
+
+    private fun summary(p: KeyPipeline): String =
+        "Найдено ${p.found.get()} · проверено ${p.settled.get()} · рабочих ${p.alive.get()} · медленных ${p.slow.get()}" +
+            (if (p.deferred.get() > 0) " · прокси в резерве ${p.deferred.get()}" else "")
+
+    private fun launchRun(stageName: String, body: suspend () -> Unit) {
+        running = true; finishedNote = ""; stage = stageName; crawling = false
         job = viewModelScope.launch(Dispatchers.Default) {
-            try { processPending() }
-            catch (cancel: kotlinx.coroutines.CancellationException) {
+            try {
+                body()
+                stage = "Готово"
+            } catch (cancel: kotlinx.coroutines.CancellationException) {
                 stage = "Остановлено"
                 throw cancel
+            } catch (error: OutOfMemoryError) {
+                finishedNote = "Не хватило памяти: выберите режим «Щадящая» в настройках"; stage = "Ошибка"
             } catch (error: Exception) {
-                stage = "Ошибка"
-                finishedNote = "Ошибка: " + (error.message ?: "неизвестно")
+                finishedNote = "Ошибка: " + (error.message ?: error.javaClass.simpleName); stage = "Ошибка"
             } finally {
-                KeyStore.save(context, items)
-                running = false
-                publish(true)
+                try { persist() } catch (_: Exception) { }
+                crawling = false; running = false; publish(true); touch()
             }
         }
     }
 
-    /**
-     * Every unique candidate reaches a latency preflight, then eligible TCP
-     * profiles get a routed HTTP/HTTPS test. UDP transports skip TCP-only probes.
-     * Slow/unreachable entries are retained for explicit retries, not blacklisted.
-     * A completed batch is checkpointed before processing the next one.
-     */
-    private suspend fun processPending() {
-        val all = pendingQueue.values.filter { it.checkedAt <= 0L }
-        if (all.isEmpty()) {
-            stage = "Готово"
-            finishedNote = "Непроверенных нет · медленные можно повторить отдельно"
-            return
+    /** Повторная проверка всего резерва: непроверенные, медленные и спорные ключи. */
+    fun retryQueued() {
+        if (running || loading || pendingQueue.isEmpty()) return
+        cPages.set(0); cSites.set(0); cSitesTotal.set(0); cKeys.set(0)
+        sitesFound = 0; sitesDone = 0; pages = 0; keysFound = 0
+        launchRun("Проверка резерва") {
+            val list = pendingQueue.values.toList()
+            for (k in list) resetKey(k)
+            say("Резерв: ${list.size} адресов")
+            val p = runPipeline { route -> for (k in list) route(k, "queue") }
+            finishedNote = summary(p)
         }
-        val total = all.size
-        queueTotal = total
-        queueDone = 0
-        var processed = 0
-        var accepted = 0
-        var slow = 0
-        val batchSize = KeySettings.keysLimit(context).coerceIn(100, 1500)
-        val timeout = KeySettings.timeoutMs(context).coerceAtLeast(1500)
-        say("Очередь: $total уникальных соединений · проверяем без пропусков")
-        for (batch in all.chunked(batchSize)) {
-            coroutineContext.ensureActive()
-            checkItems(batch)
-            coroutineContext.ensureActive()
-            val fast = batch.filter {
-                (it.udp && it.type in SingBoxConfig.types && it.ms == -3L) ||
-                    (!it.udp && KeyQualityPolicy.fastEnough(it.ms))
-            }
-            val proxies = fast.filter { it.proxy }
-            if (proxies.isNotEmpty()) {
-                stage = "Проверка HTTP/HTTPS через прокси"
-                cChecked.set(0); checked = 0; toCheck = proxies.size
-                val gate = Semaphore(KeySettings.threads(context).coerceAtMost(16))
-                coroutineScope {
-                    proxies.map { key -> async {
-                        gate.acquire()
-                        try {
-                            ensureActive()
-                            KeyChecker.check(key, timeout, true)
-                        } catch (cancel: kotlinx.coroutines.CancellationException) {
-                            throw cancel
-                        } catch (_: Exception) {
-                            key.ms = -2
-                        } finally {
-                            cChecked.incrementAndGet()
-                            gate.release()
-                            publish()
-                        }
-                    } }.awaitAll()
-                }
-            }
-            // The deep-limit setting sizes Xray/sing-box checkpoints, but it
-            // does NOT truncate the set of profiles that get a real HTTPS test.
-            val vpnKeys = fast.filter { !it.proxy }
-            for (group in vpnKeys.chunked(KeySettings.deepLimit(context).coerceAtLeast(1))) {
-                coroutineContext.ensureActive()
-                deepValidate(group, group.size)
-            }
-            val good = fast.filter { it.alive }
-            if (good.isNotEmpty()) {
-                val merged = items.associateByTo(LinkedHashMap()) { KeyBlocklistStore.fingerprint(it.link) }
-                for (item in good) {
-                    merged[KeyBlocklistStore.fingerprint(item.link)] = item
-                    pendingQueue.remove(KeyBlocklistStore.fingerprint(item.link))
-                }
-                items = merged.values.toList()
-                accepted += good.size
-                KeyChecker.geo(context, good)
-            }
-            // A failed network test can be temporary. Only permanently malformed
-            // or unsupported configurations go on the automatic deny-list.
-            val invalid = batch.filter { item ->
-                item.validation == XrayKeyValidator.FAILED &&
-                    (item.validationNote.contains("Некорректн", ignoreCase = true) ||
-                        item.validationNote.contains("не поддержива", ignoreCase = true))
-            }
-            if (invalid.isNotEmpty()) quarantine(invalid) { it.validationNote }
-            processed += batch.size
-            queueDone = processed
-            slow += batch.count { !it.alive && it.ms >= KeyQualityPolicy.MAX_WORKING_MS }
-            saveQueue()
-            KeyStore.save(context, items)
-            say("Проверено $processed/$total · рабочих $accepted · медленных $slow · осталось ${uncheckedCount}")
-            publish(true)
-        }
-        stage = "Готово"
-        finishedNote = "Проверено $processed · рабочих $accepted · медленных $slow · в резерве $pendingCount"
     }
 
+    /** Полная перепроверка выбранных (или всех) ключей. */
+    fun recheck(ids: Set<String>) {
+        if (running || loading) return
+        val list = items.filter { ids.isEmpty() || it.id in ids }
+        if (list.isEmpty()) return
+        cPages.set(0); cSites.set(0); cSitesTotal.set(0); cKeys.set(0)
+        sitesFound = 0; sitesDone = 0; pages = 0; keysFound = 0
+        launchRun("Перепроверка") {
+            for (k in list) { resetKey(k); k.country = "" }
+            val p = runPipeline { route -> for (k in list) route(k, "recheck") }
+            finishedNote = summary(p)
+        }
+    }
+
+    /** Комбайн: источники скачиваются, а найденные адреса сразу проверяются — без пауз между этапами. */
     fun start(query: String, kindIds: Set<String>, sources: List<String>) {
-        if (running) return
+        if (running || loading) return
         val c = context
         KeySettings.put(c, "query", query)
         KeySettings.put(c, "sources", sources.joinToString("\n"))
@@ -408,269 +434,95 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         val types = chosenKinds.flatMap { it.types }.toSet().ifEmpty { KeySources.XRAY_TYPES }
         val followSubs = "sub" in kindIds
         val allowV6 = KeySettings.ipv6(c)
-        running = true
-        finishedNote = ""; log = emptyList(); KeyGuard.tripped = false
-        duplicateCount = 0; queueDone = 0; queueTotal = 0
-        cPages.set(0); cSites.set(0); cKeys.set(0); cChecked.set(0)
-        sitesFound = 0; sitesDone = 0; pages = 0; keysFound = 0; checked = 0; toCheck = 0
-        job = viewModelScope.launch(Dispatchers.Default) {
-            val found = ConcurrentHashMap<String, KeyItem>()
-            try {
-                val excluded = blocked.mapTo(HashSet()) { it.fingerprint }
-                // A single fingerprint set for the entire run: source A, source B,
-                // known working records, pending records, and permanent blacklist.
-                val alreadyKnown = HashSet<String>()
-                alreadyKnown.addAll(excluded)
-                alreadyKnown.addAll(pendingQueue.keys)
-                alreadyKnown.addAll(items.map { KeyBlocklistStore.fingerprint(it.link) })
-                val seen = ConcurrentHashMap.newKeySet<String>()
-                seen.addAll(alreadyKnown)
-                val duplicates = AtomicInteger()
-                val oldMatches = AtomicInteger()
-                val subSeen = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
-                stage = "Поиск сайтов"
-                val sites = LinkedHashMap<String, String>()
-                fun norm(s: String) = if (s.startsWith("http")) s else if (s.startsWith("t.me/") || s.startsWith("@")) "https://t.me/s/" + s.removePrefix("@").removePrefix("t.me/").removePrefix("s/") else "https://$s"
-                for (source in sources) {
-                    val url = norm(source)
-                    sites.putIfAbsent(url, KeySources.label(url))
-                }
-                for (kind in chosenKinds) for (url in kind.sources) sites.putIfAbsent(url, KeySources.label(url))
-                val presetCount = sites.size
-                if (KeySettings.useSearch(c)) {
-                    val max = KeySettings.maxSites(c)
-                    val hits = withContext(Dispatchers.IO) { KeyCrawler.search(query.trim(), max, types) }
-                    say("Поисковики: найдено ${hits.size} ссылок")
-                    val hosts = HashSet(sites.values)
-                    var added = 0
-                    for (hit in hits) {
-                        val host = KeyCrawler.hostOf(hit)
-                        if (host.isNotEmpty() && hosts.add(host)) { sites[hit] = host; added++ }
-                        if (added >= max) break
+        KeyGuard.tripped = false
+        duplicateCount = 0
+        cPages.set(0); cSites.set(0); cSitesTotal.set(0); cKeys.set(0)
+        sitesFound = 0; sitesDone = 0; pages = 0; keysFound = 0
+        log = emptyList()
+        launchRun("Сбор и проверка") {
+            crawling = true
+            val excluded = blocked.mapTo(HashSet()) { it.fingerprint }
+            val seen = ConcurrentHashMap.newKeySet<String>()
+            seen.addAll(excluded); seen.addAll(pendingQueue.keys); seen.addAll(known)
+            val duplicates = AtomicInteger(); val oldMatches = AtomicInteger()
+            val subSeen = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+            val maxCollect = KeySettings.maxCollect(c)
+            val pagesCap = KeySettings.pagesPerSite(c); val depth = KeySettings.depth(c)
+            val p = runPipeline { route ->
+                kotlinx.coroutines.coroutineScope {
+                    val sites = kotlinx.coroutines.channels.Channel<Src>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                    val queued = ConcurrentHashMap.newKeySet<String>()
+                    fun norm(s: String) = if (s.startsWith("http")) s else if (s.startsWith("t.me/") || s.startsWith("@")) "https://t.me/s/" + s.removePrefix("@").removePrefix("t.me/").removePrefix("s/") else "https://$s"
+                    fun offer(url: String, label: String, kind: String) {
+                        if (queued.add(url)) { cSitesTotal.incrementAndGet(); sites.trySend(Src(url, label, kind)) }
                     }
-                }
-                sitesFound = sites.size
-                if (sites.isEmpty()) {
-                    if (pendingQueue.values.any { it.checkedAt <= 0L }) {
-                        say("Источники не найдены, проверяем сохранённую очередь")
-                        processPending()
-                    } else {
-                        finishedNote = "Источники не найдены"
-                        stage = "Готово"
+                    for (s in sources) { val u = norm(s); offer(u, KeySources.label(u), "own") }
+                    for (k in chosenKinds) for (u in k.sources) offer(u, KeySources.label(u), k.id)
+                    say("Источников: ${queued.size} · проверка идёт параллельно со сбором")
+                    // Адреса, которые не успели проверить в прошлый раз, идут на проверку сразу.
+                    for (key in pendingQueue.values.toList()) if (key.checkedAt <= 0L && key.type in types) route(key, "queue")
+                    // Поиск сайтов идёт одновременно со скачиванием готовых списков.
+                    val searchJob = launch(Dispatchers.IO) {
+                        if (!KeySettings.useSearch(c)) return@launch
+                        try {
+                            val max = KeySettings.maxSites(c)
+                            val hits = KeyCrawler.search(query.trim(), max, types)
+                            say("Поисковики: найдено ${hits.size} ссылок")
+                            val hosts = HashSet<String>()
+                            var added = 0
+                            for (hit in hits) {
+                                val host = KeyCrawler.hostOf(hit)
+                                if (host.isNotEmpty() && hosts.add(host) && queued.none { KeyCrawler.hostOf(it) == host }) { offer(hit, host, "search"); added++ }
+                                if (added >= max) break
+                            }
+                        } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel } catch (_: Exception) { }
                     }
-                    return@launch
-                }
-                if (presetCount > 0) say("Готовых источников: $presetCount")
-                stage = "Сканирование сайтов"
-                val pagesCap = KeySettings.pagesPerSite(c)
-                val depth = KeySettings.depth(c)
-                val gate = Semaphore(KeySettings.parallelSites(c))
-                coroutineScope {
-                    sites.entries.map { (url, label) ->
-                        async {
-                            gate.acquire()
-                            try {
-                                ensureActive()
-                                if (KeyGuard.tripped) return@async
-                                var own = 0
+                    val crawlers = List(KeySettings.parallelSites(c)) {
+                        launch {
+                            for (src in sites) {
                                 try {
-                                    KeyCrawler.crawl(url, pagesCap, depth, types,
-                                        KeySources.proxyTypesFor(url, types), followSubs,
-                                        subSeen, { cPages.incrementAndGet(); publish() }) { keys ->
-                                        for (link in keys) {
-                                            if (found.size >= 30000) break
-                                            val rawFingerprint = KeyBlocklistStore.fingerprint(link)
-                                            if (rawFingerprint in seen) {
-                                                if (rawFingerprint in alreadyKnown) oldMatches.incrementAndGet()
-                                                else duplicates.incrementAndGet()
-                                                continue
+                                    ensureActive()
+                                    if (KeyGuard.tripped) continue
+                                    var own = 0
+                                    try {
+                                        KeyCrawler.crawl(src.url, pagesCap, depth, types, KeySources.proxyTypesFor(src.url, types), followSubs, subSeen,
+                                            { cPages.incrementAndGet(); publish() }) { keys ->
+                                            for (link in keys) {
+                                                if (cKeys.get() >= maxCollect) break
+                                                val rawFp = KeyBlocklistStore.fingerprint(link)
+                                                if (rawFp in seen) {
+                                                    if (rawFp in known || pendingQueue.containsKey(rawFp)) oldMatches.incrementAndGet() else duplicates.incrementAndGet()
+                                                    continue
+                                                }
+                                                val parsed = KeyCrawler.parse(link, src.label, allowV6) ?: continue
+                                                // socks:// и socks5:// — одна и та же конфигурация.
+                                                val fp = parsed.fp
+                                                if (!seen.add(fp)) { duplicates.incrementAndGet(); seen.add(rawFp); continue }
+                                                if (rawFp != fp) seen.add(rawFp)
+                                                pendingQueue.putIfAbsent(fp, parsed)
+                                                own++; cKeys.incrementAndGet()
+                                                route(parsed, src.kind)
                                             }
-                                            val parsed = KeyCrawler.parse(link, label, allowV6) ?: continue
-                                            // Aliases such as socks:// and socks5:// must
-                                            // resolve to the SAME configuration identity.
-                                            val fingerprint = KeyBlocklistStore.fingerprint(parsed.link)
-                                            if (!seen.add(fingerprint)) {
-                                                if (fingerprint in alreadyKnown) oldMatches.incrementAndGet()
-                                                else duplicates.incrementAndGet()
-                                                seen.add(rawFingerprint)
-                                                continue
-                                            }
-                                            if (rawFingerprint != fingerprint) seen.add(rawFingerprint)
-                                            found[fingerprint] = parsed
-                                            own++
-                                            cKeys.set(found.size)
+                                            publish()
                                         }
-                                        publish()
-                                    }
-                                } catch (cancel: kotlinx.coroutines.CancellationException) {
-                                    throw cancel
-                                } catch (_: Exception) {
-                                    say("$label: ошибка")
-                                } catch (_: OutOfMemoryError) {
-                                    KeyGuard.tripped = true
-                                }
-                                if (own > 0) say("$label: +$own")
-                            } finally {
-                                cSites.incrementAndGet()
-                                publish()
-                                gate.release()
+                                    } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel
+                                    } catch (_: Exception) { say("${src.label}: ошибка")
+                                    } catch (_: OutOfMemoryError) { KeyGuard.tripped = true }
+                                    if (own > 0) say("${src.label}: +$own")
+                                } finally { cSites.incrementAndGet(); publish() }
                             }
                         }
-                    }.awaitAll()
-                }
-                publish(true)
-                if (KeyGuard.tripped) say("Мало памяти: сбор остановлен досрочно")
-                val fresh = found.values.toList()
-                for (key in fresh) {
-                    pendingQueue.putIfAbsent(KeyBlocklistStore.fingerprint(key.link), key)
-                }
-                // Persist ALL new unique records before the first network probe.
-                // A stopped/crashed scan can resume without discarding discovery.
-                saveQueue()
-                duplicateCount = duplicates.get()
-                say("Уникальных новых: ${fresh.size} · в базе: ${oldMatches.get()} · дубликатов отброшено: ${duplicates.get()}")
-                found.clear()
-                processPending()
-            } catch (cancel: kotlinx.coroutines.CancellationException) {
-                stage = "Остановлено"
-                throw cancel
-            } catch (error: OutOfMemoryError) {
-                finishedNote = "Не хватило памяти: попробуйте меньше потоков"
-                stage = "Ошибка"
-            } catch (error: Exception) {
-                finishedNote = "Ошибка: " + (error.message ?: error.javaClass.simpleName)
-                stage = "Ошибка"
-            } finally {
-                // Stopping during crawling still preserves everything collected.
-                if (found.isNotEmpty()) {
-                    try {
-                        for (key in found.values) {
-                            pendingQueue.putIfAbsent(KeyBlocklistStore.fingerprint(key.link), key)
-                        }
-                        saveQueue()
-                    } catch (_: Exception) { }
-                }
-                KeyStore.save(context, items)
-                running = false
-                publish(true)
-            }
-        }
-    }
-
-    private suspend fun checkItems(list: List<KeyItem>) {
-        if (list.isEmpty()) return
-        val c = context
-        stage = "Проверка отклика"; cChecked.set(0); checked = 0; toCheck = list.size
-        val gate = Semaphore(KeySettings.threads(c))
-        val timeout = KeySettings.timeoutMs(c).coerceAtMost(KeyQualityPolicy.CONNECT_TIMEOUT_MS)
-        // Multiple VLESS/Trojan/VMess configs often share a single host:port.
-        // A TCP preflight is about that endpoint, never about the credentials:
-        // probe each unique transport+host+port once and broadcast the result.
-        val endpoints = list.groupBy {
-            (if (it.udp) "udp|" else "tcp|") + it.host.lowercase(Locale.ROOT) + ":" + it.port
-        }
-        say("TCP-предпроверка: ${list.size} ключей · ${endpoints.size} уникальных адресов")
-        coroutineScope {
-            endpoints.values.map { members -> async {
-                gate.acquire()
-                try {
-                    ensureActive()
-                    val first = members.first()
-                    val ok = kotlinx.coroutines.withTimeoutOrNull(timeout * 5L + 5000L) {
-                        KeyChecker.quickCheck(first, timeout)
                     }
-                    if (ok == null) { first.ms = -2; first.checkedAt = System.currentTimeMillis() }
-                    for (other in members.drop(1)) {
-                        other.ms = first.ms
-                        other.ip = first.ip
-                        other.checkedAt = first.checkedAt
-                    }
-                } finally {
-                    cChecked.addAndGet(members.size)
-                    gate.release()
-                    publish()
+                    searchJob.join()
+                    sites.close()
+                    crawlers.forEach { it.join() }
+                    crawling = false; stage = "Доделываю очередь проверки"
+                    if (KeyGuard.tripped) say("Мало памяти: сбор остановлен досрочно")
+                    duplicateCount = duplicates.get()
+                    say("Новых: ${cKeys.get()} · уже в базе: ${oldMatches.get()} · дубликатов: ${duplicates.get()}")
                 }
-            } }.awaitAll()
-        }
-        publish(true)
-    }
-
-    /** Real proof: HTTPS response through a disposable local Xray SOCKS core.
-     * The native core is used serially, not once per coroutine.
-     */
-    /**
-     * v2rayNG-style bulk test. Ordinary Xray profiles use the native
-     * measureOutboundDelay API concurrently (up to 16), not a serial
-     * startLoop / SOCKS / stopLoop cycle for each candidate. sing-box stays
-     * serialized until its independent process pool is enabled.
-     */
-    private suspend fun deepValidate(list: List<KeyItem>, limit: Int) {
-        val eligible = list.filter { !it.proxy &&
-            (if (it.type in SingBoxConfig.types) it.ms >= 0 || it.ms == -3L else !it.udp && it.ms >= 0) &&
-            (it.validation != XrayKeyValidator.VERIFIED || !it.alive) }
-        val candidates = eligible.take(limit)
-        if (candidates.isEmpty()) return
-        stage = "HTTP через VPN-ядра"
-        cChecked.set(0); checked = 0; toCheck = candidates.size
-        val xrayLimit = KeySettings.threads(context).coerceIn(1, 16)
-        val xrayGate = Semaphore(xrayLimit)
-        val singBoxGate = Semaphore(1)
-        say("Реальная проверка: ${candidates.size} · Xray параллельно до $xrayLimit потоков")
-        coroutineScope {
-            candidates.map { key -> async(Dispatchers.IO) {
-                val gate = if (key.type in SingBoxConfig.types) singBoxGate else xrayGate
-                gate.acquire()
-                try {
-                    ensureActive()
-                    val result = if (key.type in SingBoxConfig.types)
-                        SingBoxValidator.check(context, key.link, 4500)
-                    else XrayKeyValidator.checkNativeDelay(context, key.link)
-                    key.validation = result.status
-                    key.validationMs = result.delayMs
-                    key.validationAt = System.currentTimeMillis()
-                    key.validationNote = result.reason
-                } catch (cancel: kotlinx.coroutines.CancellationException) {
-                    throw cancel
-                } catch (error: Exception) {
-                    key.validation = XrayKeyValidator.INCONCLUSIVE
-                    key.validationMs = -1
-                    key.validationNote = "Ошибка теста: " + error.javaClass.simpleName
-                    key.validationAt = System.currentTimeMillis()
-                } finally {
-                    cChecked.incrementAndGet()
-                    gate.release()
-                    publish()
-                }
-            } }.awaitAll()
-        }
-    }
-
-    /** Повторная проверка выбранных (или всех) ключей. */
-    fun recheck(ids: Set<String>) {
-        if (running) return
-        running = true; finishedNote = ""
-        val list = items.filter { ids.isEmpty() || it.id in ids }
-        job = viewModelScope.launch(Dispatchers.Default) {
-            try {
-                list.forEach { it.validation = 0; it.validationMs = -1L; it.validationAt = 0; it.validationNote = ""; it.country = "" }
-                checkItems(list)
-                val fast = list.filter {
-                    (it.udp && it.type in SingBoxConfig.types && it.ms == -3L) ||
-                        (!it.udp && KeyQualityPolicy.fastEnough(it.ms))
-                }
-                for (proxy in fast.filter { it.proxy }) KeyChecker.check(proxy, KeySettings.timeoutMs(context).coerceAtLeast(1500), true)
-                deepValidate(fast, fast.size)
-                val recovered = fast.filter { it.alive }
-                val rejected = list.filter { !it.alive }
-                for (key in rejected) pendingQueue[KeyBlocklistStore.fingerprint(key.link)] = key
-                items = items.filterNot { it in rejected }
-                saveQueue()
-                finishedNote = "Проверено ${list.size} · рабочих ${recovered.size} · в резерве ${rejected.size}"
-                stage = "Готово"
             }
-            catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { finishedNote = "Ошибка: " + (e.message ?: "") }
-            finally { KeyStore.save(context, items); running = false; publish(true) }
+            finishedNote = summary(p)
         }
     }
 
@@ -731,8 +583,19 @@ fun KeyHubScreen(onBack: () -> Unit, vm: KeyHubViewModel = viewModel()) {
     }
 }
 
-// ------------------------------------------------------------------ Поиск
+// ------------------------------------------------------------------ Комбайн
 
+private fun kindIcon(id: String): androidx.compose.ui.graphics.vector.ImageVector = when (id) {
+    "xray" -> Icons.Rounded.VpnKey; "udp" -> Icons.Rounded.Bolt; "socks" -> Icons.Rounded.Hub; "http" -> Icons.Rounded.Language
+    "elite" -> Icons.Rounded.Verified; "anytls" -> Icons.Rounded.Lock; else -> Icons.Rounded.RssFeed
+}
+
+private fun vpnActive(c: Context): Boolean = try {
+    val cm = c.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+    cm.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
+} catch (_: Exception) { false }
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
     val context = LocalContext.current
@@ -741,96 +604,123 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
     var sources by remember { mutableStateOf(KeySettings.lastSources(context)) }
     var picked by remember { mutableStateOf(KeySettings.kinds(context).ifEmpty { setOf("xray") }) }
     var v6 by remember { mutableStateOf(KeySettings.ipv6(context)) }
+    var sheet by remember { mutableStateOf(false) }
+    val vpn = remember(vm.running, vm.version) { vpnActive(context) }
     val profilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importLocalProfile(uri) { message -> toast(context, message) }
     }
-    fun go() { if (!vm.running && picked.isNotEmpty()) vm.start(query, picked, sources.lines().map { it.trim() }.filter { it.isNotEmpty() }) }
+    fun go() { if (!vm.running && !vm.loading && picked.isNotEmpty()) vm.start(query, picked, sources.lines().map { it.trim() }.filter { it.isNotEmpty() }) }
+    val foundTotal = vm.originStats.values.sumOf { it.found }
+    val waiting = (foundTotal - vm.deferredNow - vm.checked).coerceAtLeast(0)
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Что искать", style = MaterialTheme.typography.titleSmall)
+        // --- Шапка комбайна: состояние, запуск, общие счётчики
+        SoftCard(modifier = Modifier.padding(horizontal = 12.dp).padding(top = 10.dp), padding = 12.dp,
+            color = if (vm.running) t.infoSoft else MaterialTheme.colorScheme.surfaceContainerLowest) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconBadge(if (vm.running) Icons.Rounded.Sync else Icons.Rounded.TravelExplore, t.info, t.infoSoft, 44.dp)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(if (vm.loading) "Загрузка базы…" else if (vm.running) vm.stage.ifEmpty { "Работаю" } else "Комбайн ключей", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    Text(
+                        if (vm.loading) "Читаю сохранённые ключи в фоне"
+                        else if (vm.running) (if (vm.crawling) "Источников ${vm.sitesDone}/${vm.sitesFound} · страниц ${vm.pages} · проверка идёт параллельно" else "Сбор завершён, доделываю проверку")
+                        else "Сбор и проверка идут одновременно, по типам",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                }
+                if (vm.running) Button(onClick = { vm.stop() }, colors = ButtonDefaults.buttonColors(containerColor = t.bad)) { Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Стоп") }
+                else Button(onClick = { go() }, enabled = picked.isNotEmpty() && !vm.loading) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Запуск") }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Stat("Найдено", foundTotal.toString(), Modifier.weight(1f))
+                Stat("Проверено", vm.checked.toString(), Modifier.weight(1f))
+                Stat("Рабочих", vm.aliveNow.toString(), Modifier.weight(1f), t.good)
+                Stat("Ждут", waiting.toString(), Modifier.weight(1f), t.warn)
+            }
+            if (vm.running) {
+                if (foundTotal > 0) LinearProgressIndicator(progress = { (vm.checked / foundTotal.toFloat()).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+                else LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
+            } else if (vm.finishedNote.isNotEmpty()) {
+                Row(Modifier.padding(top = 8.dp).clickable { onShow() }, verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.CheckCircle, null, tint = t.good, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
+                    Text(vm.finishedNote, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                    Icon(Icons.Rounded.ChevronRight, null)
+                }
+            }
+            val last = vm.log.firstOrNull()
+            if (last != null && (vm.running || vm.finishedNote.isEmpty())) Text(last, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+            if (vpn) Text("Включён VPN — Xray и sing-box ключи проверить нельзя. Отключите его.", style = MaterialTheme.typography.labelSmall, color = t.bad, modifier = Modifier.padding(top = 6.dp))
+        }
+        // --- Живая лента по протоколам
+        if (vm.typeStats.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            vm.typeStats.entries.sortedBy { TYPE_LABEL.keys.indexOf(it.key) }.forEach { (type, st) ->
+                Pill((TYPE_LABEL[type] ?: type) + " ${st.alive}/${st.checked}/${st.found}", if (st.alive > 0) t.good else t.info, if (st.alive > 0) t.goodSoft else t.infoSoft)
+            }
+        } else Spacer(Modifier.height(8.dp))
+        // --- Категории: выбор и живые счётчики (прокручивается только сетка)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Что собирать", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            TextButton(onClick = { picked = if (picked.size == KeySources.kinds.size) emptySet() else KeySources.kinds.map { it.id }.toSet() }, enabled = !vm.running) {
+                Text(if (picked.size == KeySources.kinds.size) "Сбросить" else "Выбрать всё")
+            }
+        }
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             KeySources.kinds.chunked(2).forEach { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     row.forEach { k ->
                         val on = k.id in picked
+                        val st = vm.originStats[k.id]
                         SoftCard(modifier = Modifier.weight(1f), padding = 10.dp, color = if (on) t.infoSoft else MaterialTheme.colorScheme.surfaceContainerLowest,
-                            onClick = { picked = if (on) picked - k.id else picked + k.id }) {
-                            Row(verticalAlignment = Alignment.Top) {
-                                Checkbox(checked = on, onCheckedChange = null, modifier = Modifier.size(24.dp))
+                            onClick = { if (!vm.running) picked = if (on) picked - k.id else picked + k.id }) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconBadge(kindIcon(k.id), if (on) t.info else MaterialTheme.colorScheme.onSurfaceVariant, if (on) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceContainer, 34.dp)
                                 Spacer(Modifier.width(8.dp))
-                                Column {
-                                    Text(k.title, style = MaterialTheme.typography.titleSmall, maxLines = 2)
-                                    Text(k.sub + " · " + k.sources.size + " ист.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
-                                }
+                                Text(k.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, modifier = Modifier.weight(1f))
+                                if (on) Icon(Icons.Rounded.CheckCircle, null, tint = t.info, modifier = Modifier.size(18.dp))
                             }
+                            Text(if (st == null) k.sub else "найдено ${st.found} · ✓ ${st.alive}", style = MaterialTheme.typography.labelSmall,
+                                color = if (st != null && st.alive > 0) t.good else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, modifier = Modifier.padding(top = 6.dp))
+                            if (st != null && st.found > 0) LinearProgressIndicator(progress = { (st.checked / st.found.toFloat()).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+                            else Text("${k.sources.size} источников", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 2.dp))
                         }
                     }
                     if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
+            val extra = listOf("own" to "Свои источники", "search" to "Поисковики", "queue" to "Резерв").mapNotNull { (id, name) -> vm.originStats[id]?.let { name to it } }
+            if (extra.isNotEmpty()) Text(extra.joinToString(" · ") { (name, st) -> "$name: ${st.found} (✓ ${st.alive})" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(4.dp))
+        }
+        // --- Нижняя панель
+        Surface(tonalElevation = 3.dp) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = { sheet = true }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.Tune, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Источники", maxLines = 1) }
+                OutlinedButton(onClick = { vm.retryQueued() }, enabled = !vm.running && !vm.loading && vm.pendingCount > 0, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.Refresh, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Резерв ${vm.pendingCount}", maxLines = 1) }
+                FilledTonalButton(onClick = onShow, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.VpnKey, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Ключи ${vm.items.size}", maxLines = 1) }
+            }
+        }
+    }
+    if (sheet) ModalBottomSheet(onDismissRequest = { sheet = false }) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Запрос и источники", style = MaterialTheme.typography.titleLarge)
+            Text("Оба поля можно оставить пустыми: готовые списки выбранных категорий скачиваются сами.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            BigField(query, { query = it }, "Запрос для поиска сайтов (необязательно)", keyboard = KeyboardType.Text, leading = Icons.Rounded.Search)
+            BigField(sources, { sources = it }, "Свои источники: сайты, @канал Telegram, ссылки на списки (по строке)", singleLine = false, minLines = 2, keyboard = KeyboardType.Uri, leading = Icons.Rounded.Link, mono = true)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text("Включать IPv6", style = MaterialTheme.typography.bodyLarge); Text("Серверы с адресами IPv6 нужны, только если у вас есть IPv6", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                Column(Modifier.weight(1f)) { Text("Включать IPv6"); Text("Нужно, только если у вас есть IPv6", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 Switch(v6, { v6 = it; KeySettings.put(context, "ipv6", it) })
             }
-            BigField(query, { query = it }, "Свой запрос для поиска сайтов (необязательно)", keyboard = KeyboardType.Text, leading = Icons.Rounded.Search, onGo = { go() })
-            BigField(sources, { sources = it }, "Свои источники: сайты, @канал Telegram, ссылки на списки (по строке)", singleLine = false, minLines = 2, keyboard = KeyboardType.Uri, leading = Icons.Rounded.Link, mono = true)
             OutlinedButton(onClick = { profilePicker.launch(arrayOf("*/*")) }, enabled = !vm.running) {
-                Icon(Icons.Rounded.FileOpen, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Импорт WireGuard .conf / OpenVPN .ovpn")
+                Icon(Icons.Rounded.FileOpen, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Импорт WireGuard .conf / OpenVPN .ovpn")
             }
-            SoftCard(padding = 10.dp) {
-                Text("Очередь кандидатов: ${vm.pendingCount} · ещё не проверены: ${vm.uncheckedCount}",
-                    style = MaterialTheme.typography.bodyMedium)
-                if (vm.duplicateCount > 0) Text("Дубликатов отброшено: ${vm.duplicateCount}",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Все уникальные записи проходят TCP-предпроверку ≤1 с, затем реальный HTTP/HTTPS через прокси или VPN-ядро. Для UDP — сразу проверка через sing-box.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (vm.pendingCount > 0) {
-                    OutlinedButton(onClick = { vm.retryQueued() }, enabled = !vm.running) {
-                        Icon(Icons.Rounded.Refresh, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Повторить резерв (${vm.pendingCount})")
-                    }
-                }
-            }
-            if (vm.running) {
-                SoftCard(color = t.infoSoft, padding = 12.dp) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(vm.stage, style = MaterialTheme.typography.titleSmall)
-                            Text(if (vm.queueTotal > 0) "Всего: ${vm.queueDone} из ${vm.queueTotal} · текущая партия ${vm.checked}/${vm.toCheck}"
-                                else "Источников ${vm.sitesDone}/${vm.sitesFound} · страниц ${vm.pages} · уникальных ${vm.keysFound}",
-                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        OutlinedButton(onClick = { vm.stop() }) { Text("Стоп") }
-                    }
-                    if ((vm.stage == "Проверка отклика" || vm.stage == "Проверка VPN через ядра") && vm.toCheck > 0) LinearProgressIndicator(progress = { vm.checked / vm.toCheck.toFloat() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-                }
-            }
-            if (vm.finishedNote.isNotEmpty() && !vm.running) {
-                SoftCard(color = t.goodSoft, padding = 12.dp, onClick = onShow) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.CheckCircle, null, tint = t.good); Spacer(Modifier.width(8.dp))
-                        Text(vm.finishedNote, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                        Icon(Icons.Rounded.ChevronRight, null)
-                    }
-                }
-            }
-            if (vm.log.isNotEmpty()) SoftCard(padding = 10.dp) { vm.log.take(8).forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
-            Text("Читаются только открытые страницы и публичные списки. Прокси проверяются реальным запросом через них (ip-api.com, httpbin.org), ключи Xray — реальным HTTPS-запросом через встроенное ядро после TCP-предпроверки. Чужие серверы видят ваш трафик: не используйте их для входов и платежей. Hysteria2, TUIC, WireGuard, OpenVPN и AnyTLS проверяются через sing-box. Перед проверкой отключите другие VPN.",
-                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-        }
-        if (!vm.running) Surface(tonalElevation = 3.dp) {
-            Button(onClick = { go() }, enabled = picked.isNotEmpty(), modifier = Modifier.fillMaxWidth().padding(12.dp).height(50.dp)) {
-                Icon(Icons.Rounded.TravelExplore, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Найти и проверить (${picked.size})")
-            }
+            Text("Прокси проверяются реальным запросом через них, ключи — через ядра Xray и sing-box. Чужие серверы видят ваш трафик: не используйте их для входов и платежей.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
         }
     }
 }
 
 // ------------------------------------------------------------------ Ключи
+
+private class KeysView(val all: List<KeyItem> = emptyList(), val alive: List<KeyItem> = emptyList(), val countries: List<Pair<String, Int>> = emptyList(),
+                       val types: List<Pair<String, Int>> = emptyList(), val shown: List<KeyItem> = emptyList())
 
 @Composable
 private fun KeysTab(vm: KeyHubViewModel, onConnect: (KeyItem) -> Unit) {
@@ -848,15 +738,21 @@ private fun KeysTab(vm: KeyHubViewModel, onConnect: (KeyItem) -> Unit) {
     var export by remember { mutableStateOf(false) }
     var bestDialog by remember { mutableStateOf(false) }
 
-    val all = remember(vm.version, vm.items) { vm.items }
-    val alive = all.filter { it.alive }
-    val countries = remember(vm.version) { alive.groupBy { it.country }.map { it.key to it.value.size }.sortedByDescending { it.second } }
-    val types = remember(vm.version) { all.map { it.type }.distinct().sortedBy { TYPE_LABEL.keys.indexOf(it) } }
-    val shown = remember(vm.version, country, protocol, onlyAlive, maxMs, sort, elite, httpsOnly, v6Only) {
-        all.filter { (!onlyAlive || it.alive) && (country == null || it.country == country) && (protocol == null || it.type == protocol) && (maxMs == 0 || (it.alive && it.verifiedPing in 0..maxMs.toLong())) &&
-            (!elite || it.anon == 3) && (!httpsOnly || it.https == 1) && (!v6Only || it.v6) }
-            .let { l -> when (sort) { 0 -> l.sortedWith(compareBy<KeyItem> { if (it.verifiedPing < 0) Long.MAX_VALUE else it.verifiedPing }); 1 -> l.sortedWith(compareBy<KeyItem>({ it.country.ifEmpty { "ZZ" } }, { if (it.verifiedPing < 0) Long.MAX_VALUE else it.verifiedPing })); else -> l.sortedByDescending { it.foundAt } } }
+    // Фильтрация и сортировка тысяч ключей идут в фоне, чтобы список не подвешивал экран.
+    val view by produceState(KeysView(), vm.version, vm.items, country, protocol, onlyAlive, maxMs, sort, elite, httpsOnly, v6Only) {
+        val src = vm.items
+        value = withContext(Dispatchers.Default) {
+            val all = src
+            val alive = all.filter { it.alive }
+            val countries = alive.groupBy { it.country }.map { it.key to it.value.size }.sortedByDescending { it.second }
+            val types = all.groupBy { it.type }.map { it.key to it.value.size }.sortedBy { TYPE_LABEL.keys.indexOf(it.first) }
+            val shown = all.filter { (!onlyAlive || it.alive) && (country == null || it.country == country) && (protocol == null || it.type == protocol) && (maxMs == 0 || (it.alive && it.verifiedPing in 0..maxMs.toLong())) &&
+                (!elite || it.anon == 3) && (!httpsOnly || it.https == 1) && (!v6Only || it.v6) }
+                .let { l -> when (sort) { 0 -> l.sortedWith(compareBy<KeyItem> { if (it.verifiedPing < 0) Long.MAX_VALUE else it.verifiedPing }); 1 -> l.sortedWith(compareBy<KeyItem>({ it.country.ifEmpty { "ZZ" } }, { if (it.verifiedPing < 0) Long.MAX_VALUE else it.verifiedPing })); else -> l.sortedByDescending { it.foundAt } } }
+            KeysView(all, alive, countries, types, shown)
+        }
     }
+    val all = view.all; val alive = view.alive; val countries = view.countries; val types = view.types; val shown = view.shown
     val chosen = all.filter { it.id in selected }
 
     Column(Modifier.fillMaxSize()) {
@@ -874,7 +770,7 @@ private fun KeysTab(vm: KeyHubViewModel, onConnect: (KeyItem) -> Unit) {
             listOf("по отклику", "по странам", "новые").forEachIndexed { i, l -> MiniChip(l, sort == i) { sort = i } }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            types.forEach { p -> MiniChip(TYPE_LABEL[p] ?: p, protocol == p) { protocol = if (protocol == p) null else p } }
+            types.forEach { (p, n) -> MiniChip((TYPE_LABEL[p] ?: p) + " " + n, protocol == p) { protocol = if (protocol == p) null else p } }
             if (all.any { it.proxy }) { MiniChip("Элитные", elite) { elite = !elite }; MiniChip("HTTPS ✓", httpsOnly) { httpsOnly = !httpsOnly } }
             if (all.any { it.v6 }) MiniChip("IPv6", v6Only) { v6Only = !v6Only }
         }
@@ -1151,11 +1047,13 @@ private fun SettingsTab(vm: KeyHubViewModel) {
     var pages by remember { mutableIntStateOf(KeySettings.pagesPerSite(c)) }
     var depth by remember { mutableIntStateOf(KeySettings.depth(c)) }
     var sites by remember { mutableIntStateOf(KeySettings.maxSites(c)) }
-    var threads by remember { mutableIntStateOf(KeySettings.threads(c)) }
+    var tcp by remember { mutableIntStateOf(KeySettings.tcpThreads(c)) }
+    var xt by remember { mutableIntStateOf(KeySettings.xrayThreads(c)) }
+    var st by remember { mutableIntStateOf(KeySettings.singThreads(c)) }
+    var pt by remember { mutableIntStateOf(KeySettings.proxyThreads(c)) }
+    var collect by remember { mutableIntStateOf(KeySettings.maxCollect(c)) }
     var timeout by remember { mutableIntStateOf(KeySettings.timeoutMs(c)) }
     var plimit by remember { mutableIntStateOf(KeySettings.proxyLimit(c)) }
-    var klimit by remember { mutableIntStateOf(KeySettings.keysLimit(c)) }
-    var deep by remember { mutableIntStateOf(KeySettings.deepLimit(c)) }
     var psites by remember { mutableIntStateOf(KeySettings.parallelSites(c)) }
     var tls by remember { mutableStateOf(KeySettings.tlsCheck(c)) }
     var search by remember { mutableStateOf(KeySettings.useSearch(c)) }
@@ -1167,29 +1065,32 @@ private fun SettingsTab(vm: KeyHubViewModel) {
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
         SectionTitle("Нагрузка")
-        // (потоки проверки, сайтов одновременно, ключей и прокси за запуск, таймаут)
-        val presets = listOf("Щадящая" to listOf(12, 2, 600, 200, 4500), "Обычная" to listOf(24, 3, 1500, 400, 3500), "Максимум" to listOf(40, 4, 3000, 1000, 3000))
+        // (TCP, Xray, sing-box, прокси, сайтов одновременно, прокси за запуск, адресов за запуск)
+        val presets = listOf("Щадящая" to listOf(24, 6, 1, 16, 2, 800, 10000), "Обычная" to listOf(64, 12, 3, 32, 4, 3000, 40000), "Максимум" to listOf(120, 16, 5, 56, 6, 8000, 60000))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             presets.forEach { (name, v) ->
-                MiniChip(name, threads == v[0] && psites == v[1] && klimit == v[2] && plimit == v[3] && timeout == v[4]) {
-                    threads = v[0]; psites = v[1]; klimit = v[2]; plimit = v[3]; timeout = v[4]
-                    KeySettings.put(c, "threads", v[0]); KeySettings.put(c, "psites", v[1]); KeySettings.put(c, "klimit", v[2]); KeySettings.put(c, "plimit", v[3]); KeySettings.put(c, "timeout", v[4])
+                MiniChip(name, tcp == v[0] && xt == v[1] && st == v[2] && pt == v[3] && psites == v[4] && plimit == v[5] && collect == v[6]) {
+                    tcp = v[0]; xt = v[1]; st = v[2]; pt = v[3]; psites = v[4]; plimit = v[5]; collect = v[6]
+                    KeySettings.put(c, "tcpThreads", v[0]); KeySettings.put(c, "xthreads", v[1]); KeySettings.put(c, "sthreads", v[2]); KeySettings.put(c, "pthreads", v[3])
+                    KeySettings.put(c, "psites", v[4]); KeySettings.put(c, "plimit", v[5]); KeySettings.put(c, "collect", v[6])
                 }
             }
         }
-        Text("Если приложение тормозит или зависает — выберите «Щадящая». «Максимум» подходит для мощных телефонов с 6 ГБ памяти и больше. Сбор идёт в фоне и сам останавливается при нехватке памяти.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
-        SectionTitle("Обход сайтов")
-        slider("Сайтов одновременно", psites, 1..4, "psites", { psites = it })
+        Text("Если приложение тормозит или зависает — выберите «Щадящая». «Максимум» — для телефонов с 6 ГБ памяти и больше. Сбор и проверка идут одновременно и сами останавливаются при нехватке памяти.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+        SectionTitle("Сбор")
+        slider("Сайтов одновременно", psites, 1..6, "psites", { psites = it })
+        slider("Максимум адресов за запуск", collect, 1000..60000, "collect", { collect = it }, "Предел новых уникальных адресов за один запуск")
         slider("Страниц на сайт", pages, 1..50, "pages", { pages = it }, "Не больше 50 страниц на каждый сайт")
         slider("Глубина ссылок", depth, 0..3, "depth", { depth = it }, "0 — только указанная страница, 1 — плюс страницы, на которые она ссылается")
-        slider("Сайтов за запуск", sites, 1..40, "sites", { sites = it })
+        slider("Сайтов из поисковиков", sites, 1..40, "sites", { sites = it })
         Row(verticalAlignment = Alignment.CenterVertically) { Text("Искать сайты через поисковики", Modifier.weight(1f)); Switch(search, { search = it; KeySettings.put(c, "search", it) }) }
         SectionTitle("Проверка")
-        slider("Параллельных проверок", threads, 4..48, "threads", { threads = it })
-        slider("Размер партии проверки", klimit, 200..4000, "klimit", { klimit = it }, "Проверяются все уникальные ключи, партия задаёт размер чекпоинта и нагрузку на память")
-        slider("Таймаут HTTP/HTTPS, мс", timeout, 800..8000, "timeout", { timeout = it }, "Быстрый TCP-фильтр: максимум 1000 мс. После него — реальная маршрутизация через ядро")
-
-        slider("VPN-ключей в подпартии", deep, 10..1000, "deepLimit", { deep = it }, "Лимит влияет только на разбиение проверки. Все быстрые VPN-профили будут проверены через Xray или sing-box")
+        slider("TCP-потоки", tcp, 16..128, "tcpThreads", { tcp = it }, "Быстрая предпроверка порта (один раз на адрес)")
+        slider("Xray-проверки", xt, 2..16, "xthreads", { xt = it }, "Реальный HTTPS через ядро Xray")
+        slider("sing-box процессы", st, 1..6, "sthreads", { st = it }, "Hysteria2, TUIC, WireGuard, OpenVPN, AnyTLS — отдельные процессы, едят память")
+        slider("Потоки прокси", pt, 8..64, "pthreads", { pt = it }, "SOCKS и HTTP: запрос через сам прокси")
+        slider("Прокси за запуск", plimit, 100..20000, "plimit", { plimit = it }, "Сверх лимита прокси уходят в резерв")
+        slider("Таймаут HTTP/HTTPS, мс", timeout, 800..8000, "timeout", { timeout = it }, "TCP-фильтр ключей не больше 1000 мс; затем реальная проверка через ядро")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("TLS-рукопожатие"); Text("Для ключей с TLS и Reality: отсекает серверы, которые только принимают порт", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Switch(tls, { tls = it; KeySettings.put(c, "tls", it) })

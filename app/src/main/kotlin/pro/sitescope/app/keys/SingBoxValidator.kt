@@ -23,17 +23,14 @@ import javax.net.ssl.SSLSocketFactory
  * over the candidate protocol and through sing-box's loopback SOCKS inbound.
  */
 object SingBoxValidator {
-    private val busy = AtomicBoolean(false)
-    @Volatile private var running: Process? = null
+    private val running = java.util.concurrent.ConcurrentHashMap.newKeySet<Process>()
     private val targets = listOf("www.gstatic.com", "cp.cloudflare.com")
 
     fun cancel() {
-        running?.destroyForcibly()
+        running.forEach { try { it.destroyForcibly() } catch (_: Exception) {} }
     }
 
     fun check(context: Context, link: String, timeoutMs: Int): XrayKeyValidator.Result {
-        if (!busy.compareAndSet(false, true))
-            return result(XrayKeyValidator.INCONCLUSIVE, "Другой тест sing-box ещё работает")
         var process: Process? = null
         var configFile: File? = null
         var logFile: File? = null
@@ -56,7 +53,7 @@ object SingBoxValidator {
             logFile = File.createTempFile("singbox-error-", ".log", context.cacheDir)
             process = ProcessBuilder(executable.absolutePath, "run", "-c", configFile.absolutePath)
                 .redirectErrorStream(true).redirectOutput(logFile).start()
-            running = process
+            process?.let { running.add(it) }
             val readyDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
             var ready = false
             while (System.nanoTime() < readyDeadline) {
@@ -100,10 +97,9 @@ object SingBoxValidator {
         } finally {
             try { process?.destroyForcibly() } catch (_: Exception) {}
             try { process?.waitFor(1, TimeUnit.SECONDS) } catch (_: Exception) {}
-            running = null
+            process?.let { running.remove(it) }
             configFile?.delete()
             logFile?.delete()
-            busy.set(false)
         }
     }
 
