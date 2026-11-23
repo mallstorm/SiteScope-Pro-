@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
@@ -118,7 +119,7 @@ class KeyPipeline(
 
     private suspend fun preflight(k: KeyItem) {
         try {
-            ensureActive()
+            currentCoroutineContext().ensureActive()
             val timeout = cfg.tcpTimeoutMs
             if (k.udp) {
                 KeyChecker.quickCheck(k, timeout)
@@ -147,7 +148,7 @@ class KeyPipeline(
 
     private suspend fun proxyCheck(k: KeyItem) {
         try {
-            ensureActive()
+            currentCoroutineContext().ensureActive()
             val done = withTimeoutOrNull(cfg.proxyTimeoutMs * 6L + 6000L) { KeyChecker.check(k, cfg.proxyTimeoutMs, cfg.tls) }
             if (done == null) { k.ms = -2; k.checkedAt = System.currentTimeMillis() }
             settle(k)
@@ -157,7 +158,7 @@ class KeyPipeline(
 
     private suspend fun xrayCheck(k: KeyItem) {
         try {
-            ensureActive()
+            currentCoroutineContext().ensureActive()
             val r = nativeDelay(k)
             k.validation = r.status; k.validationMs = r.delayMs
             k.validationAt = System.currentTimeMillis(); k.validationNote = r.reason
@@ -171,7 +172,7 @@ class KeyPipeline(
 
     private suspend fun singCheck(k: KeyItem) {
         try {
-            ensureActive()
+            currentCoroutineContext().ensureActive()
             val r = SingBoxValidator.check(context, k.link, 4500)
             k.validation = r.status; k.validationMs = r.delayMs
             k.validationAt = System.currentTimeMillis(); k.validationNote = r.reason

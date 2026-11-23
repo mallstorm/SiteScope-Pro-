@@ -91,7 +91,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                 val loaded = KeyStore.load(context).filter { it.fp !in excluded }
                 for (key in KeyCandidateStore.load(context)) if (key.fp !in excluded) pendingQueue.putIfAbsent(key.fp, key)
                 // Старые сборки сохраняли непроверенные профили в рабочем списке: переносим их в очередь.
-                for (key in loaded) if (!key.alive && key.validation == XrayKeyValidator.UNTESTED && key.fp !in pendingQueue) {
+                for (key in loaded) if (!key.alive && key.validation == XrayKeyValidator.UNTESTED && !pendingQueue.containsKey(key.fp)) {
                     key.checkedAt = 0L
                     pendingQueue[key.fp] = key
                 }
@@ -115,6 +115,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
     private val lock = Any()
     private fun say(t: String) { synchronized(lock) { log = (listOf(t) + log).take(40) } }
     private fun touch() { synchronized(lock) { version++ } }
+    private val cChecked = AtomicInteger()
     private val cPages = AtomicInteger(); private val cSites = AtomicInteger(); private val cSitesTotal = AtomicInteger(); private val cKeys = AtomicInteger()
     @Volatile private var lastPub = 0L
     /** Счётчики сбора на экране обновляются не чаще раза в 0,4 с. */
