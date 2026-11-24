@@ -1,93 +1,44 @@
 # SiteScope Pro
 
-**SiteScope Pro** — Android-приложение для SEO-аудита, IP-инжиниринга, IPTV-инжиниринга, Hosts Manager и Xray/Hosts VPN.
+**SiteScope Pro** — Android-приложение для проверки сайтов и исследования сети: SEO-аудит, IP-инжиниринг, IPTV, Hosts Manager, VPN на Xray, встроенный браузер, SSH/VNC/SNMP/WebDAV-клиенты, Tor, I2P и обход DPI.
 
-## Текущий канонический baseline
+- Пакет: `pro.sitescope.app`
+- Android 9+ (API 28), целевая API 36, ABI для Xray-движка: `arm64-v8a`
 
-**`0.39.0-alpha37`** (`versionCode 390037`)
+## Где код
 
-- package: `pro.sitescope.app`
-- minSdk: `28`
-- compileSdk / targetSdk: `36`
-- Android ABI для Xray runtime: `arm64-v8a`
-- статус исходной версии: **validated / OVERALL=PASS**
+`main` содержит только служебные workflow импорта исходников. Рабочий код проекта находится в ветках:
 
-17 августа 2026 года выполнена повторная сверка сохранённых исходников SiteScope Pro с GitHub. Самый новый доступный source snapshot — `SiteScopePro-0.39.0-alpha37-Sources.zip`; более новой версии SiteScope Pro в доступной истории после `alpha37` не обнаружено.
+| Ветка | Что это |
+|---|---|
+| **`redesign-v2`** | текущая линия — `2.0.0-alpha1` (самая свежая) |
+| `redesign` | предыдущая линия — `1.0.0-beta36` |
+| `baseline/alpha37` | исторический эталон `0.39.0-alpha37` (исходный пакет с backend и скриптами) |
+| `feature/*` | экспериментальные ветки: sing-box (multi-engine / full VPN), TLS- и HTTPS/QUIC-инспектор, хаб проверенных ключей |
+| `ci-logs*` | служебные ветки с журналами CI |
 
-## Что закреплено в alpha37
+## Возможности (линия `redesign`)
 
-### Hosts + Xray VPN
+- **SEO и сайты** — аудит и техническая диагностика, определение CMS и технологий, DNS, RDAP, инфраструктура домена, локальная база DB-IP с атомарным обновлением.
+- **IP-инжиниринг** — IP intelligence и поиск провайдера, CIDR/хосты/порты, поиск устройств в выбранной локальной сети, UPnP.
+- **IPTV** — каталог каналов, поиск ТВ-потоков по маске ссылки (`%d`, `(.*)`, `channel_name`), кадр из потока и название канала по эмблеме (Tesseract OCR), проверка `udp://` мультикаста, параллельный поиск шлюзов udpxy (2–250 потоков), встроенный плеер.
+- **Hosts + VPN** — Hosts Manager, профили Xray (TUN + Xray-core + HEV), восстановление состояния VPN, диагностика.
+- **Приватность и обход блокировок** — встроенный Tor (отдельный процесс, мосты, прямой выход / через обход DPI / через SOCKS5), встроенный I2P (i2pd), обход DPI на движке byedpi (подбор стратегии, режим прокси без VPN, VPN для всех / выбранных / всех кроме выбранных приложений).
+- **Встроенный браузер** — вход по логину и паролю роутера (HTTP Basic/Digest), диалоги JavaScript, загрузка и выгрузка файлов, открытие `.onion` через Tor и `.i2p` через I2P-прокси.
+- **Клиенты** — SSH, VNC, SNMP, WebDAV (передача буферами, без загрузки файла целиком в память).
+- **Скорость** — экран в стиле Ookla Speedtest.
+- **Резервная копия** — формат версии 7: SQLite, настройки, ТВ-источники, каталог и избранное; перед импортом проверка структуры, при ошибке откат; секреты в экспорт не попадают.
 
-- TUN + Xray-core + HEV + подтверждение собственной Android VPN-сети переводят lifecycle в `ACTIVE` без ожидания внешнего probe.
-- Health probe выполняется отдельно и не уничтожает уже работающий VPN при диагностическом timeout/ошибке.
-- Удалено process-wide network binding, способное ломать маршрутизацию процесса.
-- Проверка собственной VPN-сети использует owner UID / LinkProperties вместо ненадёжного внешнего connectivity probe.
-- Добавлены heartbeat и stale-service recovery; зависшее состояние может быть восстановлено без перезапуска приложения.
-- После восстановления интерфейс возвращается в Hosts Manager.
+## Сборка
 
-### SEO
+Нужны JDK 17 и Android SDK 36.
 
-- SEO-аудит и техническая диагностика сайта.
-- Определение CMS/технологий.
-- DNS, RDAP и доменная инфраструктура.
-- Локальная SQLite-база и атомарное обновление DB-IP данных.
-
-### IP engineering
-
-- IP intelligence и provider lookup.
-- CIDR/host/port workflows.
-- LAN/network engineering функции.
-
-### IPTV engineering
-
-- IPTV provider/client workflows.
-- Multicast/UDP tooling.
-- Инженерные проверки IPTV endpoints.
-
-## Каноническая структура исходного пакета
-
-```text
-scripts/
-tests/
-backend/
-android/
-android-direct/
-docs/
-contracts/
-third_party/
+```bash
+bash gradlew --no-daemon testReleaseUnitTest lintRelease assembleRelease
 ```
 
-Основная Android-реализация находится в `android-direct/src` и `android-direct/res`.
+GitHub Actions выполняет те же проверки, сохраняет отчёты и публикует APK с SHA256. Ошибки Lint блокируют публикацию. Если заданы секреты `SITESCOPE_SIGNING_P12` и `SITESCOPE_KEYSTORE_PASSWORD`, подпись идёт основным ключом; иначе используется публичный тестовый ключ из `signing/`, а пакет получает суффикс `.next` и ставится отдельно.
 
-## Runtime/build inputs
+## Документация
 
-Исходный пакет также содержит крупные runtime-артефакты, которые не являются редактируемым исходным кодом:
-
-- `android-direct/assets/geoip.dat`
-- `android-direct/assets/geosite.dat`
-- `android-direct/lib/arm64-v8a/libgojni.so`
-- `android-direct/lib/arm64-v8a/libhev-socks5-tunnel.so`
-- `android-direct/libs/jsch-0.2.16.jar`
-
-Эти файлы нужны для полностью автономной APK-сборки соответствующей версии, но должны рассматриваться как build/runtime inputs, а не как основной исходный код проекта.
-
-## Проверка alpha37
-
-Исторический validation report для `0.39.0-alpha37` подтверждает:
-
-- `OVERALL=PASS`;
-- Hosts Manager contract — PASS;
-- Hosts + Xray combined VPN contract — PASS;
-- Android/Java compile contracts — PASS;
-- IP intelligence/provider core — PASS;
-- IPTV — PASS;
-- multicast — PASS;
-- D8 — PASS;
-- zipalign — PASS;
-- APK Signature Scheme v3 — PASS.
-
-## Правило дальнейшей разработки
-
-Каноническая версия для продолжения разработки — **`0.39.0-alpha37`**. Следующие изменения не должны откатывать уже работающие Hosts/Xray lifecycle, SEO/IP/IPTV модули и утверждённую структуру интерфейса.
-
-> Примечание по синхронизации: повреждённые промежуточные транспортные chunks, не прошедшие контроль целостности при переносе через GitHub connector, намеренно удалены. Они не являются частью исходников SiteScope Pro.
+В ветке разработки: `docs/` (требования, архитектура, сетевые инструменты, IPTV, мультикаст, IP-центр, дорожная карта `docs/ROADMAP_RU.md`); материалы прежней версии, backend и автономные тесты — в `legacy/`.
