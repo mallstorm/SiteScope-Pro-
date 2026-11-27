@@ -62,6 +62,7 @@ fun DishScreen() {
     var address by rememberSaveable { mutableStateOf("") }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var visible by rememberSaveable { mutableStateOf(false) }
+    var customOnly by rememberSaveable { mutableStateOf(prefs.getBoolean("customOnly", false)) }
     var favoritesOnly by rememberSaveable { mutableStateOf(false) }
     var follow by rememberSaveable { mutableStateOf(false) }
     var favorites by remember { mutableStateOf(prefs.getStringSet("favorites", emptySet()).orEmpty().toSet()) }
@@ -78,8 +79,8 @@ fun DishScreen() {
     LaunchedEffect(Unit) {
         catalog=withContext(Dispatchers.IO) { runCatching { readCatalog(cache.openRead()).second }.getOrDefault(emptyList()) }
     }
-    LaunchedEffect(lat,lon,orbit,offset,smooth) {
-        prefs.edit().putString("lat",lat).putString("lon",lon).putString("orbit",orbit).putString("offset",offset).putBoolean("smooth",smooth).apply()
+    LaunchedEffect(lat,lon,orbit,offset,smooth,customOnly) {
+        prefs.edit().putString("lat",lat).putString("lon",lon).putString("orbit",orbit).putString("offset",offset).putBoolean("smooth",smooth).putBoolean("customOnly",customOnly).apply()
     }
     fun import(open: ()->InputStream) {
         if(busy) return
@@ -92,6 +93,7 @@ fun DishScreen() {
                     try { out.write(bytes); cache.finishWrite(out) } catch(e:Exception) { cache.failWrite(out); throw e }
                     entries
                 }
+                customOnly = true
                 status="Загружено записей: ${catalog.size}"
             } catch(e:Exception) { status="Ошибка каталога: ${e.localizedMessage}" } finally { busy=false }
         }
@@ -109,8 +111,8 @@ fun DishScreen() {
     }
     val location=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { if(it.values.any { ok -> ok }) locate() else status="Можно указать точку вручную" }
     val cameraPerm=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { camera=it; if(!it) status="Для визира нужен доступ к камере" }
-    val shown=remember(query,catalog,visible,favoritesOnly,favorites,site,access,category,provider) {
-        (slots+catalog).distinct().filter {
+    val shown=remember(query,catalog,visible,favoritesOnly,favorites,site,access,category,provider,customOnly) {
+        (if (customOnly) catalog else slots+catalog).distinct().filter {
             (access == "Все" || it.access == access) &&
             (category == "Все" || it.kind == category) &&
             (provider.isBlank() || it.provider.contains(provider.trim(), true)) &&
@@ -172,6 +174,7 @@ fun DishScreen() {
                 item {
                     OutlinedTextField(query,{query=it},Modifier.fillMaxWidth(),label={Text("Спутник, канал, пакет или частота")},singleLine=true)
                     Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        FilterChip(customOnly,{customOnly=!customOnly},{Text("Мой каталог")},enabled=catalog.isNotEmpty())
                         FilterChip(visible,{visible=!visible},{Text("Над горизонтом")},enabled=site!=null)
                         FilterChip(favoritesOnly,{favoritesOnly=!favoritesOnly},{Text("Избранное")})
                     }

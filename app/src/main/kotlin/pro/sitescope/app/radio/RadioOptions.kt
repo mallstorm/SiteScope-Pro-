@@ -61,6 +61,7 @@ fun RadioOptions(p:SharedPreferences){
                 if (android.os.Build.VERSION.SDK_INT >= 33) arrayOf(android.Manifest.permission.POST_NOTIFICATIONS) else emptyArray())
         }) { Text(if (running) "Остановить радиомонитор" else "Начать фоновый мониторинг") }
         Text("Запись и оповещения",style=MaterialTheme.typography.titleMedium)
+        SettingToggle(p,"keepAwake","Не выключать экран радиомонитора")
         SettingInt(p,"interval","Пауза между замерами, с",15,5..300)
         SettingToggle(p,"weak","Слабый сигнал обслуживающей соты")
         SettingInt(p,"threshold","Порог, dBm",-110,-150..-40)

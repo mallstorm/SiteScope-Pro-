@@ -101,10 +101,34 @@ suspend fun readRadio(ctx:Context): RadioFrame = withContext(Dispatchers.IO) {
         if(connected && w!=null && w.rssi in -126..-1) WifiReading(w.ssid.trim('"').takeUnless { it=="<unknown ssid>" }.orEmpty(),w.rssi,w.frequency,w.linkSpeed) else null
     }.getOrNull()
     val valid=cm?.getNetworkCapabilities(cm.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)==true
+    val linkDetails = runCatching {
+        val network = cm?.allNetworks?.firstOrNull {
+            val capabilities = cm.getNetworkCapabilities(it)
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
+                !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        }
+        val properties = network?.let { cm?.getLinkProperties(it) }
+        buildList {
+            properties?.linkAddresses?.takeIf { it.isNotEmpty() }?.let { addresses ->
+                add("IP " + addresses.joinToString { "${it.address.hostAddress}/${it.prefixLength}" })
+            }
+            properties?.dnsServers?.takeIf { it.isNotEmpty() }?.let { servers ->
+                add("DNS " + servers.joinToString { it.hostAddress.orEmpty() })
+            }
+            properties?.routes?.filter { it.isDefaultRoute }?.mapNotNull { route ->
+                route.gateway?.takeUnless { it.isAnyLocalAddress }?.hostAddress
+            }
+                ?.distinct()?.takeIf { it.isNotEmpty() }?.let { add("Шлюз " + it.joinToString()) }
+            val dhcp = if (network != null) ctx.applicationContext.getSystemService(WifiManager::class.java)?.dhcpInfo else null
+            dhcp?.serverAddress?.takeIf { it != 0 }?.let { address ->
+                add("DHCP " + (0..3).joinToString(".") { ((address ushr (it * 8)) and 255).toString() })
+            }
+        }.joinToString(" · ")
+    }.getOrDefault("")
     val note=listOfNotNull(if(!subscribed) "Для отдельных SIM разрешите доступ к телефону." else null,
         if(!location) "Для идентификаторов сот нужна точная геопозиция." else null,
         if(subscribed && subscriptions.isEmpty()) "Активные SIM недоступны." else null,
-        if(missing && location) "Android вернул неполные данные. Общий кэш показан без привязки к SIM." else null).joinToString(" ")
+        if(missing && location) "Android вернул неполные данные. Общий кэш показан без привязки к SIM." else null, linkDetails.takeIf { it.isNotEmpty() }).joinToString("\n")
     RadioFrame(System.currentTimeMillis(),sims,rows,wifi,valid,note)
 }
 

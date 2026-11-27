@@ -39,7 +39,14 @@ internal fun Chips(options:List<String>,selected:String,select:(String)->Unit){
 fun RadioScreen(startTab:Int=0){
     val ctx=LocalContext.current
     val owner=LocalLifecycleOwner.current
+    val view = androidx.compose.ui.platform.LocalView.current
     val prefs=remember{ctx.getSharedPreferences("radio-options",0)}
+    val keepAwake = prefs.getBoolean("keepAwake", false)
+    DisposableEffect(view, keepAwake) {
+        val previous = view.keepScreenOn
+        if (keepAwake) view.keepScreenOn = true
+        onDispose { if (keepAwake) view.keepScreenOn = previous }
+    }
     val tabs=listOf("Сигнал","Сессии и карта","База станций","Тесты и события")
     var tab by rememberSaveable {mutableIntStateOf(startTab.coerceIn(tabs.indices))}
     var refresh by remember{mutableIntStateOf(0)}
