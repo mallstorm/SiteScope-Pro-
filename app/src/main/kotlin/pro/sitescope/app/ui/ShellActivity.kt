@@ -9,6 +9,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -174,7 +177,11 @@ fun Shell(state: AppState) {
                 }
             }
         }
-        if (!imeUp) BottomBar4(state.tab, count) { state.selectTab(it) }
+        if (!imeUp) {
+            if (state.route == "radio" || state.route == "satellite") {
+                Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+            } else BottomBar4(state.tab, count) { state.selectTab(it) }
+        }
     }
     }
 }

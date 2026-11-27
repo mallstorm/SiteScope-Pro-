@@ -31,11 +31,11 @@ data class Attitude(val heading: Double?, val lensHeading: Double?, val lensElev
 
 @Suppress("DEPRECATION")
 @Composable
-fun attitude(offset: Double, smooth: Boolean): Attitude? {
+fun attitude(offset: Double, smooth: Boolean, filter: Float = 0.3f): Attitude? {
     val ctx = LocalContext.current
     val owner = LocalLifecycleOwner.current
     var reading by remember { mutableStateOf<Attitude?>(null) }
-    DisposableEffect(owner, offset, smooth) {
+    DisposableEffect(owner, offset, smooth, filter) {
         val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager
         val vector = sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         val acc = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
@@ -66,7 +66,7 @@ fun attitude(offset: Double, smooth: Boolean): Attitude? {
                 fun heading(e: Float,n: Float,old: Double?): Double? {
                     if (hypot(e,n) < 0.02f) return null
                     val value = Math.toDegrees(atan2(e,n).toDouble())+offset
-                    val filtered = if(smooth && old != null) old + 0.3*wrapped(value-old) else value
+                    val filtered = if(smooth && old != null) old + filter.coerceIn(0.1f,1f)*wrapped(value-old) else value
                     return (filtered % 360 + 360) % 360
                 }
                 val elevation = Math.toDegrees(asin((-m[8]).coerceIn(-1f,1f).toDouble()))
@@ -89,7 +89,7 @@ fun attitude(offset: Double, smooth: Boolean): Attitude? {
 }
 
 @Composable
-fun Sight(target: DishAngles, reading: Attitude?, camera: Boolean) {
+fun Sight(target: DishAngles, reading: Attitude?, camera: Boolean, modifier: Modifier = Modifier.fillMaxWidth().height(if(camera) 290.dp else 150.dp)) {
     val ctx = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val bearing = if(camera) reading?.lensHeading else reading?.heading
@@ -105,7 +105,7 @@ fun Sight(target: DishAngles, reading: Attitude?, camera: Boolean) {
         }.getOrNull()
     }
     var cameraError by remember { mutableStateOf("") }
-    Box(Modifier.fillMaxWidth().height(if(camera) 290.dp else 150.dp).background(Color(0xff152630)),contentAlignment=Alignment.Center) {
+    Box(modifier.background(Color(0xff152630)),contentAlignment=Alignment.Center) {
         if(camera) {
             val view = remember(ctx) { PreviewView(ctx).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE } }
             AndroidView(factory = { view },modifier=Modifier.fillMaxSize())
@@ -149,9 +149,9 @@ fun Sight(target: DishAngles, reading: Attitude?, camera: Boolean) {
                         }
                     }
                 }
-                drawCircle(Color.White,12.dp.toPx(),c,style=Stroke(2.dp.toPx()))
-                drawLine(Color.White,c-Offset(22.dp.toPx(),0f),c+Offset(22.dp.toPx(),0f),2f)
-                drawLine(Color.White,c-Offset(0f,22.dp.toPx()),c+Offset(0f,22.dp.toPx()),2f)
+                drawCircle(Color(0xffff6060),12.dp.toPx(),c,style=Stroke(2.dp.toPx()))
+                drawLine(Color(0xffff6060),Offset(0f,c.y),Offset(size.width,c.y),1.dp.toPx())
+                drawLine(Color(0xffff6060),Offset(c.x,0f),Offset(c.x,size.height),1.dp.toPx())
             } else {
                 val r=size.minDimension*0.36f
                 drawCircle(Color.Gray,r,c,style=Stroke(2f))
@@ -161,6 +161,10 @@ fun Sight(target: DishAngles, reading: Attitude?, camera: Boolean) {
                     drawLine(Color(0xff58d8bd),c,c+Offset((r*sin(a)).toFloat(),(-r*cos(a)).toFloat()),4.dp.toPx())
                 }
             }
+        }
+        if(camera) Column(Modifier.align(Alignment.TopStart).padding(10.dp).background(Color.Black.copy(alpha=.65f)).padding(8.dp)) {
+            Text("Цель · азимут ${degrees(target.azimuth)} · подъём ${degrees(target.elevation)}",color=Color.White,style=MaterialTheme.typography.labelMedium)
+            Text("Камера · азимут ${degrees(reading?.lensHeading)} · подъём ${degrees(reading?.lensElevation)}",color=Color.White,style=MaterialTheme.typography.labelSmall)
         }
         if(cameraError.isNotBlank() && camera) Text(cameraError,color=Color.White)
     }

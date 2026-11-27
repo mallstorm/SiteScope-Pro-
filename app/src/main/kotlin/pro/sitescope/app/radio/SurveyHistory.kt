@@ -6,6 +6,9 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.Alignment
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -45,6 +48,11 @@ fun SurveyHistory(active:Long?,tick:Long?){
     var delete by remember { mutableStateOf<Long?>(null) }
     var filter by rememberSaveable{mutableStateOf("Все")}
     var map by rememberSaveable{mutableStateOf(false)}
+    var menu by remember {mutableStateOf(false)}
+    var servingOnly by rememberSaveable {mutableStateOf(true)}
+    var eventsView by rememberSaveable {mutableStateOf(false)}
+    var events by remember {mutableStateOf<List<Pair<Long,String>>>(emptyList())}
+    LaunchedEffect(active,tick,revision){events=withContext(Dispatchers.IO){store.events()}}
     LaunchedEffect(active,tick,revision){sessions=withContext(Dispatchers.IO){store.surveys()};if(chosen==null)chosen=sessions.firstOrNull()?.id}
     LaunchedEffect(chosen,tick){samples=withContext(Dispatchers.IO){chosen?.let(store::latest).orEmpty()}}
     fun output(uri:Uri?,kml:Boolean){if(uri!=null){val id=exportId;scope.launch {runCatching{
@@ -52,25 +60,60 @@ fun SurveyHistory(active:Long?,tick:Long?){
     }.onSuccess{toast(ctx,"Файл сохранён в отчётах")}.onFailure{toast(ctx,"Экспорт: ${it.localizedMessage}")}}}}
     val csv=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")){output(it,false)}
     val kml=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.google-earth.kml+xml")){output(it,true)}
-    val visible=samples.filter { filter=="Все" || it.sim==filter }
+    val visible=samples.filter { (filter=="Все" || it.sim==filter) && (!servingOnly || it.serving!=false) }
     val pins=remember(visible){visible.asReversed().filter {it.lat!=null && it.lon!=null}.distinctBy { it.time }.map {
         Pin(it.lat!!,it.lon!!,"${it.sim} · ${it.rat} · ${it.dbm ?: "—"} dBm · ${clock(it.time)}", dbm = it.dbm.takeIf { _ -> it.measured > 0 && it.time-it.measured in 0..60000 })
     }}
-    LazyColumn(contentPadding=PaddingValues(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
-        if(sessions.isEmpty())item{Text("Сессий пока нет. На вкладке «Сигнал» нажмите «Записать маршрут».")}
-        items(sessions){s->TextButton({chosen=s.id;filter="Все"}){Text("${if(chosen==s.id)"● " else ""}${clock(s.start)} · ${s.count} измерений${if(s.id==active)" · идёт запись" else ""}")}}
-        if(chosen!=null)item{
-            Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                FilterChip(map,{map=!map},{Text("Карта")})
-                TextButton({ delete = chosen }, enabled = chosen != active) { Text("Удалить сессию") }
-                TextButton({exportId=chosen!!;csv.launch("Radio-$exportId.csv")}){Text("CSV")}
-                TextButton({exportId=chosen!!;kml.launch("Radio-$exportId.kml")},enabled=pins.isNotEmpty()){Text("KML")}
+    LazyColumn(contentPadding=PaddingValues(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+        item {Chips(listOf("Измерения","События"),if(eventsView)"События" else "Измерения"){eventsView=it=="События"}}
+        if(eventsView) {
+            if(events.isEmpty())item{Text("Событий пока нет. Условия оповещений задаются в меню «Ещё».")}
+            items(events){(time,message)->
+                Surface(Modifier.fillMaxWidth(),shape=MaterialTheme.shapes.small) {Column(Modifier.padding(12.dp)) {
+                    Text(message,style=MaterialTheme.typography.bodyMedium)
+                    Text(clock(time),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }}
             }
-            Chips(listOf("Все")+samples.map{it.sim}.filter{it.isNotBlank()}.distinct(),filter){filter=it}
-            Text("Последние ${samples.size} записей. Экспорт включает всю сессию.",style=MaterialTheme.typography.bodySmall)
+        } else {
+            item {
+                Box {
+                    OutlinedButton({menu=true},enabled=sessions.isNotEmpty(),modifier=Modifier.fillMaxWidth()) {
+                        Text(sessions.firstOrNull{it.id==chosen}?.let{"${clock(it.start)} · ${it.count} замеров${if(it.id==active)" · запись" else ""}"} ?: "Выбрать сессию",Modifier.weight(1f))
+                        Icon(Icons.Rounded.ExpandMore,null)
+                    }
+                    DropdownMenu(menu,{menu=false}) {
+                        sessions.forEach{s->DropdownMenuItem(text={Text("${clock(s.start)} · ${s.count}${if(s.id==active)" · запись" else ""}")},onClick={chosen=s.id;filter="Все";menu=false})}
+                    }
+                }
+                if(sessions.isEmpty())Text("Сессий пока нет. Начните запись на вкладке «Сигнал» или «Карта».")
+                if(chosen!=null) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        FilterChip(map,{map=!map},{Text("Карта")})
+                        TextButton({exportId=chosen!!;csv.launch("Radio-$exportId.csv")}){Text("CSV")}
+                        TextButton({exportId=chosen!!;kml.launch("Radio-$exportId.kml")},enabled=pins.isNotEmpty()){Text("KML")}
+                        IconButton({delete=chosen},enabled=chosen!=active){Icon(Icons.Rounded.DeleteOutline,"Удалить сессию")}
+                    }
+                    Chips(listOf("Все")+samples.map{it.sim}.filter{it.isNotBlank()}.distinct(),filter){filter=it}
+                    FilterChip(servingOnly,{servingOnly=!servingOnly},{Text("Только обслуживающие")})
+                    Text("На экране последние ${samples.size} записей. Экспорт включает всю сессию.",style=MaterialTheme.typography.labelSmall)
+                }
+            }
+            if(map)item{if(pins.isEmpty())Text("Для этой выборки точек с координатами нет.") else FieldMap(pins.last(),pins.filterIndexed{i,_->i%((pins.size/40).coerceAtLeast(1))==0},pins)}
+            items(visible){s->
+                Surface(Modifier.fillMaxWidth(),shape=MaterialTheme.shapes.small) {
+                    Column(Modifier.padding(10.dp),verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                            Text("${s.sim} · ${s.rat}",Modifier.weight(1f),style=MaterialTheme.typography.labelLarge)
+                            Text("${s.dbm ?: "—"} dBm",style=MaterialTheme.typography.labelLarge,color=signalColor(s.dbm,s.rat=="Wi-Fi"))
+                        }
+                        Text("TAC / LAC ${s.area ?: "—"} · CID ${s.cid ?: "—"} · PCI ${s.pci ?: "—"}",style=MaterialTheme.typography.bodySmall)
+                        if(s.channel!=null)Text("Канал ${s.channel}",style=MaterialTheme.typography.labelSmall)
+                        Text(clock(s.time),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        if(s.lat!=null && s.lon!=null)Text("%.5f, %.5f".format(s.lat,s.lon),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
         }
-        if(map)item{if(pins.isEmpty())Text("Для этой выборки точек с координатами нет.") else FieldMap(pins.last(),pins.filterIndexed{i,_->i%((pins.size/40).coerceAtLeast(1))==0},pins)}
-        items(visible){s->Text("${clock(s.time)} · ${s.sim} ${s.rat} · ${s.dbm ?: "—"} dBm${s.cid?.let{" · CID $it"}.orEmpty()}",style=MaterialTheme.typography.bodySmall)}
     }
     delete?.let { id ->
         AlertDialog(onDismissRequest = { delete = null }, title = { Text("Удалить сессию?") },

@@ -60,25 +60,42 @@ fun RadioOptions(p:SharedPreferences){
             else permissions.launch(locationPermissions + android.Manifest.permission.READ_PHONE_STATE +
                 if (android.os.Build.VERSION.SDK_INT >= 33) arrayOf(android.Manifest.permission.POST_NOTIFICATIONS) else emptyArray())
         }) { Text(if (running) "Остановить радиомонитор" else "Начать фоновый мониторинг") }
-        Text("Запись и оповещения",style=MaterialTheme.typography.titleMedium)
+        HorizontalDivider(Modifier.padding(vertical=8.dp))
+        Text("Запись и экран",style=MaterialTheme.typography.titleMedium)
         SettingToggle(p,"keepAwake","Не выключать экран радиомонитора")
         SettingInt(p,"interval","Пауза между замерами, с",15,5..300)
+        HorizontalDivider(Modifier.padding(vertical=8.dp))
+        Text("Оповещения о сигнале",style=MaterialTheme.typography.titleMedium)
+        HorizontalDivider(Modifier.padding(vertical=8.dp))
+        Text("Оповещения о сигнале",style=MaterialTheme.typography.titleMedium)
         SettingToggle(p,"weak","Слабый сигнал обслуживающей соты")
         SettingInt(p,"threshold","Порог, dBm",-110,-150..-40)
         SettingToggle(p,"wifiWeak","Слабый сигнал Wi-Fi")
         SettingInt(p,"wifiThreshold","Порог Wi-Fi, dBm",-75,-126..-30)
+        HorizontalDivider(Modifier.padding(vertical=8.dp))
+        Text("Проверка сети и SIM",style=MaterialTheme.typography.titleMedium)
+        HorizontalDivider(Modifier.padding(vertical=8.dp))
+        Text("Проверка сети и SIM",style=MaterialTheme.typography.titleMedium)
         SettingToggle(p,"autoHttp","Периодическая проверка HTTP")
         SettingInt(p,"httpInterval","Интервал HTTP, с",60,15..3600)
         SettingToggle(p,"internet","Потеря доступа в интернет")
         SettingToggle(p,"service","Потеря обслуживания SIM")
         SettingToggle(p,"roaming","Вход в роуминг")
         SettingToggle(p,"data","Отключение мобильных данных")
+        HorizontalDivider(Modifier.padding(vertical=8.dp))
+        Text("Скорость и расход трафика",style=MaterialTheme.typography.titleMedium)
+        HorizontalDivider(Modifier.padding(vertical=8.dp))
+        Text("Скорость и расход трафика",style=MaterialTheme.typography.titleMedium)
         SettingToggle(p,"slow","Низкая скорость по завершённому тесту")
         SettingInt(p,"speedMin","Порог загрузки, Мбит/с",5,1..1000)
         SettingToggle(p,"autoSpeed","Периодический тест скорости")
         SettingToggle(p,"meteredSpeed","Разрешить тест в тарифицируемой сети")
         SettingInt(p,"speedInterval","Интервал теста, мин",15,5..1440)
         SettingInt(p,"speedCap","Лимит загрузки за тест, МБ",2,1..20)
+        HorizontalDivider(Modifier.padding(vertical=8.dp))
+        Text("Тихие часы",style=MaterialTheme.typography.titleMedium)
+        HorizontalDivider(Modifier.padding(vertical=8.dp))
+        Text("Тихие часы",style=MaterialTheme.typography.titleMedium)
         SettingToggle(p,"quiet","Тихие часы")
         SettingInt(p,"quietStart","Начало тихих часов",22,0..23)
         SettingInt(p,"quietEnd","Конец тихих часов",8,0..23)
@@ -88,6 +105,8 @@ fun RadioOptions(p:SharedPreferences){
                 .onFailure { runCatching { ctx.startActivity(Intent(Settings.ACTION_NETWORK_OPERATOR_SETTINGS)) }
                     .onFailure { toast(ctx, "Сервисное меню недоступно на этом устройстве") } }
         }) { Text("Сервисное меню телефона") }
+        HorizontalDivider(Modifier.padding(vertical=8.dp))
+        HorizontalDivider(Modifier.padding(vertical=8.dp))
         Text("События связи", style = MaterialTheme.typography.titleMedium)
         TextButton({
             scope.launch {
@@ -110,6 +129,7 @@ private fun SettingToggle(p:SharedPreferences,key:String,title:String){
 @Composable
 private fun SettingInt(p:SharedPreferences,key:String,title:String,default:Int,range:IntRange){
     var text by rememberSaveable{mutableStateOf(p.getInt(key,default).toString())}
-    OutlinedTextField(text,{text=it;it.toIntOrNull()?.takeIf{v->v in range}?.let{v->p.edit().putInt(key,v).apply()}},label={Text(title)},singleLine=true,isError=text.toIntOrNull() !in range)
+    OutlinedTextField(text,{text=it;it.toIntOrNull()?.takeIf{v->v in range}?.let{v->p.edit().putInt(key,v).apply()}},modifier=Modifier.fillMaxWidth(),label={Text(title)},singleLine=true,isError=text.toIntOrNull() !in range,
+        keyboardOptions=androidx.compose.foundation.text.KeyboardOptions(keyboardType=androidx.compose.ui.text.input.KeyboardType.Number))
 }
 

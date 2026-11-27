@@ -18,8 +18,8 @@ android {
         minSdk = 28
         targetSdk = 36
         // Номер сборки CI добавляется к коду версии: каждая новая сборка выше предыдущей, обновление ставится поверх без конфликтов.
-        versionCode = 1_002_100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
-        versionName = "2.0.0-alpha3"
+        versionCode = 1_003_100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
+        versionName = "2.0.0-alpha4"
         ndk { abiFilters += "arm64-v8a" }
     }
 
@@ -71,7 +71,7 @@ android {
         resources { excludes += setOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/9/OSGI-INF/MANIFEST.MF") }
     }
     lint { checkReleaseBuilds = true; abortOnError = true; disable += "UnsafeOptInUsageError" }
-    testOptions { unitTests.isReturnDefaultValues = true }
+    testOptions { unitTests.isReturnDefaultValues = true; unitTests.isIncludeAndroidResources = true }
 }
 
 tasks.withType<JavaCompile>().configureEach { options.encoding = "UTF-8"; options.compilerArgs.add("-Xlint:-options") }
@@ -141,6 +141,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-rtsp:$media3")
     implementation("androidx.media3:media3-ui:$media3")
 
+    testImplementation("androidx.compose.ui:ui-test-junit4")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
 }

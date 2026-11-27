@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -31,6 +32,10 @@ class WifiViewModel(app: Application) : AndroidViewModel(app) {
     var connectedSsid by mutableStateOf("")
     var liveRssi by mutableStateOf<Int?>(null)
     var meterOn by mutableStateOf(false)
+    var meterHistory by mutableStateOf<List<Pair<Long,Int>>>(emptyList())
+        private set
+    private var meterJob: Job? = null
+    private var meterBssid: String? = null
     var lastScanNote by mutableStateOf("")
 
     private val receiver = object : BroadcastReceiver() {
@@ -51,7 +56,7 @@ class WifiViewModel(app: Application) : AndroidViewModel(app) {
         if (registered) { try { context.unregisterReceiver(receiver) } catch (e: Exception) { }; registered = false }
     }
 
-    override fun onCleared() { stop() }
+    override fun onCleared() { stop(); stopMeter() }
 
     private fun permissionGranted(): Boolean =
         context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED || (Build.VERSION.SDK_INT < 29 &&
@@ -114,23 +119,27 @@ class WifiViewModel(app: Application) : AndroidViewModel(app) {
     /** Чужие сети на тех же или соседних каналах 2.4 ГГц, что мешают вашей. */
     fun crowding(own: WifiNetwork): Int = networks.count { it.band == "2.4 ГГц" && it != own && kotlin.math.abs(it.channel - own.channel) <= 2 }
 
-    fun myNetwork(): WifiNetwork? = networks.firstOrNull { it.isMine } ?: networks.firstOrNull { it.ssid == connectedSsid }
+    fun myNetwork(): WifiNetwork? = networks.firstOrNull { it.isMine }
 
     // ---------- живой сигнал для обхода по комнатам ----------
     fun startMeter() {
         if (meterOn) return
         meterOn = true
-        viewModelScope.launch {
+        meterJob = viewModelScope.launch {
             while (isActive && meterOn) {
                 liveRssi = try {
                     @Suppress("DEPRECATION")
                     manager.connectionInfo?.rssi?.takeIf { it in -126..-1 }
                 } catch (e: Exception) { null }
+                @Suppress("DEPRECATION")
+                val bssid = runCatching { manager.connectionInfo?.bssid }.getOrNull()
+                if (bssid != meterBssid) { meterHistory = emptyList(); meterBssid = bssid }
+                liveRssi?.let { meterHistory = (meterHistory + (System.currentTimeMillis() to it)).takeLast(90) }
                 delay(1200)
             }
         }
     }
-    fun stopMeter() { meterOn = false; liveRssi = null }
+    fun stopMeter() { meterJob?.cancel(); meterJob = null; meterOn = false; liveRssi = null }
 
     companion object {
         fun quality(rssi: Int): String = when {

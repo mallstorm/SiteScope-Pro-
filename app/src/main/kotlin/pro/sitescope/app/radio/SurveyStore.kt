@@ -8,7 +8,7 @@ import android.util.Xml
 import java.io.*
 
 data class Survey(val id:Long,val start:Long,val end:Long?,val count:Int)
-data class Sample(val time:Long,val sim:String,val rat:String,val dbm:Int?,val cid:Long?,val lat:Double?,val lon:Double?,val detail:String,val measured:Long=0)
+data class Sample(val time:Long,val sim:String,val rat:String,val dbm:Int?,val cid:Long?,val lat:Double?,val lon:Double?,val detail:String,val measured:Long=0,val serving:Boolean?=null,val area:Long?=null,val pci:Int?=null,val channel:Int?=null)
 
 class SurveyStore private constructor(ctx:Context):SQLiteOpenHelper(ctx,"radio-surveys.db",null,2) {
     companion object {
@@ -62,8 +62,8 @@ class SurveyStore private constructor(ctx:Context):SQLiteOpenHelper(ctx,"radio-s
         buildList {while(c.moveToNext())add(Survey(c.getLong(0),c.getLong(1),if(c.isNull(2))null else c.getLong(2),c.getInt(3)))}
     }
     private fun Cursor.optionalDouble(i:Int)=if(isNull(i)) null else getDouble(i)
-    fun latest(id:Long):List<Sample> = readableDatabase.rawQuery("SELECT time,sim,rat,dbm,cid,latitude,longitude,detail,measured FROM samples WHERE session=? ORDER BY id DESC LIMIT 1000",arrayOf(id.toString())).use {c->
-        buildList {while(c.moveToNext())add(Sample(c.getLong(0),c.getString(1).orEmpty(),c.getString(2),if(c.isNull(3))null else c.getInt(3),if(c.isNull(4))null else c.getLong(4),c.optionalDouble(5),c.optionalDouble(6),c.getString(7).orEmpty(),if(c.isNull(8))0 else c.getLong(8)))}
+    fun latest(id:Long):List<Sample> = readableDatabase.rawQuery("SELECT time,sim,rat,dbm,cid,latitude,longitude,detail,measured,serving,area,pci,channel FROM samples WHERE session=? ORDER BY id DESC LIMIT 1000",arrayOf(id.toString())).use {c->
+        buildList {while(c.moveToNext())add(Sample(c.getLong(0),c.getString(1).orEmpty(),c.getString(2),if(c.isNull(3))null else c.getInt(3),if(c.isNull(4))null else c.getLong(4),c.optionalDouble(5),c.optionalDouble(6),c.getString(7).orEmpty(),if(c.isNull(8))0 else c.getLong(8),if(c.isNull(9))null else c.getInt(9)==1,if(c.isNull(10))null else c.getLong(10),if(c.isNull(11))null else c.getInt(11),if(c.isNull(12))null else c.getInt(12)))}
     }
     fun export(id:Long,kml:Boolean,output:OutputStream) {
         val db=readableDatabase

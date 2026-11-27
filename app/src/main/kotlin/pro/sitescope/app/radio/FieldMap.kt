@@ -17,7 +17,7 @@ import org.osmdroid.views.overlay.*
 data class Pin(val lat: Double, val lon: Double, val title: String, val dbm: Int? = null, val bearing: Int? = null)
 
 @Composable
-fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick: ((Pin) -> Unit)? = null, orientation: Float = 0f) {
+fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick: ((Pin) -> Unit)? = null, orientation: Float = 0f, modifier: Modifier = Modifier.fillMaxWidth().height(320.dp)) {
     val ctx = LocalContext.current
     val pick by rememberUpdatedState(onPick)
     val map = remember(ctx) {
@@ -80,9 +80,11 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
         }) }
         map.invalidate()
     }
-    AndroidView(factory = { map }, update = { if (it.mapOrientation != orientation) it.mapOrientation = orientation }, modifier = Modifier.fillMaxWidth().height(300.dp))
+    Column(modifier) {
+    AndroidView(factory = { map }, update = { if (it.mapOrientation != orientation) it.mapOrientation = orientation }, modifier = Modifier.fillMaxWidth().weight(1f))
     if (line.any { it.dbm != null }) Text("Сигнал dBm · зелёный ≥ −85 · жёлтый ≥ −105 · красный < −105", style = MaterialTheme.typography.labelSmall)
     if (pins.any { it.bearing != null }) Text("Секторы схематичные, угол 60°", style = MaterialTheme.typography.labelSmall)
     Text("© OpenStreetMap contributors", style = MaterialTheme.typography.labelSmall)
+    }
 }
 

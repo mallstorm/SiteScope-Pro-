@@ -108,6 +108,7 @@ class DpiScoringTest {
 }
 
 @RunWith(RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(sdk=[28],application=android.app.Application::class)
 class DpiChainConfigTest {
     @Test fun addsSocksOutboundAndDialerProxy() {
         val src = """{"outbounds":[{"tag":"proxy","protocol":"vless","settings":{}},{"tag":"direct","protocol":"freedom"},{"tag":"dns-out","protocol":"dns"},{"tag":"block","protocol":"blackhole"}]}"""
