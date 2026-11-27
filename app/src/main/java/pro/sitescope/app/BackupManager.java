@@ -26,7 +26,7 @@ import java.util.Set;
 
 /** Portable, versioned backup for user-created non-secret application data. */
 public final class BackupManager {
-    public static final int SCHEMA_VERSION = 13;
+    public static final int SCHEMA_VERSION = 14;
     private static final long MAX_IMPORT_BYTES = 64L * 1024L * 1024L;
     private static final List<String> PREF_FILES = Arrays.asList(
         "sitescope_data_v1",
@@ -43,7 +43,7 @@ public final class BackupManager {
         "speed_test","anon_net","dpi_bypass",
         "tv_mask",
         "net_monitor",
-        "vpn_settings"
+        "vpn_settings", "radio-options", "radio-widget", "dish-install"
     );
 
     private BackupManager() { }
@@ -63,6 +63,7 @@ public final class BackupManager {
         root.put("note", "Credentials in URLs and known token fields are redacted. Protected credentials and downloaded GeoIP databases are excluded. Re-enter credentials after restoring.");
         root.put("database", AppDatabase.get(context).exportPortable());
         root.put("tv", TvStore.INSTANCE.exportState(context));
+        root.put("field", pro.sitescope.app.radio.FieldBackup.exportState(context));
 
         JSONObject prefsRoot = new JSONObject();
         for (String file : PREF_FILES) {
@@ -85,10 +86,11 @@ public final class BackupManager {
 
     public static void exportTo(Context context, Uri uri) throws Exception {
         JSONObject backup = createBackup(context);
+        byte[] data = backup.toString(2).getBytes(StandardCharsets.UTF_8);
+        if (data.length > MAX_IMPORT_BYTES) throw new IllegalArgumentException("Общая копия превышает 64 МБ. Экспортируйте радиоизмерения по сессиям.");
         OutputStream output = context.getContentResolver().openOutputStream(uri, "w");
         if (output == null) throw new IllegalStateException("Не удалось открыть файл для записи");
         try {
-            byte[] data = backup.toString(2).getBytes(StandardCharsets.UTF_8);
             output.write(data);
             output.flush();
         } finally {
@@ -122,6 +124,8 @@ public final class BackupManager {
         validate(root);
         JSONObject prefsRoot = root.getJSONObject("preferences");
 
+        JSONObject field = root.optJSONObject("field");
+        if (field != null) pro.sitescope.app.radio.FieldBackup.validate(field);
         // Decode everything before touching current data.
         List<DecodedPrefs> decoded = new ArrayList<DecodedPrefs>();
         for (String file : PREF_FILES) {
@@ -151,10 +155,11 @@ public final class BackupManager {
             }
             JSONObject oldTv = TvStore.INSTANCE.exportState(context);
             SQLiteDatabase db = AppDatabase.get(context).write();
+            pro.sitescope.app.radio.FieldBackup.Restore fieldRestore = field == null ? null : pro.sitescope.app.radio.FieldBackup.prepareRestore(context, field);
             boolean open = true;
             boolean tvChanged = false;
-            db.beginTransaction();
             try {
+                db.beginTransaction();
                 JSONObject database = root.optJSONObject("database");
                 if (database != null) AppDatabase.get(context).restorePortable(database);
                 writePreferences(context, decoded);
@@ -164,6 +169,7 @@ public final class BackupManager {
                 else if (prefsRoot.has("sitescope_iptv")) TvStore.INSTANCE.restoreLegacy(context);
                 db.setTransactionSuccessful();
                 try { db.endTransaction(); } finally { open = false; }
+                if (fieldRestore != null) fieldRestore.commit();
             } catch (Exception failure) {
                 if (open) {
                     try { db.endTransaction(); } catch (Exception rollback) { failure.addSuppressed(rollback); }
@@ -171,8 +177,11 @@ public final class BackupManager {
                 try { writePreferences(context, before); } catch (Exception rollback) { failure.addSuppressed(rollback); }
                 if (tvChanged) try { TvStore.INSTANCE.restoreState(context, oldTv); } catch (Exception rollback) { failure.addSuppressed(rollback); }
                 throw failure;
+            } finally {
+                if (fieldRestore != null) fieldRestore.close();
             }
         }
+        pro.sitescope.app.radio.RadioWidget.refresh(context);
         pro.sitescope.app.data.RestoredState.reload(context);
     }
 
@@ -234,6 +243,8 @@ public final class BackupManager {
         if (schema < 1 || schema > SCHEMA_VERSION) throw new IllegalArgumentException("Неподдерживаемая версия резервной копии: " + schema);
         JSONObject prefs = root.optJSONObject("preferences");
         if (prefs == null) throw new IllegalArgumentException("В резервной копии отсутствуют данные");
+        if (root.optJSONObject("field") != null) pro.sitescope.app.radio.FieldBackup.validate(root.getJSONObject("field"));
+        if (schema >= 14 && root.optJSONObject("field") == null) throw new IllegalArgumentException("В копии отсутствуют радиоизмерения");
         if (schema >= 5 && root.optJSONObject("database") == null) throw new IllegalArgumentException("В резервной копии отсутствует SQLite-раздел");
         if (root.has("database")) AppDatabase.validatePortable(root.getJSONObject("database"));
         if (schema >= 7 || root.has("tv")) TvStore.INSTANCE.validateState(root.getJSONObject("tv"));

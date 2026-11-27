@@ -8,9 +8,9 @@ import android.util.Xml
 import java.io.*
 
 data class Survey(val id:Long,val start:Long,val end:Long?,val count:Int)
-data class Sample(val time:Long,val sim:String,val rat:String,val dbm:Int?,val cid:Long?,val lat:Double?,val lon:Double?,val detail:String)
+data class Sample(val time:Long,val sim:String,val rat:String,val dbm:Int?,val cid:Long?,val lat:Double?,val lon:Double?,val detail:String,val measured:Long=0)
 
-class SurveyStore private constructor(ctx:Context):SQLiteOpenHelper(ctx,"radio-surveys.db",null,1) {
+class SurveyStore private constructor(ctx:Context):SQLiteOpenHelper(ctx,"radio-surveys.db",null,2) {
     companion object {
         @Volatile private var instance:SurveyStore?=null
         fun get(ctx:Context)=instance ?: synchronized(this){instance ?: SurveyStore(ctx.applicationContext).also {instance=it}}
@@ -19,10 +19,16 @@ class SurveyStore private constructor(ctx:Context):SQLiteOpenHelper(ctx,"radio-s
     override fun onCreate(db:SQLiteDatabase) {
         db.execSQL("CREATE TABLE sessions(id INTEGER PRIMARY KEY, start INTEGER NOT NULL, end INTEGER)")
         db.execSQL("CREATE TABLE samples(id INTEGER PRIMARY KEY, session INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, time INTEGER, sim TEXT, rat TEXT, serving INTEGER, mcc TEXT, mnc TEXT, area INTEGER, cid INTEGER, pci INTEGER, channel INTEGER, dbm INTEGER, detail TEXT, measured INTEGER, latitude REAL, longitude REAL, accuracy REAL)")
+        createEvents(db)
         db.execSQL("CREATE INDEX sample_session ON samples(session,time)")
         db.execSQL("CREATE TABLE towers(rat TEXT NOT NULL,mcc TEXT NOT NULL,mnc TEXT NOT NULL,area INTEGER NOT NULL,cid INTEGER NOT NULL,pci INTEGER NOT NULL,channel INTEGER,latitude REAL,longitude REAL,accuracy INTEGER,name TEXT,bearing INTEGER,PRIMARY KEY(rat,mcc,mnc,area,cid,pci))")
     }
-    override fun onUpgrade(db:SQLiteDatabase,old:Int,new:Int) {}
+    override fun onUpgrade(db:SQLiteDatabase,old:Int,new:Int) {
+        if (old < 2) createEvents(db)
+    }
+    private fun createEvents(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, time INTEGER NOT NULL, message TEXT NOT NULL)")
+    }
     fun begin(time:Long):Long {
         val db=writableDatabase
         db.beginTransaction()
@@ -56,8 +62,8 @@ class SurveyStore private constructor(ctx:Context):SQLiteOpenHelper(ctx,"radio-s
         buildList {while(c.moveToNext())add(Survey(c.getLong(0),c.getLong(1),if(c.isNull(2))null else c.getLong(2),c.getInt(3)))}
     }
     private fun Cursor.optionalDouble(i:Int)=if(isNull(i)) null else getDouble(i)
-    fun latest(id:Long):List<Sample> = readableDatabase.rawQuery("SELECT time,sim,rat,dbm,cid,latitude,longitude,detail FROM samples WHERE session=? ORDER BY id DESC LIMIT 1000",arrayOf(id.toString())).use {c->
-        buildList {while(c.moveToNext())add(Sample(c.getLong(0),c.getString(1).orEmpty(),c.getString(2),if(c.isNull(3))null else c.getInt(3),if(c.isNull(4))null else c.getLong(4),c.optionalDouble(5),c.optionalDouble(6),c.getString(7).orEmpty()))}
+    fun latest(id:Long):List<Sample> = readableDatabase.rawQuery("SELECT time,sim,rat,dbm,cid,latitude,longitude,detail,measured FROM samples WHERE session=? ORDER BY id DESC LIMIT 1000",arrayOf(id.toString())).use {c->
+        buildList {while(c.moveToNext())add(Sample(c.getLong(0),c.getString(1).orEmpty(),c.getString(2),if(c.isNull(3))null else c.getInt(3),if(c.isNull(4))null else c.getLong(4),c.optionalDouble(5),c.optionalDouble(6),c.getString(7).orEmpty(),if(c.isNull(8))0 else c.getLong(8)))}
     }
     fun export(id:Long,kml:Boolean,output:OutputStream) {
         val db=readableDatabase
@@ -86,19 +92,51 @@ class SurveyStore private constructor(ctx:Context):SQLiteOpenHelper(ctx,"radio-s
             put("latitude",t.lat);put("longitude",t.lon);put("accuracy",t.accuracy);put("name",t.name);put("bearing",t.bearing)
         },SQLiteDatabase.CONFLICT_REPLACE).also { check(it != -1L) }
     }
-    fun importTowers(input:InputStream):Pair<Int,Int> {
-        var ok=0;var skipped=0
-        val db=writableDatabase;db.beginTransaction()
+    fun importTowers(input: InputStream): Pair<Int, Int> {
+        var imported = 0
+        var skipped = 0
+        var bytes = 0L
+        fun readRows(source: InputStream) {
+            val reader = source.bufferedReader()
+            while (true) {
+                val line = reader.readLine() ?: break
+                bytes += line.toByteArray().size + 1
+                require(bytes <= 128_000_000 && imported + skipped < 1_000_000 && line.length < 32768) {
+                    "Слишком большой справочник"
+                }
+                val parsed = parseTower(line)
+                if (parsed == null) skipped++ else { saveTower(parsed); imported++ }
+            }
+        }
+        val db = writableDatabase
+        db.beginTransaction()
         try {
-            input.bufferedReader().useLines { lines->lines.forEach {line->
-                require(ok+skipped<1_000_000 && line.length<32768){"Слишком большой справочник"}
-                val t=parseTower(line)
-                if(t==null)skipped++ else {saveTower(t);ok++}
-            } }
-            require(ok>0){"Подходящих записей нет"}
+            val buffered = input.buffered()
+            buffered.mark(4)
+            val signature = ByteArray(4)
+            val length = buffered.read(signature)
+            buffered.reset()
+            when {
+                length >= 2 && signature[0] == 0x1f.toByte() && signature[1] == 0x8b.toByte() ->
+                    java.util.zip.GZIPInputStream(buffered).use { readRows(it) }
+                length >= 2 && signature[0] == 'P'.code.toByte() && signature[1] == 'K'.code.toByte() ->
+                    java.util.zip.ZipInputStream(buffered).use { zip ->
+                        var count = 0
+                        while (true) {
+                            val entry = zip.nextEntry ?: break
+                            require(++count <= 1000) { "Слишком много файлов" }
+                            if (!entry.isDirectory && entry.name.substringAfterLast('.').lowercase() in listOf("clf", "csv", "txt")) {
+                                readRows(zip)
+                            }
+                            zip.closeEntry()
+                        }
+                    }
+                else -> buffered.use { readRows(it) }
+            }
+            require(imported > 0) { "Подходящих записей нет" }
             db.setTransactionSuccessful()
-        } finally {db.endTransaction()}
-        return ok to skipped
+        } finally { db.endTransaction() }
+        return imported to skipped
     }
     private fun tower(c:Cursor)=Tower(c.getString(0),c.getString(1),c.getString(2),c.getLong(3),c.getLong(4),c.getInt(5).takeIf{it>=0},
         if(c.isNull(6))null else c.getInt(6),c.optionalDouble(7),c.optionalDouble(8),if(c.isNull(9))null else c.getInt(9),c.getString(10).orEmpty(),if(c.isNull(11))null else c.getInt(11))
@@ -119,6 +157,34 @@ class SurveyStore private constructor(ctx:Context):SQLiteOpenHelper(ctx,"radio-s
             }
             nearest.sortedBy{it.first}.map{it.second}
         }
+    }
+    fun addEvent(message: String) {
+        writableDatabase.insertOrThrow("events", null, ContentValues().apply {
+            put("time", System.currentTimeMillis())
+            put("message", message)
+        })
+        writableDatabase.execSQL("DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 20000)")
+    }
+    fun events(): List<Pair<Long, String>> =
+        readableDatabase.rawQuery("SELECT time,message FROM events ORDER BY id DESC LIMIT 200", null).use { cursor ->
+            buildList { while (cursor.moveToNext()) add(cursor.getLong(0) to cursor.getString(1)) }
+        }
+    fun deleteSession(id: Long) {
+        check(SurveyService.active.value != id) { "Сначала остановите запись" }
+        writableDatabase.delete("sessions", "id=?", arrayOf(id.toString()))
+    }
+    fun replaceTower(old: Tower?, replacement: Tower) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            if (old != null) deleteTower(old)
+            saveTower(replacement)
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+    fun deleteTower(tower: Tower) {
+        writableDatabase.delete("towers", "rat=? AND mcc=? AND mnc=? AND area=? AND cid=? AND pci=?",
+            arrayOf(tower.rat, tower.mcc, tower.mnc, tower.area.toString(), tower.cid.toString(), (tower.pci ?: -1).toString()))
     }
     fun exportTowers(output:OutputStream) {
         val w=output.bufferedWriter()

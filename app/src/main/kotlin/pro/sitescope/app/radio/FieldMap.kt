@@ -14,7 +14,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.*
 
-data class Pin(val lat: Double, val lon: Double, val title: String)
+data class Pin(val lat: Double, val lon: Double, val title: String, val dbm: Int? = null, val bearing: Int? = null)
 
 @Composable
 fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick: ((Pin) -> Unit)? = null, orientation: Float = 0f) {
@@ -40,13 +40,49 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
             override fun singleTapConfirmedHelper(p: GeoPoint) = false
             override fun longPressHelper(p: GeoPoint): Boolean { pick?.invoke(Pin(p.latitude,p.longitude,"Точка установки")); return true }
         }))
-        if (line.size >= 2) map.overlays.add(Polyline(map).apply { setPoints(line.map { GeoPoint(it.lat,it.lon) }) })
-        pins.forEach { p -> map.overlays.add(Marker(map).apply {
-            position = GeoPoint(p.lat,p.lon); title = p.title; setAnchor(Marker.ANCHOR_CENTER,Marker.ANCHOR_BOTTOM)
+        fun signalColor(value: Int?): Int = when {
+            value == null -> android.graphics.Color.rgb(45, 125, 210)
+            value >= -85 -> android.graphics.Color.rgb(30, 170, 100)
+            value >= -105 -> android.graphics.Color.rgb(235, 165, 35)
+            else -> android.graphics.Color.rgb(220, 65, 65)
+        }
+        if (line.size >= 2) {
+            val stride = (line.size / 200).coerceAtLeast(1)
+            val route = line.filterIndexed { index, _ -> index % stride == 0 || index == line.lastIndex }
+            route.zipWithNext().forEach { (a, b) ->
+                map.overlays.add(Polyline(map).apply {
+                    setPoints(listOf(GeoPoint(a.lat, a.lon), GeoPoint(b.lat, b.lon)))
+                    outlinePaint.color = signalColor(a.dbm)
+                    outlinePaint.strokeWidth = 7f
+                })
+            }
+        }
+        pins.forEach { p ->
+            p.bearing?.let { bearing ->
+                val origin = GeoPoint(p.lat, p.lon)
+                val outline = listOf(origin) + (bearing - 30..bearing + 30 step 5).map { origin.destinationPoint(500.0, it.toDouble()) } + origin
+                map.overlays.add(Polygon(map).apply {
+                    points = outline
+                    fillPaint.color = 0x304B83BD
+                    outlinePaint.color = 0x804B83BD.toInt()
+                })
+            }
+            map.overlays.add(Marker(map).apply {
+            position = GeoPoint(p.lat,p.lon); title = p.title
+            if (p.dbm != null) {
+                val bitmap = android.graphics.Bitmap.createBitmap(28, 28, android.graphics.Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(bitmap)
+                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = signalColor(p.dbm) }
+                canvas.drawCircle(14f, 14f, 12f, paint)
+                icon = android.graphics.drawable.BitmapDrawable(ctx.resources, bitmap)
+            }
+            setAnchor(Marker.ANCHOR_CENTER,Marker.ANCHOR_BOTTOM)
         }) }
         map.invalidate()
     }
     AndroidView(factory = { map }, update = { if (it.mapOrientation != orientation) it.mapOrientation = orientation }, modifier = Modifier.fillMaxWidth().height(300.dp))
+    if (line.any { it.dbm != null }) Text("Сигнал dBm · зелёный ≥ −85 · жёлтый ≥ −105 · красный < −105", style = MaterialTheme.typography.labelSmall)
+    if (pins.any { it.bearing != null }) Text("Секторы схематичные, угол 60°", style = MaterialTheme.typography.labelSmall)
     Text("© OpenStreetMap contributors", style = MaterialTheme.typography.labelSmall)
 }
 

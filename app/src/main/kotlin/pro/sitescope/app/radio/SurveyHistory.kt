@@ -41,9 +41,11 @@ fun SurveyHistory(active:Long?,tick:Long?){
     var chosen by rememberSaveable{mutableStateOf<Long?>(null)}
     var samples by remember{mutableStateOf<List<Sample>>(emptyList())}
     var exportId by rememberSaveable{mutableLongStateOf(0)}
+    var revision by remember { mutableIntStateOf(0) }
+    var delete by remember { mutableStateOf<Long?>(null) }
     var filter by rememberSaveable{mutableStateOf("Все")}
     var map by rememberSaveable{mutableStateOf(false)}
-    LaunchedEffect(active,tick){sessions=withContext(Dispatchers.IO){store.surveys()};if(chosen==null)chosen=sessions.firstOrNull()?.id}
+    LaunchedEffect(active,tick,revision){sessions=withContext(Dispatchers.IO){store.surveys()};if(chosen==null)chosen=sessions.firstOrNull()?.id}
     LaunchedEffect(chosen,tick){samples=withContext(Dispatchers.IO){chosen?.let(store::latest).orEmpty()}}
     fun output(uri:Uri?,kml:Boolean){if(uri!=null){val id=exportId;scope.launch {runCatching{
         saveReport(ctx,uri,if(kml)"KML" else "CSV"){store.export(id,kml,it)}
@@ -52,7 +54,7 @@ fun SurveyHistory(active:Long?,tick:Long?){
     val kml=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.google-earth.kml+xml")){output(it,true)}
     val visible=samples.filter { filter=="Все" || it.sim==filter }
     val pins=remember(visible){visible.asReversed().filter {it.lat!=null && it.lon!=null}.distinctBy { it.time }.map {
-        Pin(it.lat!!,it.lon!!,"${it.sim} · ${it.rat} · ${it.dbm ?: "—"} dBm · ${clock(it.time)}")
+        Pin(it.lat!!,it.lon!!,"${it.sim} · ${it.rat} · ${it.dbm ?: "—"} dBm · ${clock(it.time)}", dbm = it.dbm.takeIf { _ -> it.measured > 0 && it.time-it.measured in 0..60000 })
     }}
     LazyColumn(contentPadding=PaddingValues(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
         if(sessions.isEmpty())item{Text("Сессий пока нет. На вкладке «Сигнал» нажмите «Записать маршрут».")}
@@ -60,6 +62,7 @@ fun SurveyHistory(active:Long?,tick:Long?){
         if(chosen!=null)item{
             Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){
                 FilterChip(map,{map=!map},{Text("Карта")})
+                TextButton({ delete = chosen }, enabled = chosen != active) { Text("Удалить сессию") }
                 TextButton({exportId=chosen!!;csv.launch("Radio-$exportId.csv")}){Text("CSV")}
                 TextButton({exportId=chosen!!;kml.launch("Radio-$exportId.kml")},enabled=pins.isNotEmpty()){Text("KML")}
             }
@@ -68,6 +71,16 @@ fun SurveyHistory(active:Long?,tick:Long?){
         }
         if(map)item{if(pins.isEmpty())Text("Для этой выборки точек с координатами нет.") else FieldMap(pins.last(),pins.filterIndexed{i,_->i%((pins.size/40).coerceAtLeast(1))==0},pins)}
         items(visible){s->Text("${clock(s.time)} · ${s.sim} ${s.rat} · ${s.dbm ?: "—"} dBm${s.cid?.let{" · CID $it"}.orEmpty()}",style=MaterialTheme.typography.bodySmall)}
+    }
+    delete?.let { id ->
+        AlertDialog(onDismissRequest = { delete = null }, title = { Text("Удалить сессию?") },
+            text = { Text("Будут удалены измерения выбранной сессии.") },
+            confirmButton = { TextButton({ scope.launch {
+                runCatching { withContext(Dispatchers.IO) { store.deleteSession(id) } }
+                    .onSuccess { chosen = null; revision++; delete = null }
+                    .onFailure { toast(ctx, it.localizedMessage.orEmpty()) }
+            } }) { Text("Удалить") } },
+            dismissButton = { TextButton({ delete = null }) { Text("Отмена") } })
     }
 }
 
@@ -81,6 +94,7 @@ fun TowerScreen(){
     var rows by remember{mutableStateOf<List<Tower>>(emptyList())}
     var msg by remember{mutableStateOf("")}
     var edit by rememberSaveable{mutableStateOf<String?>(null)}
+    var original by remember { mutableStateOf<Tower?>(null) }
     var map by rememberSaveable{mutableStateOf(false)}
     var nearby by remember{mutableStateOf<Pin?>(null)}
     var online by rememberSaveable{mutableStateOf(false)}
@@ -98,14 +112,14 @@ fun TowerScreen(){
     val export=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")){uri->
         if(uri!=null)scope.launch{runCatching{saveReport(ctx,uri,"CLF",store::exportTowers)}.onSuccess{msg="Справочник экспортирован"}.onFailure{msg="Экспорт: ${it.localizedMessage}"}}
     }
-    val pins=remember(rows){rows.mapNotNull{t->if(t.lat==null || t.lon==null)null else Pin(t.lat,t.lon,t.name.ifBlank{"CID ${t.cid}"})}}
+    val pins=remember(rows){rows.mapNotNull{t->if(t.lat==null || t.lon==null)null else Pin(t.lat,t.lon,t.name.ifBlank{"CID ${t.cid}"}, bearing = t.bearing)}}
     LazyColumn(contentPadding=PaddingValues(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
         item {
             OutlinedTextField(query,{query=it},Modifier.fillMaxWidth(),label={Text("CID, оператор MCC/MNC или название")},singleLine=true)
             Row(Modifier.horizontalScroll(rememberScrollState())){
-                TextButton({picker.launch(arrayOf("*/*"))},enabled=!busy){Text("Импорт CLF")}
+                TextButton({picker.launch(arrayOf("*/*"))},enabled=!busy){Text("Импорт CLF / ZIP / GZIP")}
                 TextButton({export.launch("SiteScope-stations.clf")}){Text("Экспорт")}
-                TextButton({edit=""}){Text("Добавить")}
+                TextButton({original=null;edit=""}){Text("Добавить")}
                 FilterChip(map,{map=!map},{Text("Карта")})
             }
             OutlinedTextField(source,{source=it},Modifier.fillMaxWidth(),label={Text("HTTPS-адрес файла CLF")},singleLine=true)
@@ -120,13 +134,21 @@ fun TowerScreen(){
             if(map && pins.isNotEmpty())FieldMap(nearby ?: pins.first(),pins)
             if(rows.isEmpty())Text("Совпадений нет. Можно импортировать справочник или добавить станцию вручную.")
         }
-        items(rows){t->TextButton({edit=t.clf()}){Text("${t.name.ifBlank{"Станция"}} · ${t.mcc}-${t.mnc} · CID ${t.cid} · ${if(t.lat==null)"координаты неизвестны" else "${t.lat}, ${t.lon}"}")}}
+        items(rows){t->TextButton({original=t;edit=t.clf()}){Text("${t.name.ifBlank{"Станция"}} · ${t.mcc}-${t.mnc} · CID ${t.cid} · ${if(t.lat==null)"координаты неизвестны" else "${t.lat}, ${t.lon}"}")}}
     }
-    edit?.let{
-        AlertDialog(onDismissRequest={edit=null},title={Text("Запись CLF")},text={Column{
-            Text("Тип;MCC;MNC;LAC/TAC;CID;PCI;канал;широта;долгота;точность;название;азимут")
-            OutlinedTextField(it,{s->edit=s},label={Text("Запись станции")})
-        }},confirmButton={TextButton({val tower=parseTower(it);if(tower==null)toast(ctx,"Проверьте поля CLF") else scope.launch{withContext(Dispatchers.IO){store.saveTower(tower)};edit=null;revision++}}){Text("Сохранить")}},dismissButton={TextButton({edit=null}){Text("Отмена")}})
+    edit?.let {
+        TowerEditor(original, onSave = { tower ->
+            scope.launch {
+                runCatching { withContext(Dispatchers.IO) { store.replaceTower(original, tower) } }
+                    .onSuccess { edit = null; revision++ }
+                    .onFailure { toast(ctx, "Не удалось сохранить станцию") }
+            }
+        }, onDelete = if (original == null) null else ({
+            scope.launch {
+                runCatching { withContext(Dispatchers.IO) { store.deleteTower(original!!) } }
+                    .onSuccess { edit = null; revision++ }
+                    .onFailure { toast(ctx, "Не удалось удалить станцию") }
+            }
+        }), onClose = { edit = null })
     }
 }
-

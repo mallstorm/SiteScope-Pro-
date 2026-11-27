@@ -2,7 +2,7 @@ package pro.sitescope.app.satellite
 
 import java.util.Locale
 
-data class DishEntry(val name: String, val orbital: Double, val channel: String = "", val provider: String = "", val tuning: String = "")
+data class DishEntry(val name: String, val orbital: Double, val channel: String = "", val provider: String = "", val tuning: String = "", val access: String = "", val kind: String = "")
 fun orbitalLabel(o: Double): String = "%.1f° %s".format(Locale.ROOT, kotlin.math.abs(o), if (o < 0) "W" else "E")
 
 object DishCatalogue {
@@ -12,14 +12,40 @@ object DishCatalogue {
 
     fun parse(lines: List<String>): List<DishEntry> {
         if (lines.firstOrNull()?.trim()?.removePrefix("\uFEFF") == "eDVB services /4/") return enigma(lines)
+        if (lines.joinToString("\n").trimStart().startsWith("<")) return satelliteXml(lines.joinToString("\n"))
         return lines.mapNotNull { raw ->
             val line = raw.trim().removePrefix("\uFEFF")
             if (line.startsWith('#') || line.isEmpty()) return@mapNotNull null
             val fields = line.split(';')
             val position = fields.getOrNull(1)?.trim()?.replace(',', '.')?.toDoubleOrNull()
             if (position == null || position !in -180.0..180.0 || fields[0].isBlank()) null
-            else DishEntry(fields[0].trim(), position, fields.getOrNull(2).orEmpty(), fields.getOrNull(3).orEmpty(), fields.getOrNull(4).orEmpty())
+            else DishEntry(fields[0].trim(), position, fields.getOrNull(2).orEmpty(), fields.getOrNull(3).orEmpty(), fields.getOrNull(4).orEmpty(), fields.getOrNull(5).orEmpty().uppercase(), fields.getOrNull(6).orEmpty())
         }.distinct()
+    }
+
+    private fun satelliteXml(text: String): List<DishEntry> {
+        require(!text.contains("<!DOCTYPE", true) && !text.contains("<!ENTITY", true)) { "Внешние XML-сущности запрещены" }
+        val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+        factory.isExpandEntityReferences = false
+        val document = factory.newDocumentBuilder().parse(java.io.ByteArrayInputStream(text.toByteArray()))
+        val satellites = document.getElementsByTagName("sat")
+        return buildList {
+            for (index in 0 until satellites.length) {
+                val sat = satellites.item(index) as org.w3c.dom.Element
+                val position = sat.getAttribute("position").toDoubleOrNull()?.div(10) ?: continue
+                if (position !in -180.0..180.0) continue
+                val name = sat.getAttribute("name")
+                add(DishEntry(name, position))
+                val transponders = sat.getElementsByTagName("transponder")
+                for (number in 0 until transponders.length) {
+                    val tp = transponders.item(number) as org.w3c.dom.Element
+                    val frequency = tp.getAttribute("frequency").toLongOrNull() ?: continue
+                    val rate = tp.getAttribute("symbol_rate").toLongOrNull() ?: continue
+                    val pol = listOf("H", "V", "L", "R").getOrNull(tp.getAttribute("polarization").toIntOrNull() ?: -1).orEmpty()
+                    add(DishEntry(name, position, tuning = "${frequency / 1000.0} МГц · $pol · ${rate / 1000} ксимв/с"))
+                }
+            }
+        }
     }
 
     private fun enigma(lines: List<String>): List<DishEntry> {
@@ -53,7 +79,9 @@ object DishCatalogue {
                 val meta = lines[i++]
                 val t = transponders[f.subList(1,4).joinToString(":")] ?: continue
                 val provider = meta.split(',').firstOrNull { it.startsWith("p:") }?.drop(2).orEmpty()
-                channels += DishEntry(orbitalLabel(t.pos), t.pos, name, provider, t.parameters)
+                val access = if (meta.split(',').any { it.startsWith("C:") }) "CA" else "FTA"
+                val kind = if (f[4].toIntOrNull(16) == 2) "Радио" else "ТВ"
+                channels += DishEntry(orbitalLabel(t.pos), t.pos, name, provider, t.parameters, access, kind)
             }
         }
         return channels.distinct()

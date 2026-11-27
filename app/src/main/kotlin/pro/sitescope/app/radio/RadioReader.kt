@@ -32,14 +32,17 @@ private fun CellInfo.row(sim:String,time:Long): RadioCell? {
         this is CellInfoLte -> with(cellIdentity) {
             val s=cellSignalStrength
             cell("LTE",mccString,mncString,tac,ci.known()?.toLong(),pci,earfcn,s,
-                metrics("RSRP dBm" to s.rsrp,"RSRQ dB" to s.rsrq,"RSSNR dB" to s.rssnr,"CQI" to s.cqi,"TA" to s.timingAdvance,"BW кГц" to bandwidth))
+                metrics("RSRP dBm" to s.rsrp,"RSRQ dB" to s.rsrq,"RSSNR dB" to s.rssnr,"CQI" to s.cqi,"TA" to s.timingAdvance,"BW кГц" to bandwidth) +
+                    if (Build.VERSION.SDK_INT >= 30 && bands.isNotEmpty()) " · Band " + bands.joinToString("/") else "")
         }
         Build.VERSION.SDK_INT>=29 && this is CellInfoNr -> with(cellIdentity as CellIdentityNr) {
             val s=cellSignalStrength as CellSignalStrengthNr
-            cell("NR",mccString,mncString,tac,nci,pci,nrarfcn,s,metrics("SS-RSRP dBm" to s.ssRsrp,"SS-RSRQ dB" to s.ssRsrq,"SS-SINR dB" to s.ssSinr,"CSI-RSRP dBm" to s.csiRsrp,"CSI-RSRQ dB" to s.csiRsrq,"CSI-SINR dB" to s.csiSinr))
+            cell("NR",mccString,mncString,tac,nci,pci,nrarfcn,s,metrics("SS-RSRP dBm" to s.ssRsrp,"SS-RSRQ dB" to s.ssRsrq,"SS-SINR dB" to s.ssSinr,"CSI-RSRP dBm" to s.csiRsrp,"CSI-RSRQ dB" to s.csiRsrq,"CSI-SINR dB" to s.csiSinr) +
+                if (Build.VERSION.SDK_INT >= 30 && bands.isNotEmpty()) " · Band n" + bands.joinToString("/n") else "")
         }
         this is CellInfoGsm -> with(cellIdentity) { val s=cellSignalStrength;cell("GSM",mccString,mncString,lac,cid.known()?.toLong(),bsic,arfcn,s,metrics("TA" to s.timingAdvance)) }
-        this is CellInfoWcdma -> with(cellIdentity) { cell("WCDMA",mccString,mncString,lac,cid.known()?.toLong(),psc,uarfcn,cellSignalStrength,"") }
+        this is CellInfoWcdma -> with(cellIdentity) { cell("WCDMA",mccString,mncString,lac,cid.known()?.toLong(),psc,uarfcn,cellSignalStrength,
+                if (Build.VERSION.SDK_INT>=30) metrics("Ec/No dB" to cellSignalStrength.ecNo) else "") }
         Build.VERSION.SDK_INT>=29 && this is CellInfoTdscdma -> with(cellIdentity) {cell("TD-SCDMA",mccString,mncString,lac,cid.known()?.toLong(),cpid,uarfcn,cellSignalStrength,metrics("RSCP dBm" to cellSignalStrength.rscp)) }
         this is CellInfoCdma -> with(cellIdentity) {val s=cellSignalStrength;cell("CDMA",null,null,networkId,basestationId.known()?.toLong(),systemId,null,s,metrics("CDMA dBm" to s.cdmaDbm,"EVDO dBm" to s.evdoDbm)) }
         else -> null
@@ -102,6 +105,6 @@ suspend fun readRadio(ctx:Context): RadioFrame = withContext(Dispatchers.IO) {
         if(!location) "Для идентификаторов сот нужна точная геопозиция." else null,
         if(subscribed && subscriptions.isEmpty()) "Активные SIM недоступны." else null,
         if(missing && location) "Android вернул неполные данные. Общий кэш показан без привязки к SIM." else null).joinToString(" ")
-    RadioFrame(time,sims,rows,wifi,valid,note)
+    RadioFrame(System.currentTimeMillis(),sims,rows,wifi,valid,note)
 }
 

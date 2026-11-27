@@ -327,7 +327,17 @@ object SpeedStore {
         } catch (e: Exception) { emptyList() }
     }
 
-    fun saveHistory(context: Context, list: List<SpeedEngine.Result>) {
+    @Synchronized fun appendHistory(context: Context, result: SpeedEngine.Result) {
+        saveHistory(context, listOf(result) + loadHistory(context))
+    }
+
+    @Synchronized fun removeHistory(context: Context, result: SpeedEngine.Result) {
+        saveHistory(context, loadHistory(context).filterNot {
+            it.time == result.time && it.server == result.server && it.net == result.net
+        })
+    }
+
+    @Synchronized fun saveHistory(context: Context, list: List<SpeedEngine.Result>) {
         val a = JSONArray()
         list.take(MAX_HISTORY).forEach { r ->
             a.put(JSONObject().put("t", r.time).put("srv", r.server).put("net", r.net).put("ping", r.ping).put("jit", r.jitter)

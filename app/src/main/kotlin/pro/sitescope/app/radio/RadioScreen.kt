@@ -45,7 +45,9 @@ fun RadioScreen(startTab:Int=0){
     var refresh by remember{mutableIntStateOf(0)}
     var frame by remember{mutableStateOf<RadioFrame?>(null)}
     val active by SurveyService.active.collectAsState()
+    val running by SurveyService.running.collectAsState()
     val live by SurveyService.last.collectAsState()
+    val position by SurveyService.position.collectAsState()
     val error by SurveyService.failure.collectAsState()
     var startAfterGrant by rememberSaveable {mutableStateOf(false)}
     fun start(){runCatching {ctx.startForegroundService(Intent(ctx,SurveyService::class.java))}.onFailure{toast(ctx,"Не удалось начать запись")}}
@@ -56,8 +58,8 @@ fun RadioScreen(startTab:Int=0){
     }
     val permissions=locationPermissions.toList()+Manifest.permission.READ_PHONE_STATE+
         (if(Build.VERSION.SDK_INT>=33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList())
-    LaunchedEffect(tab,refresh,active,owner) {
-        if(tab!=0 || active!=null) return@LaunchedEffect
+    LaunchedEffect(tab,refresh,running,owner) {
+        if(tab!=0 || running) return@LaunchedEffect
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED){
             while(isActive){
                 val f=readRadio(ctx);frame=f;RadioWidget.publish(ctx,f)
@@ -65,10 +67,16 @@ fun RadioScreen(startTab:Int=0){
             }
         }
     }
-    val current=if(active!=null) live else frame
+    val current=if(running) live else frame
     Column(Modifier.fillMaxSize().padding(horizontal=12.dp)){
         Chips(tabs,tabs[tab]){tab=tabs.indexOf(it)}
         if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
+        position?.let {
+            Text("${it.latitude}, ${it.longitude} · ±${it.accuracy.toInt()} м" +
+                (if (it.hasAltitude()) " · ${it.altitude.toInt()} м" else "") +
+                (if (it.hasSpeed()) " · ${(it.speed*3.6).toInt()} км/ч" else ""),
+                style=MaterialTheme.typography.bodySmall)
+        }
         when(tab){
             0 -> LiveRadio(current,refresh={refresh++},grant={perms.launch(permissions.toTypedArray())},recording=active!=null,record={
                 if(active!=null)ctx.stopService(Intent(ctx,SurveyService::class.java))
@@ -88,6 +96,7 @@ private fun LiveRadio(f:RadioFrame?,refresh:()->Unit,grant:()->Unit,recording:Bo
     var filter by rememberSaveable {mutableStateOf("Все")}
     var neighbors by rememberSaveable {mutableStateOf(true)}
     var hex by rememberSaveable {mutableStateOf(false)}
+    var gNodeBits by remember { mutableIntStateOf(ctx.getSharedPreferences("radio-options",0).getInt("gnbBits",22).coerceIn(22,32)) }
     var series by remember{mutableStateOf<Map<String,List<Pair<Long,Int>>>>(emptyMap())}
     LaunchedEffect(f?.time){
         if(f!=null){
@@ -132,6 +141,13 @@ private fun LiveRadio(f:RadioFrame?,refresh:()->Unit,grant:()->Unit,recording:Bo
                 Text("CID ${num(c.cid)} · TAC/LAC ${num(c.area)} · PCI/PSC ${c.pci ?: "—"}")
                 Text("Канал ${c.channel ?: "—"}")
                 if(c.rat=="LTE" && c.cid!=null)Text("eNB ${c.cid shr 8} · сектор ${c.cid and 255}")
+                if (c.rat=="NR" && c.cid!=null) {
+                    Text("gNB ${c.cid shr (36-gNodeBits)} · сектор ${c.cid and ((1L shl (36-gNodeBits))-1)} · $gNodeBits бит")
+                    TextButton({
+                        gNodeBits = if (gNodeBits == 32) 22 else gNodeBits + 1
+                        ctx.getSharedPreferences("radio-options",0).edit().putInt("gnbBits",gNodeBits).apply()
+                    }) { Text("Длина gNodeB ID") }
+                }
                 if(c.details.isNotBlank())Text(c.details,style=MaterialTheme.typography.bodySmall)
                 Text("Измерение модема: ${clock(c.measured)}",style=MaterialTheme.typography.labelSmall)
             }}

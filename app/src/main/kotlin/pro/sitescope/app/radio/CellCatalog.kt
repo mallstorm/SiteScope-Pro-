@@ -17,6 +17,10 @@ fun parseTower(line:String): Tower? {
         return Tower(rat,plmn.take(3),plmn.drop(3),area,cid,pci,ch,y,x,acc,name.take(500),angle?.takeIf {it in 0..359})
     }
     if(f.size>=10 && f[0] in listOf("","G","L","N","C","W","T")) return tower(f[0],f[1]+f[2],id(f[3]),id(f[4]),f.getOrNull(10).orEmpty(),f[7],f[8],f[5].toIntOrNull(),f[6].toIntOrNull(),f[9].toIntOrNull(),f.getOrNull(11)?.toIntOrNull())
+    if (f.size >= 16 && f[0].matches(Regex("[0-9]{5,6}"))) {
+        val rat = mapOf("1" to "G", "2" to "C", "3" to "W", "4" to "L")[f[8]].orEmpty()
+        return tower(rat, f[0], id(f[2]), id(f[1]), f[7], f[4], f[5], angle = f[10].toIntOrNull())
+    }
     if(f.size==9) {
         val cid=id(f[1]) ?: return null
         val rnc=id(f[3]) ?: 0

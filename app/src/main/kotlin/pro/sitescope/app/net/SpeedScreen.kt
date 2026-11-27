@@ -80,8 +80,8 @@ class SpeedViewModel(app: Application) : AndroidViewModel(app) {
             })
             current = r; live = 0.0
             if (!cancel.get() && (r.down >= 0 || r.up >= 0 || r.ping >= 0)) {
-                history = listOf(r) + history
-                SpeedStore.saveHistory(context, history)
+                SpeedStore.appendHistory(context, r)
+                history = SpeedStore.loadHistory(context)
             }
             phase = SpeedEngine.Phase.DONE
         }
@@ -89,7 +89,7 @@ class SpeedViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stop() { cancel.set(true) }
     fun clearHistory() { history = emptyList(); SpeedStore.saveHistory(context, history) }
-    fun remove(r: SpeedEngine.Result) { history = history.filter { it !== r }; SpeedStore.saveHistory(context, history) }
+    fun remove(r: SpeedEngine.Result) { SpeedStore.removeHistory(context, r); history = SpeedStore.loadHistory(context) }
 }
 
 private val gaugeScale = listOf(0.0, 5.0, 10.0, 20.0, 50.0, 100.0, 250.0, 500.0, 1000.0)

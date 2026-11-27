@@ -2,6 +2,8 @@ package pro.sitescope.app.radio
 
 import android.content.*
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -23,6 +25,16 @@ fun RadioOptions(p:SharedPreferences){
     var host by rememberSaveable { mutableStateOf(p.getString("testUrl","https://www.google.com/generate_204").orEmpty()) }
     var latency by rememberSaveable {mutableStateOf("")}
     var busy by remember{mutableStateOf(false)}
+    val running by SurveyService.running.collectAsState()
+    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        if (result[android.Manifest.permission.ACCESS_FINE_LOCATION] == true) {
+            runCatching { ctx.startForegroundService(Intent(ctx, SurveyService::class.java).putExtra("record", false)) }
+                .onFailure { toast(ctx, "Не удалось начать мониторинг") }
+        }
+    }
+    var events by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
+    val last by SurveyService.last.collectAsState()
+    LaunchedEffect(last?.time) { events = withContext(Dispatchers.IO) { SurveyStore.get(ctx).events() } }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
         Text("Проверка подключения",style=MaterialTheme.typography.titleMedium)
         OutlinedTextField(host,{host=it},Modifier.fillMaxWidth(),label={Text("URL для проверки HTTP")},singleLine=true)
@@ -43,20 +55,46 @@ fun RadioOptions(p:SharedPreferences){
             TextButton({ctx.startActivity(Intent(ctx,ToolActivity::class.java).putExtra("screen","network").putExtra("tab",3))}){Text("Тест скорости")}
         }
         if(latency.isNotBlank())Text(latency)
+        TextButton({
+            if (running) ctx.stopService(Intent(ctx, SurveyService::class.java))
+            else permissions.launch(locationPermissions + android.Manifest.permission.READ_PHONE_STATE +
+                if (android.os.Build.VERSION.SDK_INT >= 33) arrayOf(android.Manifest.permission.POST_NOTIFICATIONS) else emptyArray())
+        }) { Text(if (running) "Остановить радиомонитор" else "Начать фоновый мониторинг") }
         Text("Запись и оповещения",style=MaterialTheme.typography.titleMedium)
         SettingInt(p,"interval","Пауза между замерами, с",15,5..300)
         SettingToggle(p,"weak","Слабый сигнал обслуживающей соты")
         SettingInt(p,"threshold","Порог, dBm",-110,-150..-40)
+        SettingToggle(p,"wifiWeak","Слабый сигнал Wi-Fi")
+        SettingInt(p,"wifiThreshold","Порог Wi-Fi, dBm",-75,-126..-30)
+        SettingToggle(p,"autoHttp","Периодическая проверка HTTP")
+        SettingInt(p,"httpInterval","Интервал HTTP, с",60,15..3600)
         SettingToggle(p,"internet","Потеря доступа в интернет")
         SettingToggle(p,"service","Потеря обслуживания SIM")
         SettingToggle(p,"roaming","Вход в роуминг")
         SettingToggle(p,"data","Отключение мобильных данных")
         SettingToggle(p,"slow","Низкая скорость по завершённому тесту")
         SettingInt(p,"speedMin","Порог загрузки, Мбит/с",5,1..1000)
+        SettingToggle(p,"autoSpeed","Периодический тест скорости")
+        SettingToggle(p,"meteredSpeed","Разрешить тест в тарифицируемой сети")
+        SettingInt(p,"speedInterval","Интервал теста, мин",15,5..1440)
+        SettingInt(p,"speedCap","Лимит загрузки за тест, МБ",2,1..20)
         SettingToggle(p,"quiet","Тихие часы")
         SettingInt(p,"quietStart","Начало тихих часов",22,0..23)
         SettingInt(p,"quietEnd","Конец тихих часов",8,0..23)
-        Text("События связи отслеживаются во время записи. Виджет показывает время последнего измерения.",style=MaterialTheme.typography.bodySmall)
+        Text("Фоновый монитор обновляет виджеты и события. Запись маршрута включается на вкладке «Сигнал».",style=MaterialTheme.typography.bodySmall)
+        TextButton({
+            runCatching { ctx.startActivity(Intent(Intent.ACTION_MAIN).setClassName("com.android.settings", "com.android.settings.TestingSettings")) }
+                .onFailure { runCatching { ctx.startActivity(Intent(Settings.ACTION_NETWORK_OPERATOR_SETTINGS)) }
+                    .onFailure { toast(ctx, "Сервисное меню недоступно на этом устройстве") } }
+        }) { Text("Сервисное меню телефона") }
+        Text("События связи", style = MaterialTheme.typography.titleMedium)
+        TextButton({
+            scope.launch {
+                withContext(Dispatchers.IO) { SurveyStore.get(ctx).addEvent("Проверка события пользователем") }
+                events = withContext(Dispatchers.IO) { SurveyStore.get(ctx).events() }
+            }
+        }) { Text("Проверить журнал") }
+        events.forEach { (time, message) -> Text("${clock(time)} · $message", style = MaterialTheme.typography.bodySmall) }
         TextButton({runCatching{ctx.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))}.onFailure{toast(ctx,"Настройки сети недоступны")}}){Text("Системные настройки сети")}
     }
 }
