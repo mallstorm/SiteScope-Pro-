@@ -94,6 +94,8 @@ private fun MyNetworkCard(n: WifiNetwork, crowding: Int) {
             Column(Modifier.weight(1f)) {
                 Text(n.ssid, style = MaterialTheme.typography.titleSmall)
                 Text("${n.band} · канал ${n.channel} · ${n.security}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${n.bssid} · ${n.frequency} МГц · ширина ${n.width} МГц", style = MaterialTheme.typography.labelSmall)
+                if(n.measured>0) Text("Замер ${java.text.DateFormat.getTimeInstance().format(java.util.Date(n.measured))}", style=MaterialTheme.typography.labelSmall)
             }
             Text("${n.level} дБм", style = MaterialTheme.typography.labelMedium)
         }
@@ -154,6 +156,8 @@ private fun NetworkRow(n: WifiNetwork) {
                     if (n.isMine) { Spacer(Modifier.width(6.dp)); Pill("ваша", tones.net, tones.netSoft) }
                 }
                 Text("${n.band} · канал ${n.channel} · ${n.security}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${n.bssid} · ${n.frequency} МГц · ширина ${n.width} МГц", style = MaterialTheme.typography.labelSmall)
+                if(n.measured>0) Text("Замер ${java.text.DateFormat.getTimeInstance().format(java.util.Date(n.measured))}", style=MaterialTheme.typography.labelSmall)
             }
             if (warn) Icon(Icons.Rounded.LockOpen, null, tint = tones.warn, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))

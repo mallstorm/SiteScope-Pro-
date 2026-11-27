@@ -18,7 +18,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class WifiNetwork(val ssid: String, val bssid: String, val level: Int, val frequency: Int, val channel: Int,
-                   val band: String, val security: String, val open: Boolean, val isMine: Boolean)
+                   val band: String, val security: String, val open: Boolean, val isMine: Boolean, val width: String = "", val measured: Long = 0)
 
 /** Сканирование и диагностика Wi-Fi: сети рядом, занятость каналов, своя сеть, сигнал по комнатам. */
 class WifiViewModel(app: Application) : AndroidViewModel(app) {
@@ -54,8 +54,8 @@ class WifiViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() { stop() }
 
     private fun permissionGranted(): Boolean =
-        context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
-        context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED || (Build.VERSION.SDK_INT < 29 &&
+        context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED)
 
     fun scan() {
         if (scanning) return
@@ -82,8 +82,10 @@ class WifiViewModel(app: Application) : AndroidViewModel(app) {
         networks = results.map { r ->
             val ssid = try { r.SSID ?: "" } catch (e: Exception) { "" }
             val cap = r.capabilities ?: ""
-            val open = !cap.contains("WPA") && !cap.contains("WEP") && !cap.contains("EAP") && !cap.contains("SAE")
+            val open = !cap.contains("OWE") && !cap.contains("WAPI") && !cap.contains("WPA") && !cap.contains("WEP") && !cap.contains("EAP") && !cap.contains("SAE")
             val security = when {
+                cap.contains("OWE") -> "Enhanced Open (OWE)"
+                cap.contains("WAPI") -> "WAPI"
                 cap.contains("SAE") -> "WPA3"
                 cap.contains("WPA3") -> "WPA3"
                 cap.contains("WPA2") -> "WPA2"
@@ -94,14 +96,18 @@ class WifiViewModel(app: Application) : AndroidViewModel(app) {
             }
             val freq = r.frequency
             val (channel, band) = channelOf(freq)
-            WifiNetwork(ssid.ifBlank { "(скрыта)" }, r.BSSID ?: "", r.level, freq, channel, band, security, open, r.BSSID == connectedBssid)
+            WifiNetwork(ssid.ifBlank { "(скрыта)" }, r.BSSID ?: "", r.level, freq, channel, band, security, open, r.BSSID == connectedBssid,
+                when(r.channelWidth) {0->"20";1->"40";2->"80";3->"160";4->"80+80";5->"320";else->"—"},
+                if(r.timestamp>0) System.currentTimeMillis()-(android.os.SystemClock.elapsedRealtime()-r.timestamp/1000) else 0L)
         }.sortedByDescending { it.level }
     }
 
     private fun channelOf(freq: Int): Pair<Int, String> = when {
-        freq in 2412..2484 -> ((freq - 2412) / 5 + 1) to "2.4 ГГц"
+        freq == 2484 -> 14 to "2.4 ГГц"
+        freq == 5935 -> 2 to "6 ГГц"
+        freq in 2412..2472 -> ((freq - 2412) / 5 + 1) to "2.4 ГГц"
         freq in 5160..5885 -> ((freq - 5000) / 5) to "5 ГГц"
-        freq in 5955..7115 -> ((freq - 5950) / 5 + 1) to "6 ГГц"
+        freq in 5955..7115 -> ((freq - 5950) / 5) to "6 ГГц"
         else -> 0 to "?"
     }
 
@@ -118,7 +124,7 @@ class WifiViewModel(app: Application) : AndroidViewModel(app) {
             while (isActive && meterOn) {
                 liveRssi = try {
                     @Suppress("DEPRECATION")
-                    manager.connectionInfo?.rssi
+                    manager.connectionInfo?.rssi?.takeIf { it in -126..-1 }
                 } catch (e: Exception) { null }
                 delay(1200)
             }

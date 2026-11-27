@@ -18,8 +18,8 @@ android {
         minSdk = 28
         targetSdk = 36
         // Номер сборки CI добавляется к коду версии: каждая новая сборка выше предыдущей, обновление ставится поверх без конфликтов.
-        versionCode = 1_000_100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
-        versionName = "2.0.0-alpha1"
+        versionCode = 1_001_100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
+        versionName = "2.0.0-alpha2"
         ndk { abiFilters += "arm64-v8a" }
     }
 
@@ -110,6 +110,7 @@ android.sourceSets.getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("c
 tasks.named("preBuild") { dependsOn(buildCiadpi) }
 
 dependencies {
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
     implementation(files("libs/jsch-0.2.16.jar", "libs/libv2ray.jar"))
 
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))

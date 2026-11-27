@@ -77,7 +77,7 @@ fun DataHub(state: AppState, startTab: Int = 0) {
     var reportMode by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         AppHeader("Данные", "Проекты, история и отчёты", logo = true,
-            actions = { HeaderMenu(listOf("Настройки и резервная копия" to { state.openRoute("settings") })) }
+            actions = { HeaderMenu(listOf("Сессии радиоизмерений" to { state.openRoute("radio", 1) }, "Настройки и резервная копия" to { state.openRoute("settings") })) }
         ) { StatusPills(state) }
         SegmentedTabs(listOf("Проекты", "История", "Отчёты"), tab, { tab = it; fullProjects = false }, icons = listOf(Icons.Rounded.FolderOpen, Icons.Rounded.History, Icons.Rounded.Description), modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
         Box(Modifier.weight(1f).fillMaxWidth()) {

@@ -74,6 +74,7 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
     Column(Modifier.fillMaxSize()) {
         AppHeader("Телевидение", if (vm.channels.isEmpty()) "IPTV / M3U, udpxy, multicast, проверка и просмотр" else "Каналы, источники и диагностика · ${vm.channels.size}",
             actions = {
+                IconButton(onClick = { state.openRoute("satellite") }) { Icon(Icons.Rounded.SettingsInputAntenna, "Спутниковая антенна") }
                 if (vm.channels.isNotEmpty()) {
                     IconButton(onClick = { addSheet = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.Add, "Добавить плейлист") }
                     IconButton(onClick = { if (vm.checking) vm.stopCheck() else { vm.startCheck(vm.channels.toList()); toast(context, "Проверяем все каналы") } }, modifier = Modifier.size(40.dp)) { Icon(if (vm.checking) Icons.Rounded.Stop else Icons.Rounded.VerifiedUser, "Проверить все каналы") }

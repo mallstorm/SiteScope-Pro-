@@ -66,12 +66,15 @@ object ToolRegistry {
             Tool("devices", "Устройства", "Кто в вашей сети", Icons.Rounded.Devices, "network", 0),
             Tool("scanner", "Сканер портов", "Открытые сервисы", Icons.Rounded.NetworkCheck, "network", 1),
             Tool("connections", "Подключения", "SSH, файлы, экран, камеры", Icons.Rounded.Terminal, "network", 2),
+            Tool("radio", "Радиомонитор", "Сигнал SIM, соседние соты, события и виджет", Icons.Rounded.SettingsInputAntenna, "radio", isNew = true),
+            Tool("survey", "Карта покрытия", "Маршруты измерений и база станций", Icons.Rounded.MyLocation, "radio", 1),
             Tool("wifi", "Wi-Fi диагностика", "Каналы, сигнал, комнаты", Icons.Rounded.Wifi, "wifi"),
             Tool("speed", "Скорость", "Тест в стиле Speedtest", Icons.Rounded.Speed, "network", 3),
             Tool("external", "Доступ извне", "Доступность ваших сервисов", Icons.Rounded.OpenInNew, "network", 4, isNew = true),
             Tool("routers", "Роутеры", "Состояние и настройки", Icons.Rounded.Router, "network", 5)
         )),
         ToolGroup("tv", "Телевидение", "IPTV, M3U, потоки, каналы и источники", Icons.Rounded.LiveTv, setOf(ToolCategory.TV), listOf(
+            Tool("satellite", "Спутниковая антенна", "Наведение, карта, визир и каталог DVB", Icons.Rounded.SettingsInputAntenna, "satellite", isNew = true),
             Tool("channels", "Каналы", "Плейлисты и просмотр", Icons.Rounded.List, "tv"),
             Tool("sources", "Источники", "M3U и телепрограмма", Icons.Rounded.Cloud, "tv", isNew = true),
             Tool("streamcheck", "Проверка потоков", "Доступность и качество", Icons.Rounded.PlaylistAddCheck, "tv"),

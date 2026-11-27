@@ -77,6 +77,8 @@ fun ToolContent(screen: String, tab: Int, targets: String?, state: AppState? = n
             "tvlan" -> { BackHeader("ТВ в локальной сети", onBack); TvLanScreen() }
             "metrics" -> { BackHeader("Метрики поиска", onBack); MetricsScreen(targets) }
             "batch" -> { BackHeader("Проверка списка сайтов", onBack); BatchScreen() }
+            "satellite" -> { BackHeader("Спутниковая антенна", onBack); pro.sitescope.app.satellite.DishScreen() }
+            "radio" -> { BackHeader("Радиомонитор", onBack); pro.sitescope.app.radio.RadioScreen(tab) }
             "wifi" -> { BackHeader("Диагностика Wi-Fi", onBack); WifiScreen() }
             else -> NetworkScreen(tab, targets)
         }

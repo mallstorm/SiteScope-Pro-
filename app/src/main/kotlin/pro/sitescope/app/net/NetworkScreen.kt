@@ -40,6 +40,7 @@ private fun dateText(time: Long): String = if (time <= 0) "" else SimpleDateForm
 
 @Composable
 fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewModel = viewModel()) {
+    val context = LocalContext.current
     var tab by remember { mutableIntStateOf(startTab) }
     LifecycleResumeEffect(vm) { vm.loadProfiles(); onPauseOrDispose { } }
     LaunchedEffect(startTargets) { if (!startTargets.isNullOrBlank()) vm.targets = startTargets }
@@ -57,6 +58,7 @@ fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewMo
             4 -> ExposureScreen()
             5 -> RouterScreen()
             else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
+                ActionRow(Icons.Rounded.SettingsInputAntenna, "Радиомонитор", "Соты, SIM и маршруты покрытия", { open(context, ToolActivity::class.java) { putExtra("screen", "radio") } })
                 ActionRow(Icons.Rounded.Link, "Подключения", "SSH, файлы, экран и камеры устройств", { tab = 2 })
                 ActionRow(Icons.Rounded.Public, "Доступ извне", "Видны ли ваши сервисы из интернета", { tab = 4 })
                 ActionRow(Icons.Rounded.Router, "Роутеры", "Состояние и настройки роутера", { tab = 5 })
