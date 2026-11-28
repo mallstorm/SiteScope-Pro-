@@ -27,7 +27,9 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.*
 
 data class Pin(val lat: Double, val lon: Double, val title: String, val dbm: Int? = null, val bearing: Int? = null,
-    val isLocation: Boolean = false, val station: StationMarker? = null, val id: String? = null)
+    val isLocation: Boolean = false, val station: StationMarker? = null, val id: String? = null, val markerLabel: String? = null)
+
+data class FieldMapArc(val points: List<GeoPoint>, val color: Int, val estimated: Boolean)
 
 enum class FieldMapLayer(val title: String) {
     Streets("Схема"), Satellite("Спутник"), Hybrid("Гибрид")
@@ -56,7 +58,8 @@ private val labels = esriTiles("EsriWorldPlacesV2", "Reference/World_Boundaries_
 
 @Composable
 fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick: ((Pin) -> Unit)? = null, orientation: Float = 0f, modifier: Modifier = Modifier.fillMaxWidth().height(320.dp), layer: FieldMapLayer = FieldMapLayer.Streets, recenter: Int = 0, initialZoom: Double = 15.0, followCenter: Boolean = true,
-    stationLinks: List<Pair<Pin, Pin>> = emptyList(), onStationClick: ((Pin) -> Unit)? = null) {
+    stationLinks: List<Pair<Pin, Pin>> = emptyList(), onStationClick: ((Pin) -> Unit)? = null,
+    arcs: List<FieldMapArc> = emptyList()) {
     val ctx = LocalContext.current
     val pick by rememberUpdatedState(onPick)
     val stationClick by rememberUpdatedState(onStationClick)
@@ -100,11 +103,11 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
         map.controller.setZoom(map.zoomLevelDouble.coerceIn(map.minZoomLevel, map.maxZoomLevel))
         map.invalidate()
     }
-    LaunchedEffect(initialZoom) { map.controller.setZoom(initialZoom) }
+    LaunchedEffect(initialZoom, recenter.takeIf { arcs.isNotEmpty() }) { map.controller.setZoom(initialZoom) }
     LaunchedEffect(map, recenter, center.lat.takeIf { followCenter }, center.lon.takeIf { followCenter }) {
         map.controller.setCenter(GeoPoint(center.lat, center.lon))
     }
-    LaunchedEffect(pins, line, stationLinks, onPick != null, onStationClick != null, layer) {
+    LaunchedEffect(pins, line, stationLinks, arcs, onPick != null, onStationClick != null, layer) {
         map.overlays.clear()
         if (layer == FieldMapLayer.Hybrid) map.overlays.addAll(references)
         if (onPick != null) map.overlays.add(MapEventsOverlay(object: MapEventsReceiver {
@@ -136,6 +139,16 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
                 outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 7f), 0f)
             })
         }
+        for (arc in arcs) {
+            map.overlays.add(Polyline(map).apply {
+                setPoints(arc.points)
+                val density = ctx.resources.displayMetrics.density
+                outlinePaint.color = arc.color
+                outlinePaint.strokeWidth = 2.3f * density
+                outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                if (arc.estimated) outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(5f * density, 4f * density), 0f)
+            })
+        }
         pins.forEach { p ->
             p.bearing?.let { bearing ->
                 val origin = GeoPoint(p.lat, p.lon)
@@ -151,6 +164,22 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
                 title = p.title
                 if (p.isLocation) {
                     icon = ContextCompat.getDrawable(ctx, R.drawable.ic_map_location_crystal)
+                } else if (p.markerLabel != null) {
+                    val density = ctx.resources.displayMetrics.density
+                    val size = (24 * density).toInt()
+                    val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+                    val mid = size / 2f
+                    paint.color = Color.WHITE
+                    canvas.drawCircle(mid, mid, mid, paint)
+                    paint.color = 0xff104453.toInt()
+                    canvas.drawCircle(mid, mid, mid - 1.5f * density, paint)
+                    paint.color = Color.WHITE
+                    paint.textAlign = android.graphics.Paint.Align.CENTER
+                    paint.textSize = 11 * density
+                    canvas.drawText(p.markerLabel, mid, mid - (paint.descent() + paint.ascent()) / 2, paint)
+                    icon = android.graphics.drawable.BitmapDrawable(ctx.resources, bitmap)
                 } else if (p.station != null) {
                     val color = when (p.station) {
                         StationMarker.Serving -> 0xff13bb66.toInt()
@@ -169,7 +198,7 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
                     canvas.drawCircle(14f, 14f, 12f, paint)
                     icon = android.graphics.drawable.BitmapDrawable(ctx.resources, bitmap)
                 }
-                setAnchor(Marker.ANCHOR_CENTER, if (p.dbm != null && !p.isLocation) Marker.ANCHOR_CENTER else Marker.ANCHOR_BOTTOM)
+                setAnchor(Marker.ANCHOR_CENTER, if (p.markerLabel != null || p.dbm != null && !p.isLocation) Marker.ANCHOR_CENTER else Marker.ANCHOR_BOTTOM)
             })
         }
         map.invalidate()

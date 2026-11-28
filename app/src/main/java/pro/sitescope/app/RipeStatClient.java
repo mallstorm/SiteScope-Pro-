@@ -99,6 +99,14 @@ public final class RipeStatClient {
         return output;
     }
 
+    public static Lookup geolocation(String ip) {
+        Lookup result = new Lookup();
+        result.resource = ip;
+        JSONObject geo = safeEndpoint("maxmind-geo-lite", ip);
+        if (geo != null) parseGeo(geo, result);
+        return result;
+    }
+
     /** Lightweight lookup for SEO/domain infrastructure: prefix, ASN, holder and reverse DNS only. */
     public static Lookup lookupNetworkSummary(String resource) {
         Lookup output = new Lookup();

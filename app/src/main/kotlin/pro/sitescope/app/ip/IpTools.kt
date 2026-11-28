@@ -99,35 +99,6 @@ object IpTools {
         return PingResult(count, 0, 0.0, 0.0, 0.0, "TCP", "Узел не отвечает")
     }
 
-    /** Трассировка через ping с растущим TTL (работает без root). */
-    fun traceroute(host: String, maxHops: Int = 24, onHop: (Hop) -> Unit, cancelled: () -> Boolean = { false }) {
-        val target = host.trim()
-        if (!target.matches(Regex("[A-Za-z0-9.:_-]{1,253}"))) return
-        val binary = if (java.io.File("/system/bin/ping").exists()) "/system/bin/ping" else "ping"
-        var silent = 0
-        for (ttl in 1..maxHops) {
-            if (cancelled()) return
-            var address = ""; var ms = 0.0; var reached = false
-            try {
-                val t0 = System.nanoTime()
-                val process = ProcessBuilder(binary, "-c", "1", "-W", "2", "-t", ttl.toString(), target).redirectErrorStream(true).start()
-                val text = process.inputStream.bufferedReader().readText()
-                process.waitFor(4, TimeUnit.SECONDS)
-                ms = (System.nanoTime() - t0) / 1e6
-                val from = Regex("(?i)from ([0-9a-f.:]+)[: ]").find(text)
-                if (from != null) {
-                    address = from.groupValues[1].trimEnd(':')
-                    reached = text.contains("bytes from", true) && !text.contains("exceeded", true)
-                    Regex("time[=<]([0-9.]+)").find(text)?.let { ms = it.groupValues[1].toDouble() }
-                }
-            } catch (e: Exception) { return }
-            onHop(Hop(ttl, address, ms, reached))
-            if (reached) return
-            silent = if (address.isEmpty()) silent + 1 else 0
-            if (silent >= 6) return
-        }
-    }
-
     private val commonPorts = listOf(21 to "FTP", 22 to "SSH", 25 to "SMTP", 53 to "DNS", 80 to "HTTP", 110 to "POP3",
         143 to "IMAP", 443 to "HTTPS", 465 to "SMTPS", 587 to "SMTP", 993 to "IMAPS", 3306 to "MySQL", 3389 to "RDP", 8080 to "HTTP-alt")
 

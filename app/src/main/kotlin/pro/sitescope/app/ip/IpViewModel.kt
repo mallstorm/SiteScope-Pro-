@@ -3,15 +3,19 @@ package pro.sitescope.app.ip
 import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import pro.sitescope.app.ExposureStore
 import pro.sitescope.app.IpDataStore
 import pro.sitescope.app.RipeStatClient
 import pro.sitescope.app.ipintel.ProviderApiClient
@@ -32,10 +36,12 @@ class IpInfo {
 
 class ProviderHit(val asn: String, val name: String, val country: String, val prefixes: Int)
 
-class MyNetwork {
-    var ipv4 = ""; var ipv6 = ""; var provider4 = ""; var provider6 = ""; var asn4 = ""
-    var transport = ""; var vpn = false; var localAddresses = ""; var dns = ""; var iface = ""; var error = ""
-}
+data class MyNetwork(
+    var ipv4: String = "", var ipv6: String = "", var vpn4: String = "", var vpn6: String = "",
+    val provider: String = "", val asn: String = "", var transport: String = "", var vpn: Boolean = false,
+    var localAddresses: String = "", var dns: String = "", var vpnDns: String = "", var iface: String = "",
+    var error: String = "",
+)
 
 class IpViewModel(app: Application) : AndroidViewModel(app) {
     var page by mutableStateOf(0)
@@ -54,7 +60,12 @@ class IpViewModel(app: Application) : AndroidViewModel(app) {
     var ping by mutableStateOf<IpTools.PingResult?>(null)
     var pingRunning by mutableStateOf(false)
     var hops by mutableStateOf(listOf<IpTools.Hop>())
-    var hopPlaces by mutableStateOf(mapOf<String, String>())
+    internal var hopLocations by mutableStateOf(mapOf<String, IpMapLocation>())
+        private set
+    internal var traceOrigin by mutableStateOf<TraceOrigin?>(null)
+        private set
+    internal var traceNote by mutableStateOf("")
+        private set
     var traceRunning by mutableStateOf(false)
     var services by mutableStateOf<List<Pair<Int, String>>?>(null)
     var servicesRunning by mutableStateOf(false)
@@ -68,7 +79,8 @@ class IpViewModel(app: Application) : AndroidViewModel(app) {
     var aclInput by mutableStateOf("")
 
     private var traceJob: Job? = null
-    @Volatile private var traceCancelled = false
+    private var traceGeneration = 0
+    private var mineJob: Job? = null
     private val prefs = app.getSharedPreferences("ip_recent", Context.MODE_PRIVATE)
 
     init {
@@ -86,7 +98,9 @@ class IpViewModel(app: Application) : AndroidViewModel(app) {
         val q = text.trim()
         if (q.isEmpty() || searching) return
         query = q; searching = true; info = null; hits = emptyList(); searchError = ""
-        blacklists = null; ping = null; hops = emptyList(); services = null; traceCancelled = true
+        blacklists = null; ping = null; services = null
+        stopTrace()
+        hops = emptyList(); hopLocations = emptyMap(); traceOrigin = null; traceNote = ""
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val asn = Regex("^(?i)as\\s?(\\d+)$").find(q)
@@ -108,10 +122,13 @@ class IpViewModel(app: Application) : AndroidViewModel(app) {
                 if (info != null) {
                     remember(q)
                     // Быстрые безобидные проверки запускаем сами: связь, чёрные списки (DNS) и маршрут. Порты — только по подтверждению.
-                    info?.let { i -> if (!i.isAsn && i.ip.isNotEmpty()) {
-                        runPing()
-                        if (Subnet.isIpv4(i.ip) && i.kind.startsWith("Публичный")) { runBlacklists(); runTrace() }
-                    } }
+                    withContext(Dispatchers.Main) {
+                        info?.let { i -> if (!i.isAsn && i.ip.isNotEmpty()) {
+                            runPing()
+                            if (Subnet.isIpv4(i.ip) && i.kind.startsWith("Публичный")) runBlacklists()
+                            if (ExposureStore.publicAddress(i.ip)) runTrace()
+                        } }
+                    }
                 }
             } catch (e: Throwable) { searchError = "Не удалось выполнить поиск: " + (e.message ?: e.javaClass.simpleName) }
             searching = false
@@ -171,24 +188,55 @@ class IpViewModel(app: Application) : AndroidViewModel(app) {
 
     fun runTrace() {
         val ip = info?.ip ?: return
-        if (traceRunning) { traceCancelled = true; return }
-        traceRunning = true; traceCancelled = false; hops = emptyList(); hopPlaces = emptyMap()
-        traceJob = viewModelScope.launch(Dispatchers.IO) {
-            val db = try { IpDataStore(getApplication<Application>()) } catch (e: Throwable) { null }
+        if (traceRunning) { stopTrace(); traceNote = "Трассировка остановлена"; return }
+        val ctx = getApplication<Application>()
+        val manager = ctx.getSystemService(ConnectivityManager::class.java)
+        val network = manager?.activeNetwork
+        traceOrigin = IpTrace.origin(ctx, network, Subnet.isIpv4(ip))
+        traceRunning = true; hops = emptyList(); traceNote = ""
+        val generation = ++traceGeneration
+        traceJob = viewModelScope.launch {
             try {
-                IpTools.traceroute(ip, onHop = { hop ->
-                    if (!traceCancelled) {
-                        hops = hops + hop
-                        if (hop.address.isNotEmpty() && db != null) try {
-                            db.lookupGeo(hop.address)?.let { g ->
-                                val place = listOf(g.city, g.country).filter { it.isNotBlank() }.joinToString(", ")
-                                if (place.isNotEmpty()) hopPlaces = hopPlaces + (hop.address to place)
+                val note = withContext(Dispatchers.IO) {
+                    val job = currentCoroutineContext()[Job]
+                    fun networkChanged() = manager?.activeNetwork != network
+                    val db = runCatching { IpDataStore(ctx) }.getOrNull()
+                    try {
+                        val end = IpTrace.run(ip, network, onHop = { hop ->
+                            val geo = if (hop.address.isBlank()) null else runCatching {
+                                db?.lookupGeo(hop.address)?.let { IpMapLocation.of(it.latitude, it.longitude, it.city, it.country) }
+                            }.getOrNull()
+                            viewModelScope.launch hopUpdate@{
+                                if (generation != traceGeneration) return@hopUpdate
+                                hops = hops + hop
+                                if (geo != null) hopLocations = hopLocations + (hop.address to geo)
                             }
-                        } catch (e: Exception) { }
-                    }
-                }, cancelled = { traceCancelled })
-            } finally { try { db?.close() } catch (e: Exception) { } }
-            traceRunning = false
+                        }, cancelled = { job?.isActive != true || networkChanged() })
+                        if (networkChanged()) "Сеть сменилась во время трассировки" else end
+                    } finally { db?.close() }
+                }
+                if (generation == traceGeneration) traceNote = note
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                if (generation == traceGeneration) traceNote = "Не удалось выполнить трассировку"
+            } finally {
+                if (generation == traceGeneration) traceRunning = false
+            }
+        }
+    }
+
+    private fun stopTrace() {
+        traceGeneration++
+        traceJob?.cancel()
+        traceRunning = false
+    }
+
+    internal suspend fun locateHop(ip: String): IpMapLocation? {
+        if (!ExposureStore.publicAddress(ip)) return null
+        return withContext(Dispatchers.IO) {
+            val geo = RipeStatClient.geolocation(ip)
+            IpMapLocation.of(geo.latitude, geo.longitude, geo.city, geo.country)
         }
     }
 
@@ -201,39 +249,25 @@ class IpViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadMine(force: Boolean = false) {
         if (mineLoading || (mine != null && !force)) return
+        mineJob?.cancel()
         mineLoading = true
-        viewModelScope.launch(Dispatchers.IO) {
-            val out = MyNetwork()
+        mine = null
+        mineJob = viewModelScope.launch {
             try {
-                val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-                val network = cm.activeNetwork
-                val caps = cm.getNetworkCapabilities(network)
-                val link = cm.getLinkProperties(network)
-                if (caps != null) {
-                    out.vpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-                    out.transport = when {
-                        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
-                        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Мобильная сеть"
-                        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Кабель (Ethernet)"
-                        out.vpn -> "VPN"
-                        else -> "Сеть"
-                    }
+                val out = withContext(Dispatchers.IO) { MyNetworkProbe.measure(getApplication<Application>()) }
+                mine = out
+                mineLoading = false
+                val direct = out.ipv4.ifBlank { out.ipv6 }
+                if (direct.isNotBlank()) {
+                    val provider = withContext(Dispatchers.IO) { ProviderApiClient.providerForAddress(direct) }
+                    mine = out.copy(provider = provider.displayName(), asn = provider.asn)
                 }
-                if (link != null) {
-                    out.iface = link.interfaceName ?: ""
-                    out.localAddresses = link.linkAddresses.joinToString("\n") { (it.address.hostAddress ?: "") + "/" + it.prefixLength }
-                    out.dns = link.dnsServers.joinToString("\n") { it.hostAddress ?: "" }
-                }
-                if (network == null) out.error = "Нет подключения к сети"
-                else {
-                    val current = ProviderApiClient.currentProvider()
-                    out.ipv4 = current.addresses.ipv4; out.ipv6 = current.addresses.ipv6
-                    current.ipv4Provider?.let { out.provider4 = it.displayName(); out.asn4 = it.asn }
-                    current.ipv6Provider?.let { out.provider6 = it.displayName() }
-                    if (out.ipv4.isEmpty() && out.ipv6.isEmpty()) out.error = "Не удалось узнать внешний адрес. Проверьте интернет."
-                }
-            } catch (e: Throwable) { out.error = "Не удалось получить сведения о сети" }
-            mine = out; mineLoading = false
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                if (mine == null) mine = MyNetwork(error = "Не удалось получить сведения о сети")
+                mineLoading = false
+            }
         }
     }
 }

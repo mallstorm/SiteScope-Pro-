@@ -1,5 +1,7 @@
 package pro.sitescope.app.ipintel;
 
+import android.net.Network;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -8,6 +10,7 @@ import pro.sitescope.app.RipeStatClient;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.net.Proxy;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.util.ArrayList;
@@ -253,23 +256,42 @@ public final class ProviderApiClient {
     }
 
     private static String publicIp(String address) throws Exception {
-        JSONObject root = getJson(address);
+        return publicIp(address, null);
+    }
+
+    public static String measuredAddress(Network network, boolean ipv6) throws Exception {
+        if (network == null) throw new IllegalArgumentException("Нет выбранной сети");
+        return publicIp(ipv6 ? "https://api6.ipify.org?format=json" : "https://api.ipify.org?format=json", network);
+    }
+
+    public static ProviderCandidate providerForAddress(String address) {
+        return lookupAsnForResource(address, false);
+    }
+
+    private static String publicIp(String address, Network network) throws Exception {
+        JSONObject root = getJson(address, network);
         String ip = root.optString("ip", "").trim();
         if (ip.length() == 0) throw new IllegalStateException("Сервис не вернул IP");
         return ip;
     }
 
     private static JSONObject getJson(String address) throws Exception {
+        return getJson(address, null);
+    }
+
+    private static JSONObject getJson(String address, Network network) throws Exception {
         if (!address.toLowerCase(Locale.US).startsWith("https://")) throw new SecurityException("Разрешены только HTTPS-запросы");
         HttpURLConnection connection = null;
         try {
-            connection = (HttpURLConnection) new URL(address).openConnection();
-            connection.setConnectTimeout(12000);
-            connection.setReadTimeout(20000);
+            URL url = new URL(address);
+            connection = (HttpURLConnection) (network == null ? url.openConnection() : network.openConnection(url, Proxy.NO_PROXY));
+            connection.setConnectTimeout(network == null ? 12000 : 4500);
+            connection.setReadTimeout(network == null ? 20000 : 4500);
+            if (network != null) connection.setInstanceFollowRedirects(false);
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty("User-Agent", "SiteScopePro/0.19 Provider-Intelligence");
             int code = connection.getResponseCode();
-            if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code + " от " + new URL(address).getHost());
+            if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code + " от " + url.getHost());
             BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"), 32768);
             StringBuilder text = new StringBuilder();
             String line;

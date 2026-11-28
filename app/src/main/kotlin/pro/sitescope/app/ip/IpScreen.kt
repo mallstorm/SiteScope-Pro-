@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,7 +25,6 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -33,21 +33,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import pro.sitescope.app.IpIntelligenceActivity
 import pro.sitescope.app.ScannerActivity
 import pro.sitescope.app.ui.*
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.floor
-import kotlin.math.ln
-import kotlin.math.tan
 
 private val pages = listOf("Найти", "Подсети", "Мой адрес", "База IP")
 
 @Composable
 fun IpScreen(state: AppState, vm: IpViewModel = viewModel()) {
+    var routeOpen by rememberSaveable { mutableStateOf(false) }
+    val openRoute = {
+        if (vm.traceOrigin == null && !vm.traceRunning) vm.runTrace()
+        routeOpen = true
+    }
     LaunchedEffect(state.ipRequest) {
         state.ipRequest?.let { request ->
             state.ipRequest = null
@@ -66,16 +64,19 @@ fun IpScreen(state: AppState, vm: IpViewModel = viewModel()) {
         Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp).padding(top = 8.dp)) {
             if (vm.page == 0) { SmartSearchBar(vm.query, { vm.query = it }, "IP, сайт, AS15169 или название провайдера", onGo = { vm.search() }, scan = true); Spacer(Modifier.height(8.dp)) }
             Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) {
-                when (vm.page) { 0 -> LookupPage(vm, state); 1 -> SubnetPage(vm); else -> MinePage(vm) }
+                when (vm.page) { 0 -> LookupPage(vm, state, openRoute); 1 -> SubnetPage(vm); else -> MinePage(vm) }
             }
         }
+    }
+    vm.info?.takeIf { routeOpen && vm.page == 0 && it.ip.isNotEmpty() && !it.isAsn }?.let { info ->
+        IpRouteScreen(vm, info) { routeOpen = false }
     }
 }
 
 // ============ Поиск ============
 
 @Composable
-private fun LookupPage(vm: IpViewModel, state: AppState) {
+private fun LookupPage(vm: IpViewModel, state: AppState, openRoute: () -> Unit) {
     val context = LocalContext.current
     if (vm.searching) LoadingCard("Ищем сведения", "Локальная база · RIPE · RDAP")
     if (vm.searchError.isNotEmpty()) ErrorCard(vm.searchError)
@@ -96,7 +97,7 @@ private fun LookupPage(vm: IpViewModel, state: AppState) {
     }
 
     val info = vm.info
-    if (info != null) InfoView(vm, info, state)
+    if (info != null) InfoView(vm, info, state, openRoute)
     else if (!vm.searching && vm.hits.isEmpty()) {
         RecentQueries(vm)
         SectionTitle("Примеры")
@@ -118,12 +119,12 @@ private fun LookupPage(vm: IpViewModel, state: AppState) {
 }
 
 @Composable
-private fun InfoView(vm: IpViewModel, info: IpInfo, state: AppState) {
+private fun InfoView(vm: IpViewModel, info: IpInfo, state: AppState, openRoute: () -> Unit) {
     val context = LocalContext.current
     val dash = !info.isAsn && info.ip.isNotEmpty()
     var more by remember(info.ip, info.query) { mutableStateOf(false) }
     if (dash) {
-        IpDashboard(vm, info, state)
+        IpDashboard(vm, info, state, openRoute)
         TextButton(onClick = { more = !more }, modifier = Modifier.fillMaxWidth()) { Text(if (more) "Скрыть подробности" else "Все сведения и реестр") }
         if (!more) return
     }
@@ -149,11 +150,6 @@ private fun InfoView(vm: IpViewModel, info: IpInfo, state: AppState) {
         }
     }
     if (info.error.isNotEmpty()) { Spacer(Modifier.height(6.dp)); ErrorCard("Онлайн-справочники не ответили. Показано то, что известно локально.") }
-
-    if (info.hasGeo && !dash) {
-        Spacer(Modifier.height(8.dp))
-        MapCard(info)
-    }
 
     SectionTitle("Сведения")
     SoftCard {
@@ -194,15 +190,8 @@ private fun InfoView(vm: IpViewModel, info: IpInfo, state: AppState) {
             }
         }
         ToolCard(Icons.Rounded.Route, "Маршрут", "Через какие узлы идёт соединение, с геопривязкой", false, vm.hops.isNotEmpty() || vm.traceRunning, { vm.runTrace() }, actionTitle = if (vm.traceRunning) "Стоп" else "Запустить") {
-            for (h in vm.hops) Column(Modifier.padding(vertical = 2.dp)) {
-                Row {
-                    Text("${h.ttl}".padStart(2), fontFamily = FontFamily.Monospace, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(28.dp))
-                    Text(h.address.ifEmpty { "· · ·" }, fontFamily = FontFamily.Monospace, fontSize = 13.sp, modifier = Modifier.weight(1f), color = if (h.reached) tones.good else MaterialTheme.colorScheme.onSurface)
-                    if (h.address.isNotEmpty()) Text("%.0f мс".format(h.ms), fontFamily = FontFamily.Monospace, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                vm.hopPlaces[h.address]?.let { place -> Text(place, fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(start = 28.dp)) }
-            }
-            if (vm.traceRunning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
+            TraceStatus(vm)
+            for (hop in vm.hops) TraceHopRow(hop, vm.hopLocations[hop.address])
         }
         var confirm by remember { mutableStateOf(false) }
         ToolCard(Icons.Rounded.Lan, "Сервисы на узле", "Сайт, почта, SSH и другие популярные порты", vm.servicesRunning, vm.services != null, { confirm = true }) {
@@ -253,87 +242,69 @@ private fun ToolCard(icon: androidx.compose.ui.graphics.vector.ImageVector, titl
     Spacer(Modifier.height(6.dp))
 }
 
-@Composable
-private fun MapCard(info: IpInfo) {
-    val context = LocalContext.current
-    val zoom = 5
-    val n = 1 shl zoom
-    val xf = (info.lon + 180.0) / 360.0 * n
-    val latRad = info.lat * PI / 180.0
-    val yf = (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n
-    val x = floor(xf).toInt().coerceIn(0, n - 1); val y = floor(yf).toInt().coerceIn(0, n - 1)
-    val fx = (xf - x).toFloat(); val fy = (yf - y).toFloat()
-    val marker = MaterialTheme.colorScheme.primary
-    SoftCard(padding = 0.dp, onClick = {
-        try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:${info.lat},${info.lon}?q=${info.lat},${info.lon}(${Uri.encode(info.ip)})"))) }
-        catch (e: Exception) { toast(context, "Нет приложения с картами") }
-    }) {
-        Box(Modifier.fillMaxWidth().aspectRatio(2f).clip(MaterialTheme.shapes.large)) {
-            // Один тайл OpenStreetMap, обрезанный вокруг точки
-            BoxWithConstraints(Modifier.fillMaxSize()) {
-                val tile = maxWidth
-                val offsetX = maxWidth / 2 - tile * fx
-                val offsetY = maxHeight / 2 - tile * fy
-                AsyncImage(
-                    model = ImageRequest.Builder(context).data("https://tile.openstreetmap.org/$zoom/$x/$y.png")
-                        .addHeader("User-Agent", "SiteScopePro/1.0 (Android)").crossfade(true).build(),
-                    contentDescription = "Карта", contentScale = ContentScale.FillBounds,
-                    modifier = Modifier.requiredSize(tile).offset(x = offsetX - (maxWidth - tile) / 2, y = offsetY - (maxHeight - tile) / 2)
-                )
-            }
-            Canvas(Modifier.fillMaxSize()) {
-                val c = Offset(size.width / 2, size.height / 2)
-                drawCircle(marker.copy(alpha = 0.25f), 26.dp.toPx(), c)
-                drawCircle(Color.White, 9.dp.toPx(), c)
-                drawCircle(marker, 6.dp.toPx(), c)
-            }
-            Text("© OpenStreetMap", fontSize = 10.sp, color = Color(0xFF333333), modifier = Modifier.align(Alignment.BottomEnd).background(Color.White.copy(alpha = 0.7f)).padding(horizontal = 4.dp))
-        }
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.Place, null, tint = marker)
-            Spacer(Modifier.width(8.dp))
-            Text(info.place.ifEmpty { "%.3f, %.3f".format(info.lat, info.lon) }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-            Text("Открыть карту", style = MaterialTheme.typography.labelLarge, color = marker)
-        }
-    }
-}
-
 // ============ Мой адрес ============
 
 @Composable
 private fun MinePage(vm: IpViewModel) {
     val context = LocalContext.current
-    LaunchedEffect(Unit) { vm.loadMine() }
+    LaunchedEffect(Unit) { vm.loadMine(force = true) }
     val m = vm.mine
-    if (vm.mineLoading && m == null) { LoadingCard("Определяем ваш адрес"); return }
+    if (vm.mineLoading && m == null) { LoadingCard("Определяем адреса"); return }
     if (m == null) return
     if (m.error.isNotEmpty()) { ErrorCard(m.error); Spacer(Modifier.height(6.dp)) }
     SoftCard {
-        Text("Ваш адрес в интернете", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(m.ipv4.ifEmpty { m.ipv6.ifEmpty { "—" } }, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Monospace,
-            modifier = Modifier.clickable { copyText(context, m.ipv4.ifEmpty { m.ipv6 }) })
-        if (m.provider4.isNotEmpty() || m.provider6.isNotEmpty()) Text(m.provider4.ifEmpty { m.provider6 }, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val direct = m.ipv4.ifBlank { m.ipv6 }
+        val tunnel = m.vpn4.ifBlank { m.vpn6 }
+        Text(if (m.vpn) "Основная сеть / через VPN" else "Публичный адрес основной сети",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (m.vpn) {
+            if (m.ipv4.isNotEmpty() || m.vpn4.isNotEmpty() || (direct.isEmpty() && tunnel.isEmpty())) {
+                PublicAddressPair("IPv4", m.ipv4, m.vpn4)
+            }
+            if (m.ipv6.isNotEmpty() || m.vpn6.isNotEmpty()) PublicAddressPair("IPv6", m.ipv6, m.vpn6)
+            if (direct.isEmpty() && m.error.isEmpty()) Text("Прямой замер недоступен. VPN или Android могут блокировать доступ к основной сети.",
+                style = MaterialTheme.typography.bodySmall)
+            if (direct.isNotEmpty() && direct == tunnel) Text("Оба замера вернули один адрес.", style = MaterialTheme.typography.bodySmall)
+        } else {
+            Text(direct.ifBlank { "—" }, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Monospace,
+                modifier = Modifier.clickable(enabled = direct.isNotBlank()) { copyText(context, direct) })
+        }
+        if (m.provider.isNotEmpty()) Text(m.provider, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (m.transport.isNotEmpty()) Pill(m.transport, tones.ip, tones.ipSoft)
-            if (m.vpn) Pill("VPN включён", tones.good, tones.goodSoft, icon = Icons.Rounded.Shield) else Pill("Без VPN", tones.info, tones.infoSoft)
-            if (m.ipv6.isNotEmpty()) Pill("IPv6 есть", tones.good, tones.goodSoft)
+            if (m.vpn) Pill("VPN для приложения", tones.good, tones.goodSoft, icon = Icons.Rounded.Shield)
         }
-        Row(Modifier.padding(top = 8.dp)) {
-            if (m.ipv4.isNotEmpty()) TextButton(onClick = { vm.page = 0; vm.search(m.ipv4) }, contentPadding = PaddingValues(horizontal = 4.dp)) { Text("Подробнее об адресе") }
-            TextButton(onClick = { vm.loadMine(force = true) }) { Text(if (vm.mineLoading) "Обновляем…" else "Обновить") }
+        FlowRow(Modifier.padding(top = 8.dp)) {
+            if (direct.isNotEmpty()) TextButton(onClick = { vm.page = 0; vm.search(direct) }) { Text("Основной IP") }
+            if (tunnel.isNotEmpty() && tunnel != direct) TextButton(onClick = { vm.page = 0; vm.search(tunnel) }) { Text("IP через VPN") }
+            TextButton(onClick = { vm.loadMine(force = true) }) { Text("Обновить") }
         }
     }
     SectionTitle("Подключение")
     SoftCard {
-        InfoRow("IPv4", m.ipv4, mono = true)
-        InfoRow("IPv6", m.ipv6, mono = true)
-        InfoRow("Провайдер", m.provider4.ifEmpty { m.provider6 })
-        InfoRow("Автономная система", m.asn4, mono = true)
-        InfoRow("Адрес в локальной сети", m.localAddresses, mono = true)
-        InfoRow("Серверы DNS", m.dns, mono = true)
-        InfoRow("Интерфейс", m.iface, mono = true)
-        if (m.vpn) Text("Сейчас сайты видят адрес VPN-сервера, а не ваш настоящий. Серверы DNS выше — те, что выдал VPN: если среди них адрес вашего провайдера, запросы имён могут утекать мимо туннеля.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+        if (!m.vpn) {
+            InfoRow("IPv4", m.ipv4, mono = true)
+            InfoRow("IPv6", m.ipv6, mono = true)
+        }
+        InfoRow("Провайдер основной сети", m.provider)
+        InfoRow("Автономная система", m.asn, mono = true)
+        InfoRow("Адрес устройства", m.localAddresses, mono = true)
+        InfoRow("DNS основной сети", m.dns, mono = true)
+        InfoRow("DNS VPN", m.vpnDns, mono = true)
+        InfoRow("Интерфейс основной сети", m.iface, mono = true)
+    }
+}
+
+@Composable
+private fun PublicAddressPair(family: String, direct: String, tunnel: String) {
+    val context = LocalContext.current
+    Text(family, style = MaterialTheme.typography.labelSmall)
+    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(direct.ifBlank { "Не определён" }, Modifier.weight(1f).clickable(enabled = direct.isNotBlank()) { copyText(context, direct) },
+            style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+        Text(" / ", Modifier.padding(horizontal = 4.dp), style = MaterialTheme.typography.titleSmall)
+        Text(tunnel.ifBlank { "Не определён" }, Modifier.weight(1f).clickable(enabled = tunnel.isNotBlank()) { copyText(context, tunnel) },
+            style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
     }
 }
 
@@ -618,7 +589,7 @@ private fun rdapUrl(info: IpInfo): Pair<String, String> {
 }
 
 @Composable
-private fun IpDashboard(vm: IpViewModel, info: IpInfo, state: AppState) {
+private fun IpDashboard(vm: IpViewModel, info: IpInfo, state: AppState, openRoute: () -> Unit) {
     val context = LocalContext.current
     val publicIp = info.kind.startsWith("Публичный") || info.kind.startsWith("Глобальный")
     val bl = vm.blacklists
@@ -688,9 +659,9 @@ private fun IpDashboard(vm: IpViewModel, info: IpInfo, state: AppState) {
     // --- Маршрут
     Spacer(Modifier.height(8.dp))
     val real = vm.hops.filter { it.address.isNotEmpty() }
-    SoftCard(padding = 10.dp, onClick = if (vm.hops.isEmpty() && !vm.traceRunning) { { vm.runTrace() } } else null) {
-        DashHead(Icons.Rounded.AccountTree, "Маршрут", "Трассировка до хоста (traceroute)", when { vm.traceRunning -> "идёт…"; vm.hops.isNotEmpty() -> "${vm.hops.size} " + hopWord(vm.hops.size); else -> "Запустить" })
-        if (vm.hops.isEmpty()) Text(if (vm.traceRunning) "Определяем путь до узла…" else "Нажмите, чтобы построить маршрут.", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    SoftCard(padding = 10.dp, onClick = openRoute) {
+        DashHead(Icons.Rounded.AccountTree, "Маршрут", "Трассировка до хоста (traceroute)", when { vm.traceRunning -> "идёт…"; vm.hops.isNotEmpty() -> "Ответили ${real.size} из ${vm.hops.size}"; else -> "Карта" })
+        if (real.isEmpty()) Text(if (vm.traceRunning) "Определяем путь до узла…" else "Откройте карту для просмотра переходов.", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         else {
             val picks = if (real.size <= 4) real else listOf(real.first(), real[real.size / 3], real[real.size * 2 / 3], real.last()).distinct()
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.Top) {
@@ -702,12 +673,12 @@ private fun IpDashboard(vm: IpViewModel, info: IpInfo, state: AppState) {
                             Box(Modifier.weight(1f).height(2.dp).background(if (i == picks.size - 1) Color.Transparent else tones.good.copy(alpha = 0.5f)))
                         }
                         Text(h.address, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("%.1f мс".format(h.ms), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (h.ms > 0) Text("%.1f мс".format(h.ms), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
-            if (vm.traceRunning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
         }
+        TraceStatus(vm)
     }
     // --- Сервисы
     Spacer(Modifier.height(8.dp))
@@ -735,10 +706,7 @@ private fun IpDashboard(vm: IpViewModel, info: IpInfo, state: AppState) {
     SoftCard(padding = 10.dp) {
         DashHead(Icons.Rounded.Bolt, "Действия", "Быстрые действия с результатом", null)
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = {
-                if (info.hasGeo) try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:${info.lat},${info.lon}?q=${info.lat},${info.lon}(${Uri.encode(info.ip)})"))) } catch (e: Exception) { toast(context, "Нет приложения с картами") }
-                else toast(context, "Для этого адреса нет координат")
-            }, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.Place, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Открыть карту", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
+            OutlinedButton(onClick = openRoute, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.Place, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Карта", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
             OutlinedButton(onClick = { copyText(context, summaryText(info, vm), "Результат скопирован") }, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.ContentCopy, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Копировать", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
             OutlinedButton(onClick = { shareText(context, summaryText(info, vm), info.ip) }, Modifier.weight(1f).height(40.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Rounded.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Поделиться", maxLines = 1, style = MaterialTheme.typography.labelLarge) }
         }
@@ -753,7 +721,6 @@ private fun IpDashboard(vm: IpViewModel, info: IpInfo, state: AppState) {
     RecentQueries(vm)
 }
 
-private fun hopWord(n: Int) = if (n % 100 in 11..14) "переходов" else when (n % 10) { 1 -> "переход"; 2, 3, 4 -> "перехода"; else -> "переходов" }
 private fun openWord(n: Int) = if (n % 100 in 11..14) "открытых" else if (n % 10 == 1) "открыт" else "открытых"
 
 private fun summaryText(info: IpInfo, vm: IpViewModel): String = buildString {
