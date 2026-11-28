@@ -26,7 +26,8 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.*
 
-data class Pin(val lat: Double, val lon: Double, val title: String, val dbm: Int? = null, val bearing: Int? = null, val isLocation: Boolean = false)
+data class Pin(val lat: Double, val lon: Double, val title: String, val dbm: Int? = null, val bearing: Int? = null,
+    val isLocation: Boolean = false, val station: StationMarker? = null, val id: String? = null)
 
 enum class FieldMapLayer(val title: String) {
     Streets("Схема"), Satellite("Спутник"), Hybrid("Гибрид")
@@ -55,9 +56,11 @@ private val roads = esriTiles("EsriWorldTransportation", "Reference/World_Transp
 private val labels = esriTiles("EsriWorldPlaces", "Reference/World_Boundaries_and_Places", ".png")
 
 @Composable
-fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick: ((Pin) -> Unit)? = null, orientation: Float = 0f, modifier: Modifier = Modifier.fillMaxWidth().height(320.dp), layer: FieldMapLayer = FieldMapLayer.Streets, recenter: Int = 0, initialZoom: Double = 15.0, followCenter: Boolean = true) {
+fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick: ((Pin) -> Unit)? = null, orientation: Float = 0f, modifier: Modifier = Modifier.fillMaxWidth().height(320.dp), layer: FieldMapLayer = FieldMapLayer.Streets, recenter: Int = 0, initialZoom: Double = 15.0, followCenter: Boolean = true,
+    stationLinks: List<Pair<Pin, Pin>> = emptyList(), onStationClick: ((Pin) -> Unit)? = null) {
     val ctx = LocalContext.current
     val pick by rememberUpdatedState(onPick)
+    val stationClick by rememberUpdatedState(onStationClick)
     val map = remember(ctx) {
         Configuration.getInstance().apply {
             userAgentValue = "SiteScopePro/2.0 (github.com/mallstorm/SiteScope-Pro-)"
@@ -100,7 +103,7 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
     LaunchedEffect(map, recenter, center.lat.takeIf { followCenter }, center.lon.takeIf { followCenter }) {
         map.controller.setCenter(GeoPoint(center.lat, center.lon))
     }
-    LaunchedEffect(pins, line, onPick != null, layer) {
+    LaunchedEffect(pins, line, stationLinks, onPick != null, onStationClick != null, layer) {
         map.overlays.clear()
         if (layer == FieldMapLayer.Hybrid) map.overlays.addAll(references)
         if (onPick != null) map.overlays.add(MapEventsOverlay(object: MapEventsReceiver {
@@ -124,6 +127,14 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
                 })
             }
         }
+        for ((from, to) in stationLinks) {
+            map.overlays.add(Polyline(map).apply {
+                setPoints(listOf(GeoPoint(from.lat, from.lon), GeoPoint(to.lat, to.lon)))
+                outlinePaint.color = if (to.station == StationMarker.Secondary) 0xff0a8c9f.toInt() else 0xff178847.toInt()
+                outlinePaint.strokeWidth = 3f * ctx.resources.displayMetrics.density
+                outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 7f), 0f)
+            })
+        }
         pins.forEach { p ->
             p.bearing?.let { bearing ->
                 val origin = GeoPoint(p.lat, p.lon)
@@ -139,6 +150,17 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
                 title = p.title
                 if (p.isLocation) {
                     icon = ContextCompat.getDrawable(ctx, R.drawable.ic_map_location_crystal)
+                } else if (p.station != null) {
+                    val color = when (p.station) {
+                        StationMarker.Serving -> 0xff13bb66.toInt()
+                        StationMarker.Secondary -> 0xff25c9db.toInt()
+                        StationMarker.Neighbor -> 0xffffb843.toInt()
+                        StationMarker.Catalogue -> 0xff9aa8bc.toInt()
+                    }
+                    val base = ContextCompat.getDrawable(ctx, R.drawable.ic_map_station)?.mutate()?.apply { setTint(color) }
+                    val mast = ContextCompat.getDrawable(ctx, R.drawable.ic_map_station_mast)
+                    if (base != null && mast != null) icon = android.graphics.drawable.LayerDrawable(arrayOf(base, mast))
+                    if (onStationClick != null) setOnMarkerClickListener { _, _ -> stationClick?.invoke(p); true }
                 } else if (p.dbm != null) {
                     val bitmap = android.graphics.Bitmap.createBitmap(28, 28, android.graphics.Bitmap.Config.ARGB_8888)
                     val canvas = Canvas(bitmap)

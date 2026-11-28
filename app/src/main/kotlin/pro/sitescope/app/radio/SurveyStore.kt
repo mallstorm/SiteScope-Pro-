@@ -144,6 +144,15 @@ class SurveyStore private constructor(ctx:Context):SQLiteOpenHelper(ctx,"radio-s
         val search="%${query.trim()}%"
         return readableDatabase.rawQuery("SELECT * FROM towers WHERE name LIKE ? OR CAST(cid AS TEXT) LIKE ? OR mcc||mnc LIKE ? ORDER BY name,cid LIMIT 200",arrayOf(search,search,search)).use {c-> buildList {while(c.moveToNext())add(tower(c))} }
     }
+    internal fun stationsFor(keys: Set<StationKey>): Map<StationKey, List<Tower>> {
+        val db = readableDatabase
+        return keys.associateWith { key ->
+            db.rawQuery("SELECT * FROM towers WHERE rat=? AND mcc=? AND mnc=? AND area=? AND cid=? AND latitude IS NOT NULL AND longitude IS NOT NULL",
+                arrayOf(key.rat, key.mcc, key.mnc, key.area.toString(), key.cid.toString())).use { cursor ->
+                buildList { while (cursor.moveToNext()) add(tower(cursor)) }
+            }
+        }
+    }
     fun nearby(pin:Pin, query:String):List<Tower> {
         val span=20.2/110.0
         val search="%${query.trim()}%"

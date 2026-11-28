@@ -80,12 +80,18 @@ fun RadioScreen(startTab: Int = 0, onFullscreen: (Boolean) -> Unit = {}) {
     val permissions=locationPermissions.toList()+Manifest.permission.READ_PHONE_STATE+
         (if(Build.VERSION.SDK_INT>=33)listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList())
     LaunchedEffect(page,refresh,running,owner) {
-        if(page !in listOf(0,1,3) || running)return@LaunchedEffect
+        if (page !in listOf(0, 1, 3) || running && page != 3) return@LaunchedEffect
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED){while(isActive){
-            val f=readRadio(ctx);frame=f;RadioWidget.publish(ctx,f);delay(10_000)
+            val recent = SurveyService.last.value?.takeIf { running && System.currentTimeMillis() - it.time in 0..8_000 }
+            val f = recent ?: readRadio(ctx)
+            frame = f
+            if (!running) RadioWidget.publish(ctx, f)
+            delay(10_000)
         }}
     }
-    val current=if(running)live else frame
+    val current = if (running) {
+        if (page == 3) listOfNotNull(live, frame).maxByOrNull { it.time } else live
+    } else frame
     LaunchedEffect(current?.time) {
         current?.let {f->
             val points=f.cells.filter{it.registered && it.dbm!=null && it.measured>0}.map{Triple(it.sim+" · "+it.rat,it.measured,it.dbm!!)}+

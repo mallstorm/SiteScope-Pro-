@@ -14,10 +14,13 @@ import kotlinx.coroutines.*
 import kotlin.coroutines.resume
 
 data class RadioCell(val sim: String, val rat: String, val registered: Boolean, val mcc: String, val mnc: String,
-    val area: Long?, val cid: Long?, val pci: Int?, val channel: Int?, val dbm: Int?, val details: String, val measured: Long)
+    val area: Long?, val cid: Long?, val pci: Int?, val channel: Int?, val dbm: Int?, val details: String, val measured: Long,
+    val link: RadioLink = if (registered) RadioLink.Registered else RadioLink.Neighbor)
+enum class RadioLink(val serving: Boolean) { Primary(true), Secondary(true), Registered(true), Neighbor(false) }
 data class SimSignal(val name: String,val operator: String,val roaming: Boolean,val data: Int?,val service: Int?,val strength: String)
 data class WifiReading(val ssid:String,val dbm:Int,val frequency:Int,val link:Int)
-data class RadioFrame(val time:Long,val sims:List<SimSignal>,val cells:List<RadioCell>,val wifi:WifiReading?,val internet:Boolean,val note:String)
+data class RadioFrame(val time:Long,val sims:List<SimSignal>,val cells:List<RadioCell>,val wifi:WifiReading?,val internet:Boolean,val note:String,
+    val activeDataSim: String? = null)
 
 private fun Int.known() = takeUnless { it == Int.MAX_VALUE || it == Int.MIN_VALUE }
 private fun Long.known() = takeUnless { it == Long.MAX_VALUE || it < 0 }
@@ -25,9 +28,15 @@ private fun metrics(vararg values:Pair<String,Int?>) = values.mapNotNull { (k,v)
 
 private fun CellInfo.row(sim:String,time:Long): RadioCell? {
     val ageMs=(SystemClock.elapsedRealtimeNanos()-timeStamp)/1_000_000
+    val link = when (cellConnectionStatus) {
+        CellInfo.CONNECTION_PRIMARY_SERVING -> RadioLink.Primary
+        CellInfo.CONNECTION_SECONDARY_SERVING -> RadioLink.Secondary
+        CellInfo.CONNECTION_NONE -> RadioLink.Neighbor
+        else -> if (isRegistered) RadioLink.Registered else RadioLink.Neighbor
+    }
     fun cell(rat:String,mcc:String?,mnc:String?,area:Int?,cid:Long?,pci:Int?,channel:Int?,s:CellSignalStrength,details:String) =
-        RadioCell(sim,rat,isRegistered,mcc.orEmpty(),mnc.orEmpty(),area?.known()?.toLong(),cid?.known(),pci?.known(),channel?.known(),s.dbm.takeIf { it in -160..-1 },details,
-            if(timeStamp>0 && ageMs>=0) time-ageMs else 0L)
+        RadioCell(sim,rat,isRegistered || link.serving,mcc.orEmpty(),mnc.orEmpty(),area?.known()?.toLong(),cid?.known(),pci?.known(),channel?.known(),s.dbm.takeIf { it in -160..-1 },details,
+            if(timeStamp>0 && ageMs>=0) time-ageMs else 0L, link)
     return when {
         this is CellInfoLte -> with(cellIdentity) {
             val s=cellSignalStrength
@@ -71,6 +80,11 @@ suspend fun readRadio(ctx:Context): RadioFrame = withContext(Dispatchers.IO) {
     val subscribed=ctx.allowed(Manifest.permission.READ_PHONE_STATE)
     val location=ctx.allowed(Manifest.permission.ACCESS_FINE_LOCATION)
     val subscriptions=if(subscribed) runCatching { ctx.getSystemService(SubscriptionManager::class.java)?.activeSubscriptionInfoList.orEmpty() }.getOrDefault(emptyList()) else emptyList()
+    val dataSubscription = runCatching {
+        if (Build.VERSION.SDK_INT >= 30) SubscriptionManager.getActiveDataSubscriptionId()
+        else SubscriptionManager.getDefaultDataSubscriptionId()
+    }.getOrNull()
+    val activeDataSim = subscriptions.firstOrNull { it.subscriptionId == dataSubscription }?.let { "SIM ${it.simSlotIndex + 1}" }
     val time=System.currentTimeMillis()
     val sims=mutableListOf<SimSignal>()
     val rows=mutableListOf<RadioCell>()
@@ -129,6 +143,6 @@ suspend fun readRadio(ctx:Context): RadioFrame = withContext(Dispatchers.IO) {
         if(!location) "Для идентификаторов сот нужна точная геопозиция." else null,
         if(subscribed && subscriptions.isEmpty()) "Активные SIM недоступны." else null,
         if(missing && location) "Android вернул неполные данные. Общий кэш показан без привязки к SIM." else null, linkDetails.takeIf { it.isNotEmpty() }).joinToString("\n")
-    RadioFrame(System.currentTimeMillis(),sims,rows,wifi,valid,note)
+    RadioFrame(System.currentTimeMillis(),sims,rows,wifi,valid,note,activeDataSim)
 }
 
