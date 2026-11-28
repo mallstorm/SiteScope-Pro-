@@ -34,6 +34,7 @@ import kotlin.coroutines.coroutineContext
 /** Найденный ключ и результат его проверки. ms: -1 не проверен, -2 не отвечает, -3 UDP-протокол (отклик не проверяется). */
 class KeyItem(val link: String, val name: String, val type: String, val host: String, val port: Int, val source: String, val foundAt: Long) {
     var ip = ""; var country = ""; var ms = -1L; var tls = 0; var checkedAt = 0L
+    var exitIp = ""
     var anon = 0    // прокси: 0 неизвестно, 1 прозрачный, 2 анонимный, 3 элитный
     var https = 0   // прокси: 0 не проверялся, 1 HTTPS работает, 2 нет
     val id: String get() = type + "|" + host + ":" + port + "|" + Integer.toHexString(link.substringBefore('#').hashCode())
@@ -74,6 +75,8 @@ object KeyStore {
             val o = a.getJSONObject(i)
             KeyItem(o.getString("link"), o.optString("name"), o.optString("type"), o.optString("host"), o.optInt("port"), o.optString("source"), o.optLong("foundAt")).also {
                 it.ip = o.optString("ip"); it.country = o.optString("country"); it.ms = o.optLong("ms", -1); it.tls = o.optInt("tls"); it.checkedAt = o.optLong("checkedAt"); it.anon = o.optInt("anon"); it.https = o.optInt("https")
+                it.exitIp = o.optString("exitIp")
+                if (it.proxy && it.exitIp.isEmpty()) { it.country = ""; it.anon = 0 }
             }
         }
     } catch (e: Exception) { emptyList() }
@@ -82,7 +85,7 @@ object KeyStore {
         val keep = items.sortedWith(compareByDescending<KeyItem> { it.alive }.thenByDescending { it.foundAt }).take(LIMIT)
         val a = JSONArray()
         keep.forEach { a.put(JSONObject().put("link", it.link).put("name", it.name).put("type", it.type).put("host", it.host).put("port", it.port).put("source", it.source).put("foundAt", it.foundAt)
-            .put("ip", it.ip).put("country", it.country).put("ms", it.ms).put("tls", it.tls).put("checkedAt", it.checkedAt).put("anon", it.anon).put("https", it.https)) }
+            .put("ip", it.ip).put("country", it.country).put("ms", it.ms).put("tls", it.tls).put("checkedAt", it.checkedAt).put("anon", it.anon).put("https", it.https).put("exitIp", it.exitIp)) }
         try { file(c).writeText(a.toString()) } catch (e: Exception) { }
     }
     fun clear(c: Context) { file(c).delete() }
@@ -310,9 +313,9 @@ object KeyChecker {
         }
     }
 
-    suspend fun check(item: KeyItem, timeout: Int, tls: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun check(item: KeyItem, timeout: Int, tls: Boolean, referenceIp: String) = withContext(Dispatchers.IO) {
         when {
-            item.proxy -> checkProxy(item, timeout)
+            item.proxy -> checkProxy(item, timeout, referenceIp)
             item.udp -> checkUdp(item)
             else -> checkTcp(item, timeout, tls)
         }
@@ -333,12 +336,29 @@ object KeyChecker {
         try { return InetAddress.getByName(host) } catch (e: Exception) { return null } finally { dnsGate.release() }
     }
 
-    @Volatile private var realIp: String? = null
-    private fun myIp(): String {
-        realIp?.let { return it }
-        val v = try { JSONObject(KeyCrawler.fetch("https://api.country.is/") ?: "{}").optString("ip") } catch (e: Exception) { "" }
-        if (v.isNotEmpty()) realIp = v
-        return v
+    private const val EXIT_LOOKUP = "https://api.country.is/"
+
+    private fun numericIp(value: String): String {
+        val ipv4 = value.split('.')
+        if (ipv4.size == 4 && ipv4.all { it.toIntOrNull()?.let { n -> n in 0..255 } == true && it.all(Char::isDigit) }) {
+            return ipv4.joinToString(".") { it.toInt().toString() }
+        }
+        if (!value.contains(':') || !value.matches(Regex("[0-9a-fA-F:.]+"))) return ""
+        return runCatching { InetAddress.getByName(value).hostAddress.orEmpty() }.getOrDefault("")
+    }
+
+    private fun exitInfo(response: Pair<Int, String>?): Pair<String, String>? {
+        if (response?.first != 200) return null
+        return runCatching {
+            val payload = JSONObject(response.second)
+            val ip = numericIp(payload.optString("ip"))
+            val code = payload.optString("country").uppercase(java.util.Locale.ROOT)
+            ip to code.takeIf { it.matches(Regex("[A-Z]{2}")) }.orEmpty()
+        }.getOrNull()?.takeIf { it.first.isNotEmpty() }
+    }
+
+    suspend fun referenceIp(timeout: Int): String = withContext(Dispatchers.IO) {
+        exitInfo(viaProxy(EXIT_LOOKUP, Proxy.NO_PROXY, timeout))?.first.orEmpty()
     }
 
     private fun viaProxy(url: String, proxy: Proxy, timeout: Int): Pair<Int, String>? = try {
@@ -358,35 +378,43 @@ object KeyChecker {
         c.disconnect(); code to body
     } catch (e: Exception) { null }
 
-    /** Реальная проверка прокси: запрос через него, выходной IP и страна, поддержка HTTPS и уровень анонимности. */
-    private fun checkProxy(item: KeyItem, timeout: Int) {
+    /** Check the HTTPS path before classifying the result as usable for a VPN. */
+    private fun checkProxy(item: KeyItem, timeout: Int, referenceIp: String) {
         item.checkedAt = System.currentTimeMillis(); item.anon = 0; item.https = 0
+        item.country = ""; item.exitIp = ""; item.ip = ""; item.tls = 0
         val addr = resolve(item.host)
         if (addr == null) { item.ms = -2; return }
         item.ip = addr.hostAddress.orEmpty()
-        try { Socket().use { it.connect(InetSocketAddress(addr, item.port), timeout) } } catch (e: Exception) { item.ms = -2; return }
         val proxy = Proxy(if (item.type == "socks") Proxy.Type.SOCKS else Proxy.Type.HTTP, InetSocketAddress(addr, item.port))
         val t0 = System.nanoTime()
-        var exit = ""; var cc = ""
-        viaProxy("http://ip-api.com/json?fields=status,query,countryCode", proxy, timeout)?.let { r ->
-            if (r.first == 200) try { val j = JSONObject(r.second); if (j.optString("status") == "success") { exit = j.optString("query"); cc = j.optString("countryCode") } } catch (e: Exception) { }
+        val exit = exitInfo(viaProxy(EXIT_LOOKUP, proxy, timeout))
+        val https = exit != null || viaProxy("https://www.gstatic.com/generate_204", proxy, timeout)?.first == 204
+        item.https = if (https) 1 else 2
+        if (!https) {
+            val plainStart = System.nanoTime()
+            val r = viaProxy("http://httpbin.org/ip", proxy, timeout)
+            val origin = runCatching {
+                if (r?.first == 200) numericIp(JSONObject(r.second).optString("origin").substringBefore(',').trim()) else ""
+            }.getOrDefault("")
+            item.ms = if (origin.isNotEmpty()) (System.nanoTime() - plainStart) / 1_000_000 else -2L
+            return
         }
-        if (exit.isEmpty()) viaProxy("http://httpbin.org/ip", proxy, timeout)?.let { r ->
-            if (r.first == 200) exit = try { JSONObject(r.second).optString("origin").substringBefore(',').trim() } catch (e: Exception) { "" }
-        }
-        if (exit.isEmpty()) { item.ms = -2; return }
         item.ms = (System.nanoTime() - t0) / 1_000_000
-        if (cc.length == 2) item.country = cc.uppercase()
-        val real = myIp()
-        var anon = if (real.isNotEmpty() && exit == real) 1 else 3
-        val h = viaProxy("http://httpbin.org/headers", proxy, timeout)
-        if (h != null && h.first == 200) {
-            val low = h.second.lowercase()
-            if (real.isNotEmpty() && h.second.contains(real)) anon = 1
-            else if (anon == 3 && listOf("\"via\"", "x-forwarded", "\"forwarded\"", "x-real-ip", "proxy-connection", "client-ip", "x-proxy").any { low.contains(it) }) anon = 2
-        } else if (item.type != "socks" && anon != 1) anon = 0
-        item.anon = anon
-        item.https = viaProxy("https://www.gstatic.com/generate_204", proxy, timeout)?.let { if (it.first == 204) 1 else 2 } ?: 2
+        if (exit == null) return
+        item.exitIp = exit.first
+        item.country = exit.second
+        if (referenceIp.isEmpty()) return
+        if (exit.first == referenceIp) { item.anon = 1; return }
+        val headers = viaProxy("http://httpbin.org/headers", proxy, timeout)
+        if (headers?.first == 200) {
+            val payload = runCatching { JSONObject(headers.second).optJSONObject("headers") }.getOrNull() ?: return
+            val names = payload.keys().asSequence().map { it.lowercase() }.toList()
+            item.anon = when {
+                payload.toString().contains(referenceIp) -> 1
+                names.any { it in listOf("via", "forwarded", "x-real-ip", "proxy-connection", "client-ip", "x-proxy") || it.startsWith("x-forwarded-") } -> 2
+                else -> 3
+            }
+        }
     }
 
     private fun checkTcp(item: KeyItem, timeout: Int, tls: Boolean) {
@@ -424,7 +452,7 @@ object KeyChecker {
         val cache = HashMap<String, String>()
         try {
             for (it in items) {
-                if (it.country.isNotEmpty()) continue
+                if (it.proxy || it.country.isNotEmpty()) continue
                 val isIp = Regex("^[0-9.]+$").matches(it.host)
                 val byName = if (isIp) "" else Countries.of(it.name, "")
                 if (byName.isNotEmpty()) { it.country = byName; continue }
@@ -468,7 +496,7 @@ object KeyExport {
     }
 
     fun canConnect(key: KeyItem): Boolean = key.alive && profileLink(key) != null &&
-        (key.type != "http" || key.https == 1)
+        (!key.proxy || key.https == 1)
 
     fun subscription(items: List<KeyItem>) = Base64.encodeToString(text(items).toByteArray(), Base64.NO_WRAP)
 }

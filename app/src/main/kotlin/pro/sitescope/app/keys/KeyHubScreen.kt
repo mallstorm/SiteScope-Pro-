@@ -78,7 +78,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         if (!force && n - lastSave > 60_000) { lastSave = n; KeyStore.save(context, items) }
     }
 
-    fun stop() { job?.cancel(); stage = "Остановлено"; running = false; KeyStore.save(context, items); touch() }
+    fun stop() { job?.cancel(); stage = "Остановлено" }
 
     fun clearAll() { items = emptyList(); KeyStore.clear(context); touch() }
     fun remove(ids: Set<String>) { items = items.filter { it.id !in ids }; KeyStore.save(context, items); touch() }
@@ -156,8 +156,10 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                 checkItems(fresh)
                 val drop = fresh.filter { it.proxy && (it.ms == -2L || (eliteOnly && it.anon != 3)) }.map { it.id }.toSet()
                 if (drop.isNotEmpty()) items = items.filter { it.id !in drop }
-                val liveNow = fresh.count { it.alive && it.id !in drop }
-                finishedNote = "Найдено $foundTotal · проверено ${fresh.size} · живых $liveNow" + (fresh.count { it.proxy && it.anon == 3 && it.id !in drop }.let { if (it > 0) " · элитных $it" else "" })
+                val vpnReady = fresh.count { it.id !in drop && KeyExport.canConnect(it) }
+                val httpOnly = fresh.count { it.proxy && it.alive && it.https == 2 }
+                finishedNote = "Кандидатов $foundTotal · проверено ${fresh.size} · для VPN $vpnReady" +
+                    (if (httpOnly > 0) " · только HTTP $httpOnly" else "")
                 stage = "Готово"
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -171,16 +173,19 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         if (list.isEmpty()) return
         val c = context
         stage = "Проверка отклика"; cChecked.set(0); checked = 0; toCheck = list.size
-        val gate = Semaphore(KeySettings.threads(c)); val timeout = KeySettings.timeoutMs(c); val tls = KeySettings.tlsCheck(c)
+        val timeout = KeySettings.timeoutMs(c); val tls = KeySettings.tlsCheck(c)
+        val referenceIp = if (list.any { it.proxy }) KeyChecker.referenceIp(timeout) else ""
+        val next = AtomicInteger()
         coroutineScope {
-            list.map { k -> async {
-                gate.acquire()
-                try {
+            List(minOf(list.size, KeySettings.threads(c))) { launch {
+                while (true) {
                     ensureActive()
-                    val ok = kotlinx.coroutines.withTimeoutOrNull(timeout * 6L + 5000) { KeyChecker.check(k, timeout, tls) }
+                    val k = list.getOrNull(next.getAndIncrement()) ?: break
+                    val ok = kotlinx.coroutines.withTimeoutOrNull(timeout * 6L + 5000) { KeyChecker.check(k, timeout, tls, referenceIp) }
                     if (ok == null) { k.ms = -2; k.checkedAt = System.currentTimeMillis() }
-                } finally { cChecked.incrementAndGet(); gate.release(); publish() }
-            } }.awaitAll()
+                    cChecked.incrementAndGet(); publish()
+                }
+            } }
         }
         stage = "Определение стран"
         KeyChecker.geo(c, list.filter { it.alive || it.ms == -3L })
@@ -193,7 +198,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         running = true; finishedNote = ""
         val list = items.filter { ids.isEmpty() || it.id in ids }
         job = viewModelScope.launch(Dispatchers.Default) {
-            try { list.forEach { it.country = if (it.alive) it.country else "" }; checkItems(list); finishedNote = "Проверено ${list.size} · живых ${list.count { it.alive }}"; stage = "Готово" }
+            try { list.forEach { it.country = if (it.alive) it.country else "" }; checkItems(list); finishedNote = "Проверено ${list.size} · для VPN ${list.count(KeyExport::canConnect)}"; stage = "Готово" }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) { finishedNote = "Ошибка: " + (e.message ?: "") }
             finally { KeyStore.save(context, items); running = false; publish(true) }
@@ -217,6 +222,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
                     var onlyId: String? = null
                     val created = BooleanArray(1)
                     for (key in list) {
+                        if (key.proxy && !KeyExport.canConnect(key)) continue
                         val link = KeyExport.profileLink(key) ?: continue
                         val profile = runCatching { store.importFromCatalogue(link, created) }.getOrNull() ?: continue
                         if (created[0]) added++ else existing++
@@ -302,7 +308,7 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text(vm.stage, style = MaterialTheme.typography.titleSmall)
                             Text(when (vm.stage) {
-                                "Проверка отклика" -> "${vm.checked} из ${vm.toCheck}"
+                                "Проверка отклика" -> "${vm.checked} из ${vm.toCheck} · до ${KeySettings.threads(context)} одновременно"
                                 else -> "источников ${vm.sitesDone}/${vm.sitesFound} · страниц ${vm.pages} · найдено ${vm.keysFound}"
                             }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
@@ -321,7 +327,7 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
                 }
             }
             if (vm.log.isNotEmpty()) SoftCard(padding = 10.dp) { vm.log.take(8).forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
-            Text("Читаются только открытые страницы и публичные списки. Прокси проверяются реальным запросом через них (ip-api.com, httpbin.org), ключи — доступностью порта и TLS. Чужие серверы видят ваш трафик: не используйте их для входов и платежей. Hysteria2, TUIC и WireGuard только собираются в список для экспорта.",
+            Text("Число кандидатов показывает объём списков. Лимит проверок задаётся в настройках. SOCKS5 и HTTP проходят проверку HTTPS, страна прокси определяется по подтверждённому IP выхода. Hysteria2, TUIC и WireGuard доступны для экспорта.",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
         }
         if (!vm.running) Surface(tonalElevation = 3.dp) {
@@ -342,6 +348,7 @@ private fun KeysTab(vm: KeyHubViewModel, onVpnServer: (String) -> Unit) {
     var protocol by remember { mutableStateOf<String?>(null) }
     var elite by remember { mutableStateOf(false) }
     var httpsOnly by remember { mutableStateOf(false) }
+    var vpnOnly by remember { mutableStateOf(false) }
     var v6Only by remember { mutableStateOf(false) }
     var onlyAlive by remember { mutableStateOf(true) }
     var maxMs by remember { mutableIntStateOf(0) }
@@ -352,11 +359,12 @@ private fun KeysTab(vm: KeyHubViewModel, onVpnServer: (String) -> Unit) {
 
     val all = remember(vm.version, vm.items) { vm.items }
     val alive = all.filter { it.alive }
+    val vpnReady = all.count(KeyExport::canConnect)
     val countries = remember(vm.version) { alive.groupBy { it.country }.map { it.key to it.value.size }.sortedByDescending { it.second } }
     val types = remember(vm.version) { all.map { it.type }.distinct().sortedBy { TYPE_LABEL.keys.indexOf(it) } }
-    val shown = remember(vm.version, country, protocol, onlyAlive, maxMs, sort, elite, httpsOnly, v6Only) {
+    val shown = remember(vm.version, country, protocol, onlyAlive, maxMs, sort, elite, httpsOnly, vpnOnly, v6Only) {
         all.filter { (!onlyAlive || it.alive || it.ms == -3L) && (country == null || it.country == country) && (protocol == null || it.type == protocol) && (maxMs == 0 || (it.ms in 0..maxMs.toLong())) &&
-            (!elite || it.anon == 3) && (!httpsOnly || it.https == 1) && (!v6Only || it.v6) }
+            (!elite || it.anon == 3) && (!httpsOnly || it.https == 1) && (!vpnOnly || KeyExport.canConnect(it)) && (!v6Only || it.v6) }
             .let { l -> when (sort) { 0 -> l.sortedWith(compareBy<KeyItem> { if (it.ms < 0) Long.MAX_VALUE else it.ms }); 1 -> l.sortedWith(compareBy<KeyItem>({ it.country.ifEmpty { "ZZ" } }, { if (it.ms < 0) Long.MAX_VALUE else it.ms })); else -> l.sortedByDescending { it.foundAt } } }
     }
     val chosen = all.filter { it.id in selected }
@@ -364,7 +372,7 @@ private fun KeysTab(vm: KeyHubViewModel, onVpnServer: (String) -> Unit) {
     Column(Modifier.fillMaxSize()) {
         // фиксированная верхняя часть
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Stat("Всего", all.size.toString(), Modifier.weight(1f)); Stat("Живых", alive.size.toString(), Modifier.weight(1f), t.good); Stat("Стран", countries.count { it.first.length == 2 }.toString(), Modifier.weight(1f)); Stat("Выбрано", selected.size.toString(), Modifier.weight(1f), t.info)
+            Stat("Всего", all.size.toString(), Modifier.weight(1f)); Stat("Ответили", alive.size.toString(), Modifier.weight(1f)); Stat("Для VPN", vpnReady.toString(), Modifier.weight(1f), t.good); Stat("Стран", countries.count { it.first.length == 2 }.toString(), Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             MiniChip("Все страны", country == null) { country = null }
@@ -376,15 +384,20 @@ private fun KeysTab(vm: KeyHubViewModel, onVpnServer: (String) -> Unit) {
             listOf("по отклику", "по странам", "новые").forEachIndexed { i, l -> MiniChip(l, sort == i) { sort = i } }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MiniChip("Для VPN · $vpnReady", vpnOnly) { vpnOnly = !vpnOnly }
             types.forEach { p -> MiniChip(TYPE_LABEL[p] ?: p, protocol == p) { protocol = if (protocol == p) null else p } }
             if (all.any { it.proxy }) { MiniChip("Элитные", elite) { elite = !elite }; MiniChip("HTTPS ✓", httpsOnly) { httpsOnly = !httpsOnly } }
             if (all.any { it.v6 }) MiniChip("IPv6", v6Only) { v6Only = !v6Only }
         }
         if (vm.running || vm.importing) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if (all.any { it.proxy }) Text("Значок ключа открывает сервер в VPN. Для HTTP требуется отметка HTTPS ✓.",
+        if (all.any { it.proxy }) Text("Для приложений нужен SOCKS5 или HTTP с отметкой HTTPS ✓. Нажмите VPN у подходящего сервера.",
             Modifier.padding(horizontal = 12.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall)
         if (shown.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-            Text(if (all.isEmpty()) "Ключей пока нет. Запустите поиск на первой вкладке." else "Нет ключей под выбранные фильтры", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(when {
+                all.isEmpty() -> "Ключей пока нет. Запустите поиск на первой вкладке."
+                vpnOnly && vpnReady == 0 -> "Подходящих серверов пока нет. Перепроверьте список или выберите источник SOCKS5."
+                else -> "Нет ключей под выбранные фильтры"
+            }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(shown, key = { it.id }) { k ->
                 val on = k.id in selected
@@ -405,13 +418,13 @@ private fun KeysTab(vm: KeyHubViewModel, onVpnServer: (String) -> Unit) {
                             k.tls == 2 -> Pill("TLS ✗", t.warn, t.warnSoft)
                             else -> Pill("${k.ms} мс", if (k.ms <= 150) t.good else if (k.ms <= 400) t.warn else t.bad, if (k.ms <= 150) t.goodSoft else if (k.ms <= 400) t.warnSoft else t.badSoft)
                         }
-                        if (KeyExport.canConnect(k)) IconButton(onClick = {
+                        if (KeyExport.canConnect(k)) TextButton(onClick = {
                             vm.addToServers(listOf(k)) { result ->
                                 val id = result.onlyId
                                 if (id != null) onVpnServer(id) else toast(context, "Не удалось открыть сервер в VPN")
                             }
-                        }, enabled = !vm.importing) {
-                            Icon(Icons.Rounded.VpnKey, "Использовать в VPN")
+                        }, enabled = !vm.importing && !vm.running) {
+                            Text("VPN")
                         }
                     }
                 }
@@ -472,7 +485,7 @@ private fun ExportSheet(vm: KeyHubViewModel, chosen: List<KeyItem>, onClose: () 
             ExportRow(Icons.Rounded.Dataset, "Сохранить подписку (base64)", "Файл для импорта подпиской") { pending = sub; saver.launch("xray-subscription.txt") }
             if (chosen.any { it.proxy }) ExportRow(Icons.Rounded.FormatListBulleted, "Список ip:port (прокси)", "Для ручного добавления SOCKS и HTTP в любое приложение") { copyText(context, KeyExport.hostPort(chosen), "Скопировано"); onClose() }
             ExportRow(Icons.Rounded.Share, "Поделиться", "Отправить список в другое приложение") { shareText(context, text, "Ключи Xray"); onClose() }
-            ExportRow(Icons.Rounded.Download, "Добавить в мои серверы", "Появятся на вкладке «Серверы» и в пуле ротации") {
+            ExportRow(Icons.Rounded.Download, "Добавить в мои серверы", "Для прокси требуется подтверждённый HTTPS") {
                 vm.addToServers(chosen) { result ->
                     toast(context, "Добавлено ${result.added} · уже есть ${result.existing} · пропущено ${result.skipped}")
                     onClose()

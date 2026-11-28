@@ -27,7 +27,7 @@ object KeySources {
             GH + "clarketm/proxy-list/master/proxy-list-raw.txt", GH + "jetkai/proxy-list/main/online-proxies/txt/proxies-https.txt", GH + "roosterkid/openproxylist/main/HTTPS_RAW.txt",
             GH + "ShiftyTR/Proxy-List/master/https.txt", GH + "zloi-user/hideip.me/master/https.txt", GH + "Zaeem20/FREE_PROXIES_LIST/master/https.txt",
             GH + "sunny9577/proxy-scraper/master/generated/http_proxies.txt", GH + "vakhov/fresh-proxy-list/master/https.txt", GH + "MuRongPIG/Proxy-Master/main/http.txt")),
-        KeyKind("elite", "Элитные прокси", "Только анонимные: не выдают ваш IP", PROXY_TYPES, listOf(
+        KeyKind("elite", "Элитные прокси", "HTTPS и проверка IP выхода", PROXY_TYPES, listOf(
             "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=elite",
             "https://api.proxyscrape.com/v2/?request=getproxies&protocol=socks5&timeout=10000&country=all",
             "https://www.proxy-list.download/api/v1/get?type=https&anon=elite", "https://www.proxy-list.download/api/v1/get?type=http&anon=elite",

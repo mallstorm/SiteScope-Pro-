@@ -277,7 +277,11 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
     /** Список приложений действует на уровне VPN, поэтому при включённом VPN он переподключается. */
     fun chooseTargets(value: Set<String>) {
         VpnSettings.setTargetApps(context, value); targets = value
-        if (active && runningMode == HostsVpnService.MODE_XRAY) { appliedNote = "VPN переподключается для выбранных приложений."; start() }
+        if (active && runningMode == HostsVpnService.MODE_XRAY) {
+            mode = if (runningProfileId.isBlank()) VpnMode.LOCAL else VpnMode.SERVER
+            appliedNote = "VPN переподключается для выбранных приложений."
+            start()
+        }
     }
     fun appLabel(pkg: String): String = apps.firstOrNull { it.first == pkg }?.second ?: pkg
 
@@ -597,12 +601,22 @@ private fun EntrySheet(vm: VpnViewModel, existing: HostsEntry?, onClose: () -> U
 private fun ServersTab(vm: VpnViewModel, requestedServer: String?, preparing: Boolean, onConnectServer: (String) -> Unit) {
     val context = LocalContext.current
     var adding by remember { mutableStateOf(false) }
+    var pickingApps by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<XrayProfileStore.Info?>(null) }
     var rename by remember { mutableStateOf<XrayProfileStore.Info?>(null) }
     val t = tones
     SectionTitle("Серверы")
     Text("Серверы Xray и прокси SOCKS5 / HTTP CONNECT. HTTP CONNECT передаёт TCP.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(8.dp))
+    OutlinedButton(onClick = { vm.loadApps(); pickingApps = true }, enabled = !vm.busy && !preparing,
+        modifier = Modifier.fillMaxWidth()) {
+        Icon(Icons.Rounded.Apps, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+        Text(if (vm.targets.isEmpty()) "Приложения VPN · все" else "Приложения VPN · ${vm.targets.size}")
+    }
+    if (pickingApps) AppPicker(vm.apps, vm.targets, onClose = { pickingApps = false }) { chosen ->
+        pickingApps = false
+        if (chosen != vm.targets) vm.chooseTargets(chosen)
+    }
     vm.serverList.firstOrNull { it.id == requestedServer }?.let { profile ->
         val connected = vm.serverActive && vm.runningProfileId == profile.id
         SoftCard(color = t.infoSoft, modifier = Modifier.padding(bottom = 8.dp)) {

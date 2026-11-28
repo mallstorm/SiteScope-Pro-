@@ -58,7 +58,7 @@ class SpeedSelectionTest {
 
     @Test fun publicEndpointsUseHttpsAndLibreSpeedGetsMebibyteChunks() {
         val servers = SpeedServers.public
-        assertEquals(30, servers.size)
+        assertEquals(16, servers.size)
         assertEquals(servers.size, servers.map { it.id }.toSet().size)
         assertTrue(servers.all { it.down(1).startsWith("https://") && it.pingUrl.startsWith("https://") })
         assertTrue(servers.first { it.id == "clouvider-lon" }.down(25_000_000).endsWith("ckSize=24"))

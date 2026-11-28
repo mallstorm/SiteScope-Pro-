@@ -163,7 +163,8 @@ public final class HostsVpnService extends VpnService {
                 }
                 String message = "Ошибка запуска " + requested + ": " + safeMessage(e);
                 VpnDiagnostics.log(this, "VPN_START_FAILED", message);
-                if (MODE_XRAY.equals(requested) && !(e instanceof VpnNetworkCoordinator.VpnSlotException)) {
+                if (MODE_XRAY.equals(requested) && !(e instanceof VpnNetworkCoordinator.VpnSlotException)
+                        && !(e instanceof AppScopeException)) {
                     stopVpn(message, false);
                     startForeground(NOTIFICATION_ID, notification("XRAY недоступен · возврат в BASIC…"));
                     try {
@@ -524,14 +525,20 @@ public final class HostsVpnService extends VpnService {
         stopForeground(removeNotification);
     }
 
-    /** Full-tunnel scope: all apps except SiteScope itself, or only the apps chosen for capture. */
+    private static final class AppScopeException extends IllegalStateException {
+        AppScopeException() { super("Выбранные приложения недоступны. Заново откройте список приложений VPN."); }
+    }
+
+    /** Full-tunnel scope: all apps except SiteScope itself, or a non-empty Android allowlist. */
     private void applyAppScope(Builder builder) {
+        java.util.Set<String> targets = pro.sitescope.app.vpn.VpnSettings.targetApps(this);
         int allowed = 0;
-        for (String app : pro.sitescope.app.vpn.VpnSettings.targetApps(this)) {
+        for (String app : targets) {
             if (app == null || app.length() == 0 || app.equals(getPackageName())) continue;
             try { builder.addAllowedApplication(app); allowed++; } catch (Exception ignored) { }
         }
-        if (allowed == 0) { try { builder.addDisallowedApplication(getPackageName()); } catch (Exception ignored) { } }
+        if (!targets.isEmpty() && allowed == 0) throw new AppScopeException();
+        if (targets.isEmpty()) { try { builder.addDisallowedApplication(getPackageName()); } catch (Exception ignored) { } }
         VpnDiagnostics.log(this, "VPN_APP_SCOPE", allowed == 0 ? "all apps" : "selected apps: " + allowed);
     }
 
