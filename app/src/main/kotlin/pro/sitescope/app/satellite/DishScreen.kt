@@ -62,7 +62,7 @@ fun DishScreen(onFullscreen: (Boolean) -> Unit = {}) {
     var orbit by rememberSaveable { mutableStateOf(prefs.getString("orbit","36.0").orEmpty()) }
     var offset by rememberSaveable { mutableStateOf(prefs.getString("offset","0").orEmpty()) }
     var smooth by rememberSaveable { mutableStateOf(prefs.getBoolean("smooth",true)) }
-    val slots = remember { runCatching { ctx.assets.open("satellite-slots.csv").bufferedReader().use { DishCatalogue.parse(it.readLines()) } }.getOrDefault(DishCatalogue.slots) }
+    val bundledSlots = remember { runCatching { ctx.assets.open("satellite-slots.csv").bufferedReader().use { DishCatalogue.parse(it.readLines()) } }.getOrDefault(DishCatalogue.slots) }
     var access by rememberSaveable { mutableStateOf("Все") }
     var category by rememberSaveable { mutableStateOf("Все") }
     var provider by rememberSaveable { mutableStateOf("") }
@@ -148,7 +148,16 @@ fun DishScreen(onFullscreen: (Boolean) -> Unit = {}) {
     }
     val location=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { if(it.values.any { ok -> ok }) locate() else status="Можно указать точку вручную" }
     val cameraPerm=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { camera=it; if(!it) status="Для визира нужен доступ к камере" }
-    val shown=remember(query,catalog,visible,favoritesOnly,favorites,site,access,category,provider,catalogMode) {
+    var discovered by remember { mutableStateOf<List<SatellitePage>>(emptyList()) }
+    LaunchedEffect(aired) {
+        if (!aired) discovered = withContext(Dispatchers.IO) { DishFeeds.satellites(ctx) }
+    }
+    val slots = remember(discovered, bundledSlots) {
+        val knownPositions = discovered.map { it.orbit }.toSet()
+        (discovered.map { DishEntry(it.name, it.orbit) } +
+            bundledSlots.filterNot { it.orbital in knownPositions }).sortedBy { it.orbital }
+    }
+    val shown=remember(query,catalog,slots,visible,favoritesOnly,favorites,site,access,category,provider,catalogMode) {
         (when(catalogMode) {
             0 -> slots
             1 -> catalog.filter{it.provider.isNotBlank()}

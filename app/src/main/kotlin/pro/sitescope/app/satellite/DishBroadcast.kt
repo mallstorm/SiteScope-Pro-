@@ -38,16 +38,19 @@ internal data class Broadcast(
         }
 }
 
+private val searchSeparators = Regex("[^\\p{L}\\p{N}.]+")
+private val russianPackages = setOf("русский пакет", "русские пакеты", "русское тв", "russian package")
+
 internal fun searchKey(text: String) = text.lowercase(Locale.ROOT).replace('ё', 'е')
     .replace("тнт", "tnt").replace("мтс", "mts").replace("триколор", "trikolor")
     .replace("телекарта", "telekarta").replace("ямал", "yamal").replace(',', '.')
-    .replace(Regex("[^\\p{L}\\p{N}.]+"), " ").trim()
+    .replace(searchSeparators, " ").trim()
 
-internal fun Broadcast.matches(query: String): Boolean {
-    val key = searchKey(query)
-    if (key in setOf("русский пакет", "русские пакеты", "русское тв", "russian package")) {
-        return language == "ru" && network.isNotBlank()
-    }
+internal fun Broadcast.matches(query: String): Boolean = matchesNormalized(searchKey(query))
+
+internal fun Broadcast.matchesNormalized(key: String): Boolean {
+    if (key.isBlank()) return true
+    if (key in russianPackages) return language == "ru" && network.isNotBlank()
     val searchable = searchKey(listOf(channel, satellite, network, orbitalLabel(orbit), tuning).joinToString(" "))
     return key.split(' ').all { it in searchable }
 }
@@ -74,7 +77,7 @@ internal object LyngSatCatalogue {
         val standard: String, val special: String, var rows: Int, var network: String,
     )
 
-    fun parse(html: String): List<Broadcast> {
+    fun parse(html: String, includeTransponders: Boolean = false): List<Broadcast> {
         val document = Jsoup.parse(html)
         val match = title.matchEntire(document.title()) ?: error("Нужна страница отдельного спутника LyngSat")
         val satellite = match.groupValues[1]
@@ -86,14 +89,23 @@ internal object LyngSatCatalogue {
             for (row in table.select("tr").filter { it.closest("table") == table }) {
                 val cells = row.children().filter { it.normalName() == "td" }
                 if (cells.isEmpty()) continue
-                val transponder = cells[0].selectFirst("a[href^=/muxes/]")
-                if (transponder != null) mux = readMux(cells, transponder)
+                val link = cells[0].selectFirst("a[href^=/muxes/]")
+                val tune = link?.let { frequency.find(it.text()) } ?: frequency.find(cells[0].text())
+                    ?.takeIf { cells.getOrNull(1)?.text()?.startsWith("DVB-S") == true }
+                val startsMux = link != null || tune != null
+                if (startsMux) {
+                    mux = tune?.let { readMux(cells, it, link?.attr("href").orEmpty()) }
+                    if (includeTransponders) mux?.let {
+                        result += Broadcast(satellite, orbit, "", "", it.frequency, it.polarization, it.rate,
+                            it.standard, mux = it.id, note = it.special)
+                    }
+                }
                 val current = mux ?: continue
                 if (current.rows-- <= 0) {
                     mux = null
                     continue
                 }
-                val data = if (transponder != null) cells.drop(2) else cells
+                val data = if (startsMux) cells.drop(2) else cells
                 if (data.size < 7) continue
                 val name = data[1]
                 val serviceLink = name.select("a[href]").firstOrNull {
@@ -120,18 +132,18 @@ internal object LyngSatCatalogue {
                     if (isRussian) "ru" else "", sid, current.id, service, current.special)
             }
         }
-        return result.distinctBy { it.identity }.also { require(it.isNotEmpty()) { "На странице не найдены каналы с параметрами" } }
+        return result.distinctBy { if (it.channel.isBlank()) listOf(it.orbit, it.mux, it.tuning, it.note) else it.identity }.also { require(it.isNotEmpty()) { "На странице не найдены каналы с параметрами" } }
     }
 
-    private fun readMux(cells: List<Element>, link: Element): Mux? {
-        val tune = frequency.find(link.text()) ?: return null
+    private fun readMux(cells: List<Element>, tune: MatchResult, href: String): Mux? {
         val attributes = cells.getOrNull(1)?.wholeText()?.lineSequence()?.map(String::trim)?.filter(String::isNotEmpty)?.toList() ?: return null
         val system = attributes.firstOrNull { it.startsWith("DVB-S") } ?: return null
         val rate = attributes.firstOrNull { numericRate.matches(it) } ?: return null
         val beam = cells[0].selectFirst("a[href^=/maps/footprints/]")?.text().orEmpty()
         val special = (listOf(beam) + attributes.filter { it.startsWith("T2-MI") || it.startsWith("PLP") || it.startsWith("MIS") })
             .filter(String::isNotBlank).joinToString(" · ")
-        val id = link.attr("href").substringAfterLast('/') + "/" + attributes.firstOrNull { it.startsWith("PLP") }.orEmpty()
+        val id = href.substringAfterLast('/').ifBlank { "${tune.value}-$rate" } +
+            "/" + attributes.firstOrNull { it.startsWith("PLP") || it.startsWith("MIS") }.orEmpty()
         return Mux(id, tune.groupValues[1], tune.groupValues[2], rate, system, special,
             cells[0].attr("rowspan").toIntOrNull()?.coerceIn(1, 500) ?: 1, "")
     }

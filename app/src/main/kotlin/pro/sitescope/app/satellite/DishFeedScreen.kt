@@ -41,6 +41,9 @@ internal fun DishFeedScreen(
     val periodic by remember(work) { work.getWorkInfosForUniqueWorkFlow(DishFeeds.PERIODIC) }.collectAsState(emptyList())
     val running = (manual + periodic).any { it.state == WorkInfo.State.RUNNING }
     val queued = manual.any { it.state == WorkInfo.State.ENQUEUED }
+    val scan = (manual + periodic).firstOrNull { it.state == WorkInfo.State.RUNNING }?.progress
+    val total = scan?.getInt("satellitesTotal", 0) ?: 0
+    val checked = scan?.getInt("satellitesChecked", 0) ?: 0
     var state by remember { mutableStateOf(DishFeedState()) }
     var loaded by remember { mutableStateOf(false) }
     var revision by remember { mutableIntStateOf(0) }
@@ -55,7 +58,7 @@ internal fun DishFeedScreen(
         loaded = true
     }
     LaunchedEffect(loaded) {
-        if (loaded && state.feeds.isNotEmpty() && state.feeds.all { it.updated == 0L && it.error.isBlank() }) {
+        if (loaded && !state.worldAttempted) {
             DishFeeds.refresh(context)
         }
     }
@@ -75,26 +78,43 @@ internal fun DishFeedScreen(
     val localEntries = remember(imported) {
         imported.map { DishFeedEntry(it.asBroadcast(), "", 0) }
     }
-    val rotation = remember(site) { mutableMapOf<Double, DishAngles>() }
-    val results = remember(state.entries, localEntries, own, query, mode, onlyVisible, site) {
-        (own.map { DishFeedEntry(it, "", -1) } + state.entries + localEntries).asSequence().filter { entry ->
-            val row = entry.row
-            val matchesMode = when (mode) {
-                "Пакеты" -> row.channel.isNotBlank() && row.network.isNotBlank()
-                "Транспондеры" -> row.frequency.isNotBlank()
-                else -> row.channel.isNotBlank()
-            }
-            matchesMode && row.matches(query) && (!onlyVisible || site == null ||
-                rotation.getOrPut(row.orbit) { dishAngles(site, row.orbit) }.elevation > 0)
-        }.distinctBy { entry ->
-            val row = entry.row
-            when (mode) {
-                "Пакеты" -> listOf(row.orbit, searchKey(row.network))
-                "Транспондеры" -> listOf(row.orbit, row.frequency, row.polarization, row.rate, row.note)
-                else -> listOf(row.orbit, searchKey(row.channel), row.frequency, row.polarization, row.rate, row.note)
-            }
-        }.sortedWith(compareBy<DishFeedEntry> { it.row.orbit }.thenBy { it.row.channel }).toList()
+    val pages = remember(state.regions) { state.regions.flatMap { it.satellites }.distinctBy { it.url } }
+    var results by remember { mutableStateOf<List<DishFeedEntry>>(emptyList()) }
+    LaunchedEffect(state.entries, localEntries, own, pages, query, mode, onlyVisible, site) {
+        results = withContext(Dispatchers.Default) {
+            val key = searchKey(query)
+            val angles = mutableMapOf<Double, DishAngles>()
+            if (mode == "Спутники") {
+                pages.asSequence().map { DishFeedEntry(Broadcast(it.name, it.orbit, "", "", "", "", ""), it.url, 0L) }
+            } else {
+                (own.map { DishFeedEntry(it, "", -1) } + state.entries + localEntries).asSequence()
+            }.filter { entry ->
+                val row = entry.row
+                val matchesMode = when (mode) {
+                    "Спутники" -> true
+                    "Пакеты" -> row.channel.isNotBlank() && row.network.isNotBlank()
+                    "Транспондеры" -> row.frequency.isNotBlank()
+                    "Каналы" -> row.channel.isNotBlank()
+                    else -> false
+                }
+                matchesMode && row.matchesNormalized(key) && (!onlyVisible || site == null ||
+                    angles.getOrPut(row.orbit) { dishAngles(site, row.orbit) }.elevation > 0)
+            }.distinctBy { entry ->
+                val row = entry.row
+                val satellite = listOf(row.orbit, searchKey(row.satellite))
+                when (mode) {
+                    "Спутники" -> listOf(entry.url)
+                    "Пакеты" -> satellite + searchKey(row.network)
+                    "Транспондеры" -> satellite + listOf(row.frequency, row.polarization, row.rate, row.note)
+                    else -> satellite + listOf(searchKey(row.channel), row.frequency, row.polarization, row.rate, row.note)
+                }
+            }.sortedWith(compareBy<DishFeedEntry> { it.row.orbit }.thenBy { it.row.satellite }.thenBy { it.row.channel }).toList()
+        }
     }
+    val distinctSatellites = pages.size
+    val checkedSatellites = state.checkedSatellites
+    val sourceError = state.feeds.any { it.error.isNotBlank() } ||
+        state.regions.any { it.errors > 0 || it.indexError.isNotBlank() }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("Данные эфира", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
@@ -103,9 +123,12 @@ internal fun DishFeedScreen(
             }
             IconButton(onClose) { Icon(Icons.Rounded.Close, "Назад в каталог") }
         }
-        Chips(listOf("Каналы", "Пакеты", "Транспондеры", "Изменения", "Источники", "Своё"), mode) { mode = it }
-        if (running) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if (queued && !running) Text("Обновление ожидает подключения", style = MaterialTheme.typography.labelSmall)
+        Chips(listOf("Каналы", "Пакеты", "Спутники", "Транспондеры", "Изменения", "Источники", "Своё"), mode) { mode = it }
+        if (running && total > 0) {
+            LinearProgressIndicator(progress = { checked.toFloat() / total }, modifier = Modifier.fillMaxWidth())
+            Text("Проверено $checked из $total страниц", style = MaterialTheme.typography.labelSmall)
+        } else if (running) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (queued && !running) Text("Продолжение ожидает сети или фонового запуска", style = MaterialTheme.typography.labelSmall)
         when (mode) {
             "Источники" -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
@@ -113,6 +136,8 @@ internal fun DishFeedScreen(
                         Text("Проверять ежедневно при наличии сети", Modifier.weight(1f))
                         Switch(auto, { auto = it; DishFeeds.setAuto(context, it) })
                     }
+                    Text("В обновление входят все четыре региона LyngSat и ваши источники.",
+                        style = MaterialTheme.typography.bodySmall)
                     Text("Поддерживаются страницы спутников LyngSat, satellites.xml, lamedb 4 и CSV.",
                         style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(source, { source = it }, Modifier.fillMaxWidth(), singleLine = true,
@@ -127,6 +152,19 @@ internal fun DishFeedScreen(
                             }.onFailure { message = it.localizedMessage ?: "Проверьте адрес" }
                     }, enabled = source.isNotBlank()) { Text("Добавить источник") }
                     if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
+                }
+                items(state.regions) { coverage ->
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(coverage.region.title, style = MaterialTheme.typography.titleSmall)
+                            Text("${coverage.satellites.size} спутников · эфир загружен для ${coverage.checked}",
+                                style = MaterialTheme.typography.bodySmall)
+                            if (coverage.updated > 0L) Text("Список обновлён ${clock(coverage.updated)}", style = MaterialTheme.typography.labelSmall)
+                            else Text("Исходный список из приложения", style = MaterialTheme.typography.labelSmall)
+                            if (coverage.errors > 0) Text("${coverage.errors} страниц без свежих данных")
+                            if (coverage.indexError.isNotBlank()) Text(coverage.indexError, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
                 items(state.feeds) { feed ->
                     ElevatedCard(Modifier.fillMaxWidth()) {
@@ -182,8 +220,12 @@ internal fun DishFeedScreen(
                     FilterChip(onlyVisible, { onlyVisible = !onlyVisible }, { Text("Над горизонтом") }, enabled = site != null)
                     Text("${results.size} совпадений", style = MaterialTheme.typography.labelSmall)
                 }
-                if (state.feeds.any { it.error.isNotBlank() }) TextButton({ mode = "Источники" }) {
-                    Text("Часть источников недоступна")
+                if (mode != "Спутники" && distinctSatellites > 0) {
+                    Text("Эфир загружен для $checkedSatellites из $distinctSatellites спутников",
+                        style = MaterialTheme.typography.labelSmall)
+                }
+                if (sourceError) TextButton({ mode = "Источники" }) {
+                    Text("Покрытие и состояние источников")
                 }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
                     if (loaded && results.isEmpty()) item {
@@ -194,7 +236,7 @@ internal fun DishFeedScreen(
                     }
                     items(results) { entry ->
                         val row = entry.row
-                        val angles = site?.let { rotation.getOrPut(row.orbit) { dishAngles(it, row.orbit) } }
+                        val angles = remember(site, row.orbit) { site?.let { dishAngles(it, row.orbit) } }
                         ElevatedCard(onClick = {
                             if (mode == "Пакеты") { query = row.network; mode = "Каналы" }
                             else onChoose(row)
@@ -203,9 +245,11 @@ internal fun DishFeedScreen(
                                 Text(when (mode) {
                                     "Пакеты" -> row.network
                                     "Транспондеры" -> row.tuning
+                                    "Спутники" -> row.satellite
                                     else -> row.channel
                                 }, style = MaterialTheme.typography.titleSmall)
-                                Text("${orbitalLabel(row.orbit)} · ${row.satellite}", color = MaterialTheme.colorScheme.primary)
+                                Text(if (mode == "Спутники") orbitalLabel(row.orbit) else
+                                    "${orbitalLabel(row.orbit)} · ${row.satellite}", color = MaterialTheme.colorScheme.primary)
                                 if (mode == "Каналы") Text(row.tuning.ifBlank { "Параметры в источнике не указаны" })
                                 if (mode != "Пакеты") {
                                     val info = listOf(row.network, row.access, row.note.takeUnless { it == row.tuning }.orEmpty())
@@ -218,6 +262,7 @@ internal fun DishFeedScreen(
                                 Text(when {
                                     entry.updated == -1L -> "Свой транспондер"
                                     entry.url.isBlank() -> "Из файла"
+                                    mode == "Спутники" -> "Индекс LyngSat"
                                     else -> "${URI(entry.url).host} · загружено ${clock(entry.updated)}"
                                 },
                                     style = MaterialTheme.typography.labelSmall)
