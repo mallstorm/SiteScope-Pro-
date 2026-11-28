@@ -19,13 +19,23 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import pro.sitescope.app.data.writeDocument
 import pro.sitescope.app.ui.*
 
 @Composable
 fun BatchScreen(vm: BatchViewModel = viewModel()) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
-        if (uri != null) try { context.contentResolver.openOutputStream(uri)?.use { it.write(vm.exportText().toByteArray()) }; toast(context, "Список сохранён") } catch (e: Exception) { toast(context, "Не удалось сохранить") }
+        if (uri != null) scope.launch {
+            try {
+                context.writeDocument(uri, vm.exportText().toByteArray())
+                toast(context, "Список сохранён")
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { toast(context, "Не удалось сохранить") }
+        }
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -39,7 +49,7 @@ fun BatchScreen(vm: BatchViewModel = viewModel()) {
                         LinearProgressIndicator(progress = { if (vm.total > 0) vm.done.toFloat() / vm.total else 0f }, modifier = Modifier.weight(1f))
                         Spacer(Modifier.width(10.dp))
                         Text("${vm.done}/${vm.total}", style = MaterialTheme.typography.bodySmall)
-                        TextButton(onClick = { vm.cancel() }) { Text("Стоп") }
+                        TextButton(onClick = vm::cancel, enabled = !vm.stopping) { Text(if (vm.stopping) "Останавливаем…" else "Стоп") }
                     }
                 } else Button(onClick = { vm.run() }, enabled = vm.input.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Rounded.PlaylistAddCheck, null); Spacer(Modifier.width(8.dp)); Text("Проверить все")
@@ -63,7 +73,7 @@ fun BatchScreen(vm: BatchViewModel = viewModel()) {
                     Column(Modifier.weight(1f)) {
                         Text(r.host, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         val text = when {
-                            !r.done -> "Ожидает проверки"
+                            !r.done -> if (vm.running && !vm.stopping) "Ожидает проверки" else "Не проверен"
                             r.up -> "Код ${r.code} · ${r.ms} мс" + (if (r.certDays in 0..30) " · сертификат: ${r.certDays} дн." else "")
                             else -> r.error.ifEmpty { "Код ${r.code}" }
                         }

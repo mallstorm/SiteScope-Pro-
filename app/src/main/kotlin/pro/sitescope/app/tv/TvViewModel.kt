@@ -17,7 +17,10 @@ import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import pro.sitescope.app.data.writeDocument
 import pro.sitescope.app.site.SiteMonitor
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -214,9 +217,13 @@ class TvViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun write(uri: Uri, text: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try { context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }; message = "Плейлист сохранён" }
-            catch (e: Exception) { message = "Не удалось сохранить файл" }
+        viewModelScope.launch {
+            try {
+                context.writeDocument(uri, withContext(Dispatchers.Default) { text.toByteArray() })
+                message = "Плейлист сохранён"
+            }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { message = "Не удалось сохранить файл" }
         }
     }
 

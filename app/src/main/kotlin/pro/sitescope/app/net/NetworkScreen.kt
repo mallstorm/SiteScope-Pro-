@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,7 +42,7 @@ private fun dateText(time: Long): String = if (time <= 0) "" else SimpleDateForm
 @Composable
 fun NetworkScreen(startTab: Int = 0, startTargets: String? = null, vm: NetViewModel = viewModel()) {
     val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(startTab) }
+    var tab by rememberSaveable(startTab) { mutableIntStateOf(startTab) }
     LifecycleResumeEffect(vm) { vm.loadProfiles(); onPauseOrDispose { } }
     LaunchedEffect(startTargets) { if (!startTargets.isNullOrBlank()) vm.targets = startTargets }
     Column(Modifier.fillMaxSize()) {

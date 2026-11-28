@@ -51,8 +51,8 @@ class ToolGroup(val id: String, val title: String, val subtitle: String, val ico
 object ToolRegistry {
     val groups: List<ToolGroup> = listOf(
         ToolGroup("site", "Сайты и SEO", "Аудит, индексация, скорость, видимость", Icons.Rounded.Language, setOf(ToolCategory.ANALYSIS), listOf(
-            Tool("audit", "Быстрый аудит", "Оценка, SEO, защита, домен", Icons.Rounded.Search, "site"),
-            Tool("crawl", "Полный обход сайта", "Все страницы, битые ссылки", Icons.Rounded.Layers, "site"),
+            Tool("audit", "Быстрый аудит", "Оценка, SEO, защита, домен", Icons.Rounded.Search, "site") { it.siteCrawlRequest = false },
+            Tool("crawl", "Полный обход сайта", "Страницы и битые ссылки", Icons.Rounded.Layers, "site") { it.siteCrawlRequest = true },
             Tool("metrics", "Метрики поиска", "Скорость, Search Console, ИКС", Icons.Rounded.QueryStats, "metrics"),
             Tool("batch", "Проверка списка сайтов", "Код ответа и сертификат", Icons.Rounded.Link, "batch", isNew = true)
         )),
@@ -69,15 +69,15 @@ object ToolRegistry {
             Tool("radio", "Радиомонитор", "Сигнал SIM, соседние соты, события и виджет", Icons.Rounded.SettingsInputAntenna, "radio", isNew = true),
             Tool("survey", "Карта покрытия", "Маршруты измерений и база станций", Icons.Rounded.MyLocation, "radio", 1),
             Tool("wifi", "Wi-Fi диагностика", "Каналы, сигнал, комнаты", Icons.Rounded.Wifi, "wifi"),
-            Tool("speed", "Скорость", "Тест в стиле Speedtest", Icons.Rounded.Speed, "network", 3),
+            Tool("speed", "Скорость сети", "Отклик, скачивание и отдача", Icons.Rounded.Speed, "network", 3),
             Tool("external", "Доступ извне", "Доступность ваших сервисов", Icons.Rounded.OpenInNew, "network", 4, isNew = true),
             Tool("routers", "Роутеры", "Состояние и настройки", Icons.Rounded.Router, "network", 5)
         )),
         ToolGroup("tv", "Телевидение", "IPTV, M3U, потоки, каналы и источники", Icons.Rounded.LiveTv, setOf(ToolCategory.TV), listOf(
             Tool("satellite", "Спутниковая антенна", "Наведение, карта, визир и каталог DVB", Icons.Rounded.SettingsInputAntenna, "satellite", isNew = true),
             Tool("channels", "Каналы", "Плейлисты и просмотр", Icons.Rounded.List, "tv"),
-            Tool("sources", "Источники", "M3U и телепрограмма", Icons.Rounded.Cloud, "tv", isNew = true),
-            Tool("streamcheck", "Проверка потоков", "Доступность и качество", Icons.Rounded.PlaylistAddCheck, "tv"),
+            Tool("sources", "Источники", "M3U и телепрограмма", Icons.Rounded.Cloud, "tv", isNew = true) { it.tvSourcesRequest = true },
+            Tool("streamcheck", "Проверка потоков", "Доступность и качество", Icons.Rounded.PlaylistAddCheck, "tv") { it.tvCheckRequest = true },
             Tool("tvlan", "ТВ в локальной сети", "udpxy и multicast", Icons.Rounded.SettingsInputAntenna, "tvlan"),
             Tool("tvmask", "Поиск по маске", "Match*, ?HD, %d", Icons.Rounded.ManageSearch, "tvmask")
         )),
@@ -90,6 +90,19 @@ object ToolRegistry {
             Tool("journal", "Журнал", "События и действия", Icons.Rounded.Dns, "vpn", 5)
         ))
     )
+
+    internal fun find(query: String, category: ToolCategory): List<ToolGroup> {
+        fun normal(text: String) = text.lowercase(java.util.Locale.ROOT).replace('ё', 'е')
+        val words = normal(query).trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        return groups.mapNotNull { group ->
+            if (category != ToolCategory.ALL && category !in group.categories) return@mapNotNull null
+            val tools = group.tools.filter { tool ->
+                val searchable = normal("${tool.title} ${tool.subtitle} ${group.title} ${group.subtitle}")
+                words.all(searchable::contains)
+            }
+            if (tools.isEmpty()) null else ToolGroup(group.id, group.title, group.subtitle, group.icon, group.categories, tools)
+        }
+    }
 
     val toolIcon: ImageVector get() = Icons.Rounded.Build
     val okIcon: ImageVector get() = Icons.Rounded.CheckCircle

@@ -39,7 +39,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import pro.sitescope.app.SearchMetricsActivity
+import pro.sitescope.app.data.ReportLog
+import pro.sitescope.app.data.writeDocument
 import pro.sitescope.app.ui.*
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -47,6 +53,15 @@ import java.util.Locale
 
 @Composable
 fun SiteScreen(state: AppState, vm: SiteViewModel = viewModel()) {
+    LaunchedEffect(state.siteCrawlRequest) {
+        state.siteCrawlRequest?.let { full ->
+            state.siteCrawlRequest = null
+            if (!vm.running) {
+                vm.clear()
+                vm.fullCrawl = full
+            }
+        }
+    }
     LaunchedEffect(state.siteRequest) {
         state.siteRequest?.let { request -> state.siteRequest = null; vm.input = request; vm.run(request) }
     }
@@ -108,24 +123,32 @@ private fun Start(vm: SiteViewModel, state: AppState) {
 @Composable
 private fun ColumnScope.ReportView(vm: SiteViewModel, r: Report, state: AppState) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    fun save(uri: Uri, format: String, generate: () -> ByteArray) {
+        scope.launch {
+            try {
+                val bytes = withContext(Dispatchers.Default) { generate() }
+                context.writeDocument(uri, bytes)
+                withContext(Dispatchers.IO) {
+                    ReportLog.add(context, "sitescope-${r.host}.${format.lowercase(Locale.ROOT)}", "SEO-аудит (${r.host})", format, bytes.size.toLong(), keepUri(context, uri))
+                }
+                toast(context, "Отчёт сохранён")
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { toast(context, "Не удалось сохранить отчёт") }
+        }
+    }
     val saveHtml = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri ->
-        if (uri != null) try {
-            val bytes = SiteReportBuilder.toHtml(r).toByteArray(); context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }; pro.sitescope.app.data.ReportLog.add(context, "sitescope-${r.host}.html", "SEO-аудит (${r.host})", "HTML", bytes.size.toLong(), keepUri(context, uri))
-            toast(context, "Отчёт сохранён")
-        } catch (e: Exception) { toast(context, "Не удалось сохранить") }
+        if (uri != null) save(uri, "HTML") { SiteReportBuilder.toHtml(r).toByteArray() }
     }
     val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
-        if (uri != null) try {
-            val buffer = java.io.ByteArrayOutputStream(); SitePdf.write(r, buffer)
-            context.contentResolver.openOutputStream(uri)?.use { it.write(buffer.toByteArray()) }
-            pro.sitescope.app.data.ReportLog.add(context, "sitescope-${r.host}.pdf", "SEO-аудит (${r.host})", "PDF", buffer.size().toLong(), keepUri(context, uri))
-            toast(context, "PDF сохранён")
-        } catch (e: Exception) { toast(context, "Не удалось сохранить") }
+        if (uri != null) save(uri, "PDF") {
+            java.io.ByteArrayOutputStream().apply { SitePdf.write(r, this) }.toByteArray()
+        }
     }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    var detail by remember(r.target, r.timestamp) { mutableStateOf(false) }
+    var detail by androidx.compose.runtime.saveable.rememberSaveable(r.target, r.timestamp) { mutableStateOf(false) }
     val shown = r.sections.filter { it.checks.isNotEmpty() }
-    var tab by remember(r.target, r.timestamp) { mutableIntStateOf(0) }
+    var tab by androidx.compose.runtime.saveable.rememberSaveable(r.target, r.timestamp) { mutableIntStateOf(0) }
     BackHandler(enabled = detail) { detail = false }
     if (!detail) {
         SiteDashboard(vm, r, state, onDetails = { key -> tab = if (key == null) 0 else (shown.indexOfFirst { it.key == key } + 1).coerceAtLeast(0); detail = true }, onSavePdf = { savePdf.launch("sitescope-${r.host}.pdf") }, onSaveHtml = { saveHtml.launch("sitescope-${r.host}.html") })

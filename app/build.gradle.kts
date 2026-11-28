@@ -18,8 +18,8 @@ android {
         minSdk = 28
         targetSdk = 36
         // Номер сборки CI добавляется к коду версии: каждая новая сборка выше предыдущей, обновление ставится поверх без конфликтов.
-        versionCode = 1_011_200 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
-        versionName = "2.0.0-alpha13"
+        versionCode = 1_011_300 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
+        versionName = "2.0.0-alpha14"
         ndk { abiFilters += "arm64-v8a" }
     }
 

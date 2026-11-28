@@ -37,7 +37,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -50,7 +53,7 @@ import pro.sitescope.app.ip.IpScreen
 import pro.sitescope.app.site.SiteScreen
 import pro.sitescope.app.tv.TvScreen
 
-/** Четыре вкладки нижней панели. Раздел, открытый из вкладки, не меняет подсвеченную вкладку. */
+/** Раздел, открытый из вкладки, сохраняет её как точку возврата. */
 enum class Tab(val title: String, val icon: ImageVector) {
     HOME("Главная", Icons.Rounded.Home), TOOLS("Инструменты", Icons.Rounded.Build),
     TASKS("Задачи", Icons.Rounded.Checklist), DATA("Данные", Icons.Rounded.Folder)
@@ -59,13 +62,20 @@ enum class Tab(val title: String, val icon: ImageVector) {
 /** Общее состояние оболочки: вкладка, открытый раздел и «поручения» экранам от умной строки. */
 class AppState : ViewModel() {
     var tab by mutableStateOf(Tab.HOME)
-    var route by mutableStateOf<String?>(null)
-    var routeTab by mutableIntStateOf(0)
-    var routeTargets by mutableStateOf<String?>(null)
-    var routeNonce by mutableIntStateOf(0)
+    private data class Route(val name: String, val tab: Int, val targets: String?, val id: Int)
+    private val routes = mutableStateListOf<Route>()
+    private var nextRouteId = 0
+    val route get() = routes.lastOrNull()?.name
+    val routeTab get() = routes.lastOrNull()?.tab ?: 0
+    val routeTargets get() = routes.lastOrNull()?.targets
+    val routeNonce get() = routes.lastOrNull()?.id ?: 0
+    internal val routeKeys get() = routes.map { "route-${it.id}" }.toSet()
     var dataTab by mutableIntStateOf(0)
     var dataNonce by mutableIntStateOf(0)
     var siteRequest by mutableStateOf<String?>(null)
+    internal var siteCrawlRequest by mutableStateOf<Boolean?>(null)
+    internal var tvSourcesRequest by mutableStateOf(false)
+    internal var tvCheckRequest by mutableStateOf(false)
     var ipRequest by mutableStateOf<String?>(null)
     var subnetRequest by mutableStateOf<String?>(null)
     var playlistRequest by mutableStateOf<String?>(null)
@@ -73,18 +83,21 @@ class AppState : ViewModel() {
     /** Ссылка сервера (vless://… и др.) из QR-кода: экран VPN добавит её и сбросит поле. */
     var serverRequest by mutableStateOf<String?>(null)
 
-    fun selectTab(target: Tab) { route = null; tab = target }
+    fun selectTab(target: Tab) { routes.clear(); tab = target }
 
     /** Открывает раздел поверх текущей вкладки. «data» и «tasks» — это вкладки, а не разделы. */
     fun openRoute(name: String, subTab: Int = 0, targets: String? = null) {
         when (name) {
             "data" -> { dataTab = subTab; dataNonce++; selectTab(Tab.DATA) }
             "tasks" -> selectTab(Tab.TASKS)
-            else -> { routeTab = subTab; routeTargets = targets; routeNonce++; route = name }
+            else -> {
+                if (route == name) closeRoute()
+                routes.add(Route(name, subTab, targets, ++nextRouteId))
+            }
         }
     }
 
-    fun closeRoute() { route = null }
+    fun closeRoute() { if (routes.isNotEmpty()) routes.removeAt(routes.lastIndex) }
 
     /** Открывает подходящий инструмент для введённого текста. Возвращает false, если текст пуст. */
     fun open(text: String): Boolean {
@@ -141,6 +154,13 @@ class ShellActivity : ComponentActivity() {
 @Composable
 fun Shell(state: AppState) {
     val count = rememberActiveTaskCount()
+    val sections = rememberSaveableStateHolder()
+    var previousRoutes by remember { mutableStateOf(emptySet<String>()) }
+    val routeKeys = state.routeKeys
+    LaunchedEffect(routeKeys) {
+        (previousRoutes - routeKeys).forEach(sections::removeState)
+        previousRoutes = routeKeys
+    }
     val imeUp = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     BackHandler(enabled = state.route != null || state.tab != Tab.HOME) {
         if (state.route != null) state.closeRoute() else state.tab = Tab.HOME
@@ -165,14 +185,18 @@ fun Shell(state: AppState) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val route = state.route
             if (route != null) {
-                CompositionLocalProvider(LocalBackAction provides { state.closeRoute() }) { RouteHost(state, route) }
+                sections.SaveableStateProvider("route-${state.routeNonce}") {
+                    CompositionLocalProvider(LocalBackAction provides { state.closeRoute() }) { RouteHost(state, route) }
+                }
             } else {
                 Crossfade(targetState = state.tab, label = "tab") { tab ->
-                    when (tab) {
-                        Tab.HOME -> HomeScreen(state)
-                        Tab.TOOLS -> ToolsScreen(state)
-                        Tab.TASKS -> TasksScreen(state)
-                        Tab.DATA -> key(state.dataNonce) { DataHub(state, state.dataTab) }
+                    sections.SaveableStateProvider("tab-${tab.name}") {
+                        when (tab) {
+                            Tab.HOME -> HomeScreen(state)
+                            Tab.TOOLS -> ToolsScreen(state)
+                            Tab.TASKS -> TasksScreen(state)
+                            Tab.DATA -> key(state.dataNonce) { DataHub(state, state.dataTab) }
+                        }
                     }
                 }
             }

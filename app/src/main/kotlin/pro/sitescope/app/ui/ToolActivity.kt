@@ -1,14 +1,9 @@
 package pro.sitescope.app.ui
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,7 +12,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,15 +51,6 @@ class ToolActivity : ComponentActivity() {
 @Composable
 fun ToolContent(screen: String, tab: Int, targets: String?, state: AppState? = null, onBack: () -> Unit) {
     val context = LocalContext.current
-    // Сканер работает в фоне с уведомлением о ходе проверки.
-    if (screen == "network" && Build.VERSION.SDK_INT >= 33) {
-        val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-        LaunchedEffect(Unit) {
-            if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                try { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) } catch (e: Exception) { }
-            }
-        }
-    }
     CompositionLocalProvider(LocalBackAction provides onBack) { Column(Modifier.fillMaxSize()) {
         when (screen) {
             "data" -> { BackHeader("Мои данные", onBack); DataScreen(tab) }

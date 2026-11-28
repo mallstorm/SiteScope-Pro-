@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,13 +60,26 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
     LaunchedEffect(TvViewModel.externalChange) { vm.syncFromStore() }
     val context = LocalContext.current
     var addSheet by remember { mutableStateOf(false) }
-    var manageSheet by remember { mutableStateOf(false) }
+    var manageSheet by rememberSaveable { mutableStateOf(false) }
+    var checkFirst by rememberSaveable { mutableStateOf(false) }
     var recordsSheet by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf<Channel?>(null) }
     var prefillUrl by remember { mutableStateOf("") }
 
     LaunchedEffect(state.playlistRequest) { state.playlistRequest?.let { state.playlistRequest = null; prefillUrl = it; addSheet = true } }
     LaunchedEffect(state.streamRequest) { state.streamRequest?.let { state.streamRequest = null; play(context, listOf(vm.adHoc(it)), 0) } }
+    LaunchedEffect(state.tvSourcesRequest) {
+        if (state.tvSourcesRequest) {
+            state.tvSourcesRequest = false
+            manageSheet = true
+        }
+    }
+    LaunchedEffect(state.tvCheckRequest) {
+        if (state.tvCheckRequest) {
+            state.tvCheckRequest = false
+            checkFirst = true
+        }
+    }
     LaunchedEffect(vm.message) { if (vm.message.isNotEmpty()) { toast(context, vm.message); vm.message = "" } }
 
     val tick = vm.tick
@@ -96,6 +110,7 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
             }
         } else if (vm.channels.isNotEmpty()) {
             Column(Modifier.padding(horizontal = 12.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (checkFirst) CheckPanel(vm, visible)
                 SmartSearchBar(vm.query, { vm.query = it }, "Найти канал", onGo = { }, scan = true)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     MiniChip("Все", vm.group == TvViewModel.ALL) { vm.group = TvViewModel.ALL }
@@ -105,7 +120,7 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
                     for (g in groups.take(60)) MiniChip(g, vm.group == g) { vm.group = g }
                 }
                 TvSummary(vm, tick)
-                CheckPanel(vm, visible)
+                if (!checkFirst) CheckPanel(vm, visible)
             }
             LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (visible.isEmpty()) item {
@@ -137,7 +152,13 @@ fun TvScreen(state: AppState, vm: TvViewModel = viewModel()) {
     if (addSheet) AddSheet(vm, prefillUrl) { addSheet = false; prefillUrl = "" }
     if (manageSheet) ManageSheet(vm) { manageSheet = false }
     if (recordsSheet) RecordsSheet { recordsSheet = false }
-    details?.let { channel -> DetailsSheet(vm, channel, tick, onPlay = { vm.markWatched(channel); play(context, visible, maxOf(0, visible.indexOf(channel))) }) { details = null } }
+    details?.let { channel ->
+        DetailsSheet(vm, channel, tick, onPlay = {
+            val index = visible.indexOf(channel)
+            vm.markWatched(channel)
+            if (index >= 0) play(context, visible, index) else play(context, listOf(channel), 0)
+        }) { details = null }
+    }
 }
 
 @Composable

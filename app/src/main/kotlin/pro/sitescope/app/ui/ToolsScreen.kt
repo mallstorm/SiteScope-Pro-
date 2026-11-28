@@ -6,8 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -42,8 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -60,9 +57,9 @@ private class ToolLive(val subtitle: String?, val badge: String?, val badgeKind:
 @Composable
 fun ToolsScreen(state: AppState) {
     val context = LocalContext.current
-    var query by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf(ToolCategory.ALL) }
-    var expandedId by remember { mutableStateOf<String?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var category by rememberSaveable { mutableStateOf(ToolCategory.ALL) }
+    var expandedId by rememberSaveable { mutableStateOf<String?>(ToolRegistry.groups.firstOrNull()?.id) }
     var devices by remember { mutableStateOf(-1) }
     var channels by remember { mutableStateOf(-1) }
     var playlists by remember { mutableStateOf(-1) }
@@ -78,54 +75,55 @@ fun ToolsScreen(state: AppState) {
     }
 
     fun live(tool: Tool): ToolLive {
-        val running = tasks.filter { it.active }
-        val crawl = running.count { it.kind == TaskCenter.Kind.CRAWL }
-        val batch = running.count { it.kind == TaskCenter.Kind.BATCH }
-        val check = running.count { it.kind == TaskCenter.Kind.TV_CHECK }
-        val audit = running.count { it.kind == TaskCenter.Kind.SITE_AUDIT }
         fun tasksBadge(n: Int) = if (n > 0) ToolLive(null, "$n ${taskWord(n)}", BadgeKind.INFO) else null
+        fun running(kind: TaskCenter.Kind) = tasks.count { it.active && it.kind == kind }
         return when (tool.id) {
-            "audit" -> tasksBadge(audit)
-            "crawl" -> tasksBadge(crawl)
-            "batch" -> tasksBadge(batch)
-            "streamcheck" -> tasksBadge(check)
+            "audit" -> tasksBadge(running(TaskCenter.Kind.SITE_AUDIT))
+            "crawl" -> tasksBadge(running(TaskCenter.Kind.CRAWL))
+            "batch" -> tasksBadge(running(TaskCenter.Kind.BATCH))
+            "streamcheck" -> tasksBadge(running(TaskCenter.Kind.TV_CHECK))
+                ?: if (channels >= 0) ToolLive("Каналов: $channels", null, BadgeKind.GOOD) else null
             "vpn" -> if (vpn == HostsVpnService.STATE_ACTIVE) ToolLive(null, "активно", BadgeKind.GOOD) else null
             "dpi" -> if (dpi.phase == DpiPhase.RUNNING) ToolLive(null, "активно", BadgeKind.GOOD) else null
             "anon" -> if (services.any { it.key == "tor" || it.key == "i2p" }) ToolLive(null, "активно", BadgeKind.GOOD) else null
             "scanner" -> if (services.any { it.key == "scan" }) ToolLive(null, "активно", BadgeKind.GOOD) else null
             "devices" -> if (devices > 0) ToolLive("Найдено: $devices", null, BadgeKind.GOOD) else null
             "channels" -> if (playlists >= 0) ToolLive("Плейлистов: $playlists", null, BadgeKind.GOOD) else null
-            "streamcheck" -> if (channels > 0) ToolLive("Потоков: $channels", null, BadgeKind.GOOD) else null
             else -> null
         } ?: ToolLive(null, if (tool.isNew) "новое" else null, BadgeKind.NEW)
     }
 
     val needle = query.trim()
-    val groups = ToolRegistry.groups.mapNotNull { group ->
-        if (category != ToolCategory.ALL && category !in group.categories) return@mapNotNull null
-        val tools = if (needle.isEmpty()) group.tools else group.tools.filter { (it.title + " " + it.subtitle).contains(needle, ignoreCase = true) }
-        if (tools.isEmpty()) null else ToolGroup(group.id, group.title, group.subtitle, group.icon, group.categories, tools)
-    }
+    val groups = remember(needle, category) { ToolRegistry.find(needle, category) }
     fun launch(tool: Tool) { tool.prepare?.invoke(state); state.openRoute(tool.route, tool.tab) }
 
     Column(Modifier.fillMaxSize()) {
-        AppHeader("Инструменты", "Выберите раздел", logo = true,
-            actions = { HeaderMenu(listOf("Настройки и резервная копия" to { state.openRoute("settings") })) }
+        AppHeader("Инструменты", "", logo = true,
+            actions = { HeaderMenu(listOf("Задачи" to { state.openRoute("tasks") }, "Настройки и резервная копия" to { state.openRoute("settings") })) }
         )
 
         Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp).padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SmartSearchBar(query, { query = it }, "Найти инструмент", scan = true,
+            SmartSearchBar(query, { query = it.take(160) }, "Найти инструмент", scan = false,
                 onGo = { groups.firstOrNull()?.tools?.firstOrNull()?.let { launch(it) } })
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ToolCategory.entries.forEach { option ->
+                    FilterChip(category == option, onClick = {
+                        category = option
+                        expandedId = ToolRegistry.find(needle, option).firstOrNull()?.id
+                    }, label = { Text(option.title) })
+                }
+            }
             if (groups.isEmpty()) {
                 Text("Ничего не найдено. Попробуйте другое слово или категорию.", style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 16.dp))
             }
             val searching = needle.isNotEmpty()
-            val activeId = expandedId?.takeIf { id -> groups.any { it.id == id } } ?: groups.firstOrNull()?.id
             androidx.compose.foundation.lazy.LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(groups.size) { index ->
+                items(groups.size, key = { groups[it].id }) { index ->
                     val group = groups[index]
-                    ToolGroupCard(group, searching || group.id == activeId, onToggle = { expandedId = group.id }, live = { live(it) }, onOpen = { launch(it) })
+                    ToolGroupCard(group, searching || group.id == expandedId, onToggle = {
+                        expandedId = if (expandedId == group.id) null else group.id
+                    }, live = { live(it) }, onOpen = { launch(it) })
                 }
             }
         }
@@ -138,9 +136,6 @@ private fun taskWord(n: Int): String = when {
     n % 10 in 2..4 -> "задачи"
     else -> "задач"
 }
-
-/** Расчётная высота карточки группы: заголовок и строки по две плитки. */
-private fun groupHeight(toolCount: Int): Dp = 64.dp + 52.dp * ((toolCount + 1) / 2) + 6.dp * (((toolCount + 1) / 2).coerceAtLeast(1) - 1) + 8.dp
 
 @Composable
 private fun ToolGroupCard(group: ToolGroup, expanded: Boolean, onToggle: () -> Unit, live: (Tool) -> ToolLive, onOpen: (Tool) -> Unit) {
