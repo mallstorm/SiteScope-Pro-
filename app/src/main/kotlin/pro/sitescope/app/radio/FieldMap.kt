@@ -48,12 +48,11 @@ private fun esriTiles(name: String, layer: String, extension: String) =
         "https://server.arcgisonline.com/ArcGIS/rest/services/$layer/MapServer/tile/"
     )) {
         override fun getTileURLString(tile: Long) =
-            "$baseUrl${MapTileIndex.getZoom(tile)}/${MapTileIndex.getY(tile)}/${MapTileIndex.getX(tile)}"
+            "$baseUrl${MapTileIndex.getZoom(tile)}/${MapTileIndex.getY(tile)}/${MapTileIndex.getX(tile)}?blankTile=false"
     }
 
-private val imagery = esriTiles("EsriWorldImagery", "World_Imagery", ".jpg")
-private val roads = esriTiles("EsriWorldTransportation", "Reference/World_Transportation", ".png")
-private val labels = esriTiles("EsriWorldPlaces", "Reference/World_Boundaries_and_Places", ".png")
+private val roads = esriTiles("EsriWorldTransportationV2", "Reference/World_Transportation", ".png")
+private val labels = esriTiles("EsriWorldPlacesV2", "Reference/World_Boundaries_and_Places", ".png")
 
 @Composable
 fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick: ((Pin) -> Unit)? = null, orientation: Float = 0f, modifier: Modifier = Modifier.fillMaxWidth().height(320.dp), layer: FieldMapLayer = FieldMapLayer.Streets, recenter: Int = 0, initialZoom: Double = 15.0, followCenter: Boolean = true,
@@ -67,11 +66,13 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
             osmdroidBasePath = java.io.File(ctx.cacheDir,"field-map")
             osmdroidTileCache = java.io.File(osmdroidBasePath,"tiles")
         }
-        MapView(ctx).apply {
+        MapView(ctx, FieldMapTileProvider(ctx)).apply {
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
             setVerticalMapRepetitionEnabled(false)
-            zoomController.setVisibility(CustomZoomButtonsController.Visibility.ALWAYS)
+            zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
+            overlayManager.tilesOverlay.loadingBackgroundColor = 0xff102731.toInt()
+            overlayManager.tilesOverlay.loadingLineColor = Color.TRANSPARENT
             controller.setZoom(initialZoom)
         }
     }
@@ -95,7 +96,7 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
         }
     }
     LaunchedEffect(layer) {
-        map.setTileSource(if (layer == FieldMapLayer.Streets) TileSourceFactory.MAPNIK else imagery)
+        map.setTileSource(if (layer == FieldMapLayer.Streets) TileSourceFactory.MAPNIK else FieldImageryTiles)
         map.controller.setZoom(map.zoomLevelDouble.coerceIn(map.minZoomLevel, map.maxZoomLevel))
         map.invalidate()
     }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -21,12 +22,26 @@ import java.util.Locale
 @Composable
 internal fun ExposureScreen(vm: ExposureViewModel = viewModel()) {
     var clear by remember { mutableStateOf(false) }
+    var watching by rememberSaveable { mutableStateOf(false) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, vm) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) vm.cancel() else if (event == Lifecycle.Event.ON_RESUME) vm.reload() }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer); vm.cancel() }
     }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(!watching, { watching = false }, label = { Text("Проверка") })
+            FilterChip(watching, { watching = true }, label = { Text("Наблюдение") })
+        }
+        if (watching) ExposureWatchPanel(vm) { watching = false }
+        else ExposureChecks(vm) { clear = true }
+    }
+    if (clear) AlertDialog(onDismissRequest = { clear = false }, title = { Text("Очистить историю измерений?") }, text = { Text("Сохранённые цели останутся.") }, confirmButton = { TextButton(onClick = { clear = false; vm.clearHistory() }) { Text("Очистить") } }, dismissButton = { TextButton(onClick = { clear = false }) { Text("Отмена") } })
+}
+
+@Composable
+private fun ExposureChecks(vm: ExposureViewModel, onClear: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             SoftCard {
@@ -58,19 +73,18 @@ internal fun ExposureScreen(vm: ExposureViewModel = viewModel()) {
             }
         }
         item { SectionTitle("Измерения (${vm.runs.size}, сохраняются последние 100)"); Text("Положительный результат подтверждает TCP-доступ только с указанной точки и в указанное время. Таймаут не доказывает, что устройство выключено.", style = MaterialTheme.typography.bodySmall) }
-        if (vm.runs.isNotEmpty()) item { TextButton(enabled = !vm.busy, onClick = { clear = true }) { Text("Очистить измерения") } }
+        if (vm.runs.isNotEmpty()) item { TextButton(enabled = !vm.busy, onClick = onClear) { Text("Очистить измерения") } }
         items(vm.runs, key = { it.optString("id") }) { run -> Measurement(run) }
     }
-    if (clear) AlertDialog(onDismissRequest = { clear = false }, title = { Text("Очистить историю измерений?") }, text = { Text("Сохранённые цели останутся.") }, confirmButton = { TextButton(onClick = { clear = false; vm.clearHistory() }) { Text("Очистить") } }, dismissButton = { TextButton(onClick = { clear = false }) { Text("Отмена") } })
 }
 @Composable
-private fun Measurement(run: JSONObject) {
+internal fun Measurement(run: JSONObject) {
     var limit by remember(run.optString("id")) { mutableIntStateOf(8) }
     val results = run.optJSONArray("results")
     val confirmed = (0 until (results?.length() ?: 0)).any { ExposurePoint.confirmed(run, results!!.getJSONObject(it)) }
     SoftCard {
         Text("${run.optString("host")} · ${run.optString("ports")}", style = MaterialTheme.typography.titleSmall)
-        Text(SimpleDateFormat("d MMM yyyy, HH:mm:ss", Locale.forLanguageTag("ru")).format(Date(run.optLong("time"))), style = MaterialTheme.typography.labelSmall)
+        Text(exposureDate(run.optLong("time")), style = MaterialTheme.typography.labelSmall)
         Text(run.optString("source"), style = MaterialTheme.typography.bodySmall)
         if (!confirmed) Text("Доступность из интернета этим измерением не подтверждена", style = MaterialTheme.typography.bodySmall)
         if (run.optBoolean("cancelled")) Text("Частичная проверка: остановлена")
@@ -94,3 +108,6 @@ private fun Measurement(run: JSONObject) {
         if (shown > 8) TextButton(onClick = { limit = 8 }) { Text("Свернуть") }
     }
 }
+
+internal fun exposureDate(time: Long): String =
+    SimpleDateFormat("d MMM yyyy, HH:mm:ss", Locale.forLanguageTag("ru")).format(Date(time))
