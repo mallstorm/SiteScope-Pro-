@@ -405,7 +405,7 @@ fun DishScreen(onFullscreen: (Boolean) -> Unit = {}) {
             Row(verticalAlignment=Alignment.CenterVertically) {Text("Сглаживание компаса",Modifier.weight(1f));Switch(smooth,{smooth=it})}
             if(smooth) {
                 Text("Фильтр: %.1f · 0.1 — сильное, 1.0 — без сглаживания".format(lowPass),style=MaterialTheme.typography.bodySmall)
-                Slider(lowPass,{lowPass=it},valueRange=0.1f..1f,steps=8)
+                pro.sitescope.app.ui.AppSlider(lowPass,{lowPass=it},valueRange=0.1f..1f,steps=8)
             }
             Text("Магнитное склонение рассчитывается по точке установки. Ручная поправка добавляется к показанию датчика.",style=MaterialTheme.typography.bodySmall)
             FilledTonalButton({settingsOpen=false},Modifier.fillMaxWidth()){Text("Готово")}

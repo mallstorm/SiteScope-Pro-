@@ -4,17 +4,23 @@ package pro.sitescope.app.net
 
 import android.app.Application
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,9 +31,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
@@ -35,6 +40,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import pro.sitescope.app.ui.*
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -43,6 +49,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class SpeedViewModel(app: Application) : AndroidViewModel(app) {
     private val context = app.applicationContext
+    private val main = Handler(Looper.getMainLooper())
     var settings by mutableStateOf(SpeedStore.loadSettings(context)); private set
     var history by mutableStateOf(SpeedStore.loadHistory(context)); private set
     var phase by mutableStateOf(SpeedEngine.Phase.IDLE); private set
@@ -55,41 +62,107 @@ class SpeedViewModel(app: Application) : AndroidViewModel(app) {
     // Промежуточные значения текущего замера (показываются до итогового результата)
     var downNow by mutableStateOf(-1.0); private set
     var upNow by mutableStateOf(-1.0); private set
+    var activeServer by mutableStateOf<SpeedEngine.Server?>(null); private set
+    var probing by mutableStateOf(false); private set
+    val probes = mutableStateMapOf<String, SpeedEngine.ServerProbe>()
     private val cancel = AtomicBoolean(false)
+    private val cancelProbe = AtomicBoolean(false)
     val running get() = phase != SpeedEngine.Phase.IDLE && phase != SpeedEngine.Phase.DONE
 
-    fun update(s: SpeedEngine.Settings) { settings = s; SpeedStore.saveSettings(context, s) }
+    fun update(s: SpeedEngine.Settings) {
+        if (settings.serverId != s.serverId || settings.automatic != s.automatic) activeServer = null
+        settings = s
+        SpeedStore.saveSettings(context, s)
+    }
+
+    fun checkServers() {
+        if (running || probing) return
+        probing = true
+        cancelProbe.set(false)
+        net = SpeedEngine.networkLabel(context)
+        probes.clear()
+        val custom = settings.server().takeIf { it.id == "custom" && it.pingUrl.isNotBlank() }
+        viewModelScope.launch {
+            try {
+                val measured = withContext(Dispatchers.IO) {
+                    SpeedEngine.probeServers(SpeedServers.public + listOfNotNull(custom), cancelProbe) { probe, _, _ ->
+                        main.post { if (!cancelProbe.get()) probes[probe.server.id] = probe }
+                    }
+                }
+                if (!cancelProbe.get()) measured.forEach { probes[it.server.id] = it }
+            } finally { probing = false }
+        }
+    }
+
+    fun stopChecking() { cancelProbe.set(true) }
 
     fun start() {
-        if (running) return
+        if (running || probing) return
         cancel.set(false)
         current = null; live = 0.0; progress = 0f; pingNow = -1.0; pingDone = 0; downNow = -1.0; upNow = -1.0
         net = SpeedEngine.networkLabel(context)
         val s = settings
-        viewModelScope.launch(Dispatchers.IO) {
-            val r = SpeedEngine.run(context, s, cancel, object : SpeedEngine.Listener {
-                override fun phase(p: SpeedEngine.Phase) {
+        activeServer = if (s.automatic) null else s.server()
+        if (s.automatic) probes.clear()
+        phase = SpeedEngine.Phase.SELECTING
+        val listener = object : SpeedEngine.Listener {
+            override fun server(server: SpeedEngine.Server) {
+                main.post {
+                    activeServer = server
+                    pingNow = -1.0; pingDone = 0; downNow = -1.0; upNow = -1.0
+                }
+            }
+            override fun serverProbe(result: SpeedEngine.ServerProbe, done: Int, total: Int) {
+                main.post {
+                    probes[result.server.id] = result
+                    pingDone = done
+                    this@SpeedViewModel.progress = done.toFloat() / total
+                }
+            }
+            override fun phase(p: SpeedEngine.Phase) {
+                if (p == SpeedEngine.Phase.DONE) return
+                main.post {
                     if (p == SpeedEngine.Phase.DOWN && downNow < 0) downNow = 0.0
                     phase = p; live = 0.0; progress = 0f
                 }
-                override fun ping(ms: Double, done: Int, total: Int) { if (ms >= 0) pingNow = ms; pingDone = done; progress = done.toFloat() / total }
-                override fun speed(p: SpeedEngine.Phase, mbps: Double, progress: Float) {
+            }
+            override fun ping(ms: Double, done: Int, total: Int) {
+                main.post { pingNow = ms; pingDone = done; progress = done.toFloat() / total }
+            }
+            override fun speed(p: SpeedEngine.Phase, mbps: Double, progress: Float) {
+                main.post {
                     live = mbps; this@SpeedViewModel.progress = progress
                     if (p == SpeedEngine.Phase.DOWN) downNow = mbps else if (p == SpeedEngine.Phase.UP) upNow = mbps
                 }
-            })
-            current = r; live = 0.0
-            if (!cancel.get() && (r.down >= 0 || r.up >= 0 || r.ping >= 0)) {
-                SpeedStore.appendHistory(context, r)
-                history = SpeedStore.loadHistory(context)
             }
-            phase = SpeedEngine.Phase.DONE
+        }
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val measured = SpeedEngine.run(context, s, cancel, listener)
+                    if (!cancel.get() && (measured.down >= 0 || measured.up >= 0 || measured.ping >= 0)) {
+                        SpeedStore.appendHistory(context, measured)
+                    }
+                    measured
+                }
+                current = result
+                history = SpeedStore.loadHistory(context)
+            } finally {
+                live = 0.0
+                phase = SpeedEngine.Phase.DONE
+            }
         }
     }
 
     fun stop() { cancel.set(true) }
     fun clearHistory() { history = emptyList(); SpeedStore.saveHistory(context, history) }
     fun remove(r: SpeedEngine.Result) { SpeedStore.removeHistory(context, r); history = SpeedStore.loadHistory(context) }
+
+    override fun onCleared() {
+        cancel.set(true)
+        cancelProbe.set(true)
+        super.onCleared()
+    }
 }
 
 private val gaugeScale = listOf(0.0, 5.0, 10.0, 20.0, 50.0, 100.0, 250.0, 500.0, 1000.0)
@@ -106,6 +179,7 @@ internal fun gaugeFraction(mbps: Double): Float {
 }
 
 private fun phaseTitle(p: SpeedEngine.Phase) = when (p) {
+    SpeedEngine.Phase.SELECTING -> "Подбор сервера"
     SpeedEngine.Phase.PING -> "Задержка"
     SpeedEngine.Phase.DOWN -> "Скачивание"
     SpeedEngine.Phase.UP -> "Отдача"
@@ -116,6 +190,7 @@ private fun phaseTitle(p: SpeedEngine.Phase) = when (p) {
 fun SpeedScreen(vm: SpeedViewModel = viewModel()) {
     var showSettings by remember { mutableStateOf(false) }
     val s = vm.settings
+    val server = if (s.automatic) vm.activeServer else s.server()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp)) {
         // Сервер и тип сети
         SoftCard(Modifier.clickable(enabled = !vm.running) { showSettings = true }) {
@@ -123,8 +198,9 @@ fun SpeedScreen(vm: SpeedViewModel = viewModel()) {
                 IconBadge(Icons.Rounded.Dns, tones.net, tones.netSoft, 40.dp)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(s.server().name, style = MaterialTheme.typography.titleMedium)
-                    Text(s.server().place + " · " + vm.net, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(server?.name ?: "Автовыбор сервера", style = MaterialTheme.typography.titleMedium)
+                    Text(listOfNotNull(if (s.automatic) "Авто" else "Вручную", server?.place, vm.net).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = { showSettings = true }, enabled = !vm.running) { Icon(Icons.Rounded.Settings, "Настройки") }
             }
@@ -180,18 +256,22 @@ private fun Gauge(vm: SpeedViewModel) {
             idle -> {
                 val done = vm.current
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(Modifier.size(150.dp).clip(CircleShape).clickable { vm.start() }
+                    Box(Modifier.size(150.dp).clip(CircleShape).clickable(enabled = !vm.probing) { vm.start() }
                         .then(Modifier), contentAlignment = Alignment.Center) {
                         Canvas(Modifier.fillMaxSize()) {
                             drawCircle(Brush.verticalGradient(listOf(heroA, heroB)))
                         }
-                        Text(if (done == null) "НАЧАТЬ" else "ЕЩЁ РАЗ", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                        Text(when { vm.probing -> "ПРОВЕРКА"; done == null -> "НАЧАТЬ"; else -> "ЕЩЁ РАЗ" },
+                            color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
                     }
                 }
             }
             else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(phaseTitle(vm.phase), style = MaterialTheme.typography.titleMedium, color = accent)
-                if (vm.phase == SpeedEngine.Phase.PING) {
+                if (vm.phase == SpeedEngine.Phase.SELECTING) {
+                    Text(if (vm.pingDone > 0) "Проверено ${vm.pingDone} из ${SpeedServers.public.size}" else "Проверяем доступность узлов",
+                        style = MaterialTheme.typography.bodyMedium)
+                } else if (vm.phase == SpeedEngine.Phase.PING) {
                     Text(if (vm.pingNow >= 0) "%.0f".format(vm.pingNow) else "…", fontSize = 64.sp, fontWeight = FontWeight.Bold)
                     Text("мс · ${vm.pingDone}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
@@ -286,26 +366,92 @@ private fun HistoryBlock(vm: SpeedViewModel) {
 
 @Composable
 private fun SpeedSettingsSheet(vm: SpeedViewModel, onClose: () -> Unit) {
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxHeight(0.94f)) {
+            PrimaryTabRow(selectedTabIndex = tab) {
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Серверы") })
+                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Параметры замера") })
+            }
+            if (tab == 0) SpeedServerPicker(vm) else SpeedMeasurementSettings(vm)
+        }
+    }
+}
+
+@Composable
+private fun SpeedServerPicker(vm: SpeedViewModel) {
     val s = vm.settings
-    ModalBottomSheet(onDismissRequest = onClose) {
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
-            Text("Настройки замера", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(12.dp))
-            Text("Сервер", style = MaterialTheme.typography.titleSmall)
-            SpeedEngine.servers.forEach { sv ->
-                Row(Modifier.fillMaxWidth().clickable { vm.update(s.copy(serverId = sv.id)) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = s.serverId == sv.id, onClick = { vm.update(s.copy(serverId = sv.id)) })
-                    Column { Text(sv.name); Text(sv.place, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    var query by rememberSaveable { mutableStateOf("") }
+    val needle = query.trim()
+    val matching = SpeedEngine.servers.filter { server ->
+        needle.isEmpty() || listOf(server.name, server.place, server.id, server.downUrl).any { it.contains(needle, ignoreCase = true) }
+    }
+    val shown = if (vm.probing) matching else matching.sortedWith(
+        compareBy<SpeedEngine.Server> { if (it.id == "custom") 0 else if (it.id == s.serverId && !s.automatic) 1 else 2 }
+            .thenBy { vm.probes[it.id]?.let { probe -> if (probe.available) 0 else 2 } ?: 1 }
+            .thenBy { vm.probes[it.id]?.ping?.takeIf { ping -> ping >= 0 } ?: Double.POSITIVE_INFINITY })
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Row(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = s.automatic, onClick = { vm.update(s.copy(automatic = true)) }, label = { Text("Авто") })
+            FilterChip(selected = !s.automatic, onClick = { vm.update(s.copy(automatic = false)) }, label = { Text("Вручную") })
+        }
+        Text(if (s.automatic) "Перед замером приложение подберёт доступный узел по отклику и нужным видам замера."
+            else "Выберите сервер для следующего замера.", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), singleLine = true,
+            label = { Text("Город или провайдер") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },
+            trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Rounded.Clear, "Очистить поиск") } })
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Публичные узлы · ${SpeedServers.public.size}", style = MaterialTheme.typography.labelMedium)
+            TextButton(onClick = { if (vm.probing) vm.stopChecking() else vm.checkServers() }, enabled = !vm.running) {
+                Text(if (vm.probing) "Остановить" else "Проверить отклик")
+            }
+        }
+        if (vm.probing) LinearProgressIndicator(Modifier.fillMaxWidth())
+        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 20.dp)) {
+            if (shown.isEmpty()) item { Text("Серверы не найдены", Modifier.padding(vertical = 12.dp)) }
+            items(shown, key = { it.id }) { server ->
+                val selected = !s.automatic && s.serverId == server.id
+                val custom = server.id == "custom"
+                val probe = vm.probes[server.id]
+                val detail = when {
+                    custom -> "HTTP или HTTPS"
+                    server.supportsUpload -> "${server.place} · ↓↑"
+                    else -> "${server.place} · только ↓"
                 }
+                Row(Modifier.fillMaxWidth().selectable(selected = selected, role = Role.RadioButton,
+                    onClick = { vm.update(s.copy(serverId = server.id, automatic = false)) })
+                    .heightIn(min = 56.dp).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected, onClick = null, modifier = Modifier.padding(end = 12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(server.name, style = MaterialTheme.typography.titleSmall)
+                        Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (probe != null) {
+                        val label = if (probe.available) "${probe.ping.toInt()} мс" else probe.error.ifBlank { "Нет ответа" }
+                        Text(label, modifier = Modifier.padding(start = 6.dp), style = MaterialTheme.typography.labelMedium,
+                            color = if (probe.available) tones.good else tones.bad)
+                    }
+                }
+                if (custom && selected) Column(Modifier.padding(start = 30.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedTextField(s.customDown, { vm.update(s.copy(customDown = it)); vm.probes.remove("custom") }, Modifier.fillMaxWidth(),
+                        label = { Text("Адрес скачивания") }, supportingText = { Text("%d подставляет размер в байтах") }, singleLine = true)
+                    OutlinedTextField(s.customUp, { vm.update(s.copy(customUp = it)); vm.probes.remove("custom") }, Modifier.fillMaxWidth(),
+                        label = { Text("Адрес приёма данных") }, singleLine = true)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
             }
-            if (s.serverId == "custom") {
-                OutlinedTextField(s.customDown, { vm.update(s.copy(customDown = it)) }, Modifier.fillMaxWidth(), label = { Text("Адрес скачивания (можно с %d — размер в байтах)") }, singleLine = true)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(s.customUp, { vm.update(s.copy(customUp = it)) }, Modifier.fillMaxWidth(), label = { Text("Адрес приёма данных (необязательно)") }, singleLine = true)
-            }
-            Spacer(Modifier.height(14.dp))
+        }
+    }
+}
+
+@Composable
+private fun SpeedMeasurementSettings(vm: SpeedViewModel) {
+    val s = vm.settings
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 14.dp)) {
             Text("Что измерять", style = MaterialTheme.typography.titleSmall)
-            SwitchRow("Задержка, джиттер, потери", s.doPing) { vm.update(s.copy(doPing = it)) }
+            SwitchRow("HTTP-пинг, джиттер, потери", s.doPing) { vm.update(s.copy(doPing = it)) }
             SwitchRow("Скачивание", s.doDown) { vm.update(s.copy(doDown = it)) }
             SwitchRow("Отдача", s.doUp) { vm.update(s.copy(doUp = it)) }
             SwitchRow("Задержка под нагрузкой", s.loaded) { vm.update(s.copy(loaded = it)) }
@@ -324,7 +470,6 @@ private fun SpeedSettingsSheet(vm: SpeedViewModel, onClose: () -> Unit) {
             Text("Лимит экономит мобильный трафик: фаза завершится, как только будет передано столько данных.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(16.dp))
             Button(onClick = { vm.update(SpeedEngine.Settings(unit = s.unit)) }, colors = ButtonDefaults.outlinedButtonColors()) { Text("Сбросить настройки") }
-        }
     }
 }
 

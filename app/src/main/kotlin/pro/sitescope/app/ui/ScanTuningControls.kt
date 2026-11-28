@@ -3,7 +3,6 @@ package pro.sitescope.app.ui
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext

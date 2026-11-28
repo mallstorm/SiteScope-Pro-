@@ -30,6 +30,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -40,6 +41,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -247,11 +249,7 @@ fun BackHeader(title: String, onBack: () -> Unit, actions: @Composable RowScope.
     AppHeader(title = title, onBack = onBack, actions = actions)
 }
 
-/**
- * Единый ползунок приложения: тонкая ровная дорожка (4 dp), маленький круглый бегунок (16 dp),
- * без делений, вертикальных полос и точек-ограничителей. Шаги (steps) по-прежнему работают как привязка к значениям,
- * но не рисуются. Зона нажатия остаётся стандартной (48 dp).
- */
+/** Тонкая дорожка и бегунок-капля с жестами и доступностью обычного Slider. */
 @Composable
 fun AppSlider(
     value: Float, onValueChange: (Float) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
@@ -265,14 +263,32 @@ fun AppSlider(
     Slider(
         value = value.coerceIn(range.start, range.endInclusive), onValueChange = onValueChange, modifier = modifier, enabled = enabled,
         valueRange = range, steps = steps.coerceAtLeast(0), onValueChangeFinished = onValueChangeFinished,
-        thumb = { Box(Modifier.size(16.dp).background(active, CircleShape)) },
+        thumb = {
+            Canvas(Modifier.size(width = 12.dp, height = 16.dp)) {
+                val w = size.width
+                val h = size.height
+                drawPath(Path().apply {
+                    moveTo(w * 0.5f, 0f)
+                    cubicTo(w * 0.8f, 0f, w, h * 0.17f, w, h * 0.39f)
+                    cubicTo(w, h * 0.63f, w * 0.71f, h * 0.84f, w * 0.55f, h * 0.97f)
+                    quadraticBezierTo(w * 0.5f, h, w * 0.45f, h * 0.97f)
+                    cubicTo(w * 0.29f, h * 0.84f, 0f, h * 0.63f, 0f, h * 0.39f)
+                    cubicTo(0f, h * 0.17f, w * 0.2f, 0f, w * 0.5f, 0f)
+                    close()
+                }, active)
+            }
+        },
         track = { state ->
-            Canvas(Modifier.fillMaxWidth().height(4.dp)) {
+            Canvas(Modifier.fillMaxWidth().height(2.dp)) {
                 val span = state.valueRange.endInclusive - state.valueRange.start
                 val fraction = if (span > 0f) ((state.value - state.valueRange.start) / span).coerceIn(0f, 1f) else 0f
                 val radius = androidx.compose.ui.geometry.CornerRadius(size.height / 2, size.height / 2)
                 drawRoundRect(inactive, size = size, cornerRadius = radius)
-                if (fraction > 0f) drawRoundRect(active, size = Size(size.width * fraction, size.height), cornerRadius = radius)
+                if (fraction > 0f) {
+                    val width = size.width * fraction
+                    val x = if (layoutDirection == LayoutDirection.Rtl) size.width - width else 0f
+                    drawRoundRect(active, topLeft = Offset(x, 0f), size = Size(width, size.height), cornerRadius = radius)
+                }
             }
         }
     )

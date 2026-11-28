@@ -7,6 +7,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -16,25 +17,24 @@ import kotlin.math.abs
 /**
  * Движок измерения скорости в стиле Ookla Speedtest: задержка (ping), джиттер, потери пакетов,
  * многопоточные скачивание и отдача с «живой» скоростью, задержка под нагрузкой.
- * Все параметры берутся из [Settings]; результат попадает в историю [SpeedHistory].
+ * Все параметры берутся из [Settings], результат сохраняется через [SpeedStore].
  */
 object SpeedEngine {
     const val UA = "SiteScopePro/1.0 (speedtest)"
 
-    class Server(val id: String, val name: String, val place: String, val downUrl: String, val upUrl: String) {
-        /** Адрес для замера задержки: пустой ответ у Cloudflare или HEAD к файлу. */
-        val pingUrl: String get() = if (downUrl.contains("%d")) downUrl.format(0) else downUrl
-        val pingIsHead: Boolean get() = !downUrl.contains("%d")
-        fun down(bytes: Int): String = if (downUrl.contains("%d")) downUrl.format(bytes) else downUrl
+    class Server(
+        val id: String, val name: String, val place: String, val downUrl: String, val upUrl: String,
+        val pingEndpoint: String? = null, val downloadInMiB: Boolean = false, val binaryDownload: Boolean = false
+    ) {
+        val pingUrl: String get() = pingEndpoint ?: if (downUrl.contains("%d")) down(1) else downUrl
+        val supportsUpload get() = upUrl.isNotBlank()
+        fun down(bytes: Int): String {
+            val size = if (downloadInMiB) (bytes + 1_048_575) / 1_048_576 else bytes
+            return downUrl.replace("%d", size.toString())
+        }
     }
 
-    val servers = listOf(
-        Server("cf", "Cloudflare", "Ближайший узел (авто)", "https://speed.cloudflare.com/__down?bytes=%d", "https://speed.cloudflare.com/__up"),
-        Server("tele2", "Tele2", "Стокгольм", "http://speedtest.tele2.net/100MB.zip", "http://speedtest.tele2.net/upload.php"),
-        Server("hetzner", "Hetzner", "Фалькенштайн (только скачивание)", "https://speed.hetzner.de/100MB.bin", ""),
-        Server("ovh", "OVH", "Роубе (только скачивание)", "http://proof.ovh.net/files/100Mb.dat", ""),
-        Server("custom", "Свой сервер", "Адреса из настроек", "", "")
-    )
+    val servers get() = SpeedServers.public + SpeedServers.custom
 
     data class Settings(
         val serverId: String = "cf",
@@ -48,15 +48,16 @@ object SpeedEngine {
         val doDown: Boolean = true,
         val doUp: Boolean = true,
         val loaded: Boolean = true,  // задержка под нагрузкой
-        val unit: String = "mbps"    // mbps | mbs | kbps
+        val unit: String = "mbps",   // mbps | mbs | kbps
+        val automatic: Boolean = true
     ) {
         fun server(): Server {
-            val s = servers.firstOrNull { it.id == serverId } ?: servers[0]
+            val s = servers.firstOrNull { it.id == serverId } ?: SpeedServers.public.first()
             return if (s.id == "custom") Server("custom", s.name, customDown.ifBlank { "не задан" }, customDown.trim(), customUp.trim()) else s
         }
     }
 
-    enum class Phase { IDLE, PING, DOWN, UP, DONE }
+    enum class Phase { IDLE, SELECTING, PING, DOWN, UP, DONE }
 
     class Result(
         val time: Long, val server: String, val net: String,
@@ -69,6 +70,8 @@ object SpeedEngine {
         fun phase(p: Phase)
         fun ping(ms: Double, done: Int, total: Int)
         fun speed(p: Phase, mbps: Double, progress: Float)
+        fun server(server: Server) {}
+        fun serverProbe(result: ServerProbe, done: Int, total: Int) {}
     }
 
     // ------------------------------------------------------------------ вспомогательное
@@ -101,23 +104,77 @@ object SpeedEngine {
 
     // ------------------------------------------------------------------ ping
 
-    /** Один замер RTT в мс по уже открытому keep-alive соединению; -1 — потеря/таймаут. */
-    internal fun pingOnce(server: Server, timeoutMs: Int = 2500): Double {
+    /** HTTP-отклик в миллисекундах, включая установку соединения при необходимости. */
+    internal fun pingOnce(server: Server, timeoutMs: Int = 2500): Double = probeOnce(server, timeoutMs).ms
+
+    private data class ProbeSample(val ms: Double, val error: String = "")
+
+    private fun probeOnce(server: Server, timeoutMs: Int): ProbeSample {
         val t0 = System.nanoTime()
         var c: HttpURLConnection? = null
         return try {
             c = URL(server.pingUrl).openConnection() as HttpURLConnection
             c.connectTimeout = timeoutMs; c.readTimeout = timeoutMs
-            c.requestMethod = if (server.pingIsHead) "HEAD" else "GET"
             c.setRequestProperty("User-Agent", UA)
+            c.setRequestProperty("Accept-Encoding", "identity")
+            if (server.pingEndpoint == null) c.setRequestProperty("Range", "bytes=0-0")
             c.useCaches = false
             val code = c.responseCode
-            if (code >= 500) return -1.0
-            val buf = ByteArray(2048)
-            try { c.inputStream.use { while (it.read(buf) >= 0) { } } } catch (_: Exception) { }
-            (System.nanoTime() - t0) / 1_000_000.0
-        } catch (e: Exception) { -1.0 }
+            if (code !in 200..299) return ProbeSample(-1.0, "HTTP $code")
+            val html = c.contentType?.startsWith("text/html", ignoreCase = true) == true
+            c.inputStream.use { input ->
+                val first = input.read()
+                if (server.binaryDownload && (server.pingEndpoint == null && first < 0 || html && first >= 0)) {
+                    return ProbeSample(-1.0, "Неверный ответ")
+                }
+                ProbeSample((System.nanoTime() - t0) / 1_000_000.0)
+            }
+        } catch (_: java.net.SocketTimeoutException) {
+            ProbeSample(-1.0, "Таймаут")
+        } catch (_: Exception) {
+            ProbeSample(-1.0, "Нет ответа")
+        } finally { c?.disconnect() }
     }
+
+    data class ServerProbe(val server: Server, val ping: Double, val failures: Int, val error: String) {
+        val available get() = ping >= 0
+    }
+
+    internal fun probeServers(
+        servers: List<Server>, cancel: AtomicBoolean, onResult: (ServerProbe, Int, Int) -> Unit
+    ): List<ServerProbe> {
+        if (servers.isEmpty() || cancel.get()) return emptyList()
+        val pool = Executors.newFixedThreadPool(minOf(8, servers.size))
+        val queue = ExecutorCompletionService<ServerProbe>(pool)
+        val results = ArrayList<ServerProbe>()
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(12)
+        try {
+            servers.forEach { server -> queue.submit {
+                val first = probeOnce(server, 1500)
+                if (cancel.get() || Thread.currentThread().isInterrupted) return@submit ServerProbe(server, -1.0, 2, "")
+                // A second response helps prefer stable routes over a single lucky sample.
+                val second = probeOnce(server, 1500)
+                val ping = stats(listOf(first.ms, second.ms), 2).ping
+                val failures = listOf(first, second).count { it.ms < 0 }
+                ServerProbe(server, ping, failures, second.error.ifBlank { first.error })
+            } }
+            while (!cancel.get() && results.size < servers.size && System.nanoTime() < deadline) {
+                val task = queue.poll(100, TimeUnit.MILLISECONDS) ?: continue
+                val result = task.get()
+                results.add(result)
+                onResult(result, results.size, servers.size)
+            }
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        } finally { pool.shutdownNow() }
+        return results
+    }
+
+    internal fun rankedServers(settings: Settings, probes: List<ServerProbe>): List<Server> = probes
+        .filter { it.available && (!settings.doUp || settings.doDown || settings.doPing || it.server.supportsUpload) }
+        .sortedWith(compareBy<ServerProbe> { settings.doUp && !it.server.supportsUpload }
+            .thenBy { it.failures }.thenBy { it.ping }.thenBy { it.server.id })
+        .map { it.server }
 
     class PingStats(val ping: Double, val jitter: Double, val loss: Double)
 
@@ -145,6 +202,8 @@ object SpeedEngine {
         val threads = s.threads.coerceIn(1, 16)
         val capBytes = if (s.capMb > 0) s.capMb * 1_000_000L else Long.MAX_VALUE
         val counter = AtomicLong(0)
+        val uploadsAccepted = AtomicBoolean(false)
+        val uploadBudget = AtomicLong(capBytes)
         val stop = AtomicBoolean(false)
         val firstError = java.util.concurrent.atomic.AtomicReference<String?>(null)
         val pool = Executors.newFixedThreadPool(threads + 1)
@@ -156,6 +215,7 @@ object SpeedEngine {
         repeat(threads) {
             pool.execute {
                 val buf = ByteArray(65536)
+                var nextUpload = 256_000
                 while (!stop.get() && !cancel.get() && System.currentTimeMillis() < deadline) {
                     var c: HttpURLConnection? = null
                     try {
@@ -163,6 +223,9 @@ object SpeedEngine {
                             c = URL(server.down(chunk)).openConnection() as HttpURLConnection
                             c.connectTimeout = 6000; c.readTimeout = 5000; c.setRequestProperty("User-Agent", UA); c.useCaches = false
                             if (c.responseCode !in 200..299) { firstError.compareAndSet(null, "Сервер ответил ${c.responseCode}"); stop.set(true); break }
+                            if (server.binaryDownload && c.contentType?.startsWith("text/html", ignoreCase = true) == true) {
+                                firstError.compareAndSet(null, "Вместо тестового файла сервер вернул страницу"); stop.set(true); break
+                            }
                             c.inputStream.use { input ->
                                 while (!stop.get() && !cancel.get() && System.currentTimeMillis() < deadline) {
                                     val n = input.read(buf); if (n < 0) break
@@ -170,7 +233,9 @@ object SpeedEngine {
                                 }
                             }
                         } else {
-                            val body = 8_000_000
+                            val remaining = uploadBudget.getAndUpdate { (it - nextUpload).coerceAtLeast(0) }
+                            val body = minOf(remaining, nextUpload.toLong()).toInt()
+                            if (body == 0) break
                             c = URL(url).openConnection() as HttpURLConnection
                             c.connectTimeout = 6000; c.readTimeout = 8000; c.doOutput = true; c.requestMethod = "POST"
                             c.setRequestProperty("User-Agent", UA); c.setRequestProperty("Content-Type", "application/octet-stream")
@@ -180,10 +245,19 @@ object SpeedEngine {
                                 while (sent < body && !stop.get() && !cancel.get() && System.currentTimeMillis() < deadline) {
                                     val n = minOf(buf.size, body - sent)
                                     out.write(buf, 0, n); sent += n
-                                    if (counter.addAndGet(n.toLong()) >= capBytes) { stop.set(true); break }
+                                    counter.addAndGet(n.toLong())
                                 }
                             }
-                            if (sent >= body) { val code = c.responseCode; if (code >= 400) { firstError.compareAndSet(null, "Сервер ответил $code"); stop.set(true) } }
+                            if (sent >= body) {
+                                val code = c.responseCode
+                                if (code !in 200..299) {
+                                    firstError.compareAndSet(null, "Сервер ответил $code"); stop.set(true)
+                                } else {
+                                    uploadsAccepted.set(true)
+                                    nextUpload = (nextUpload * 2).coerceAtMost(8_000_000)
+                                    if (counter.get() >= capBytes) stop.set(true)
+                                }
+                            }
                         }
                     } catch (e: Exception) {
                         if (!stop.get() && !cancel.get() && System.currentTimeMillis() < deadline) {
@@ -234,20 +308,49 @@ object SpeedEngine {
             endTime > start -> total * 8.0 / (endTime - start) / 1000.0
             else -> 0.0
         }
-        val err = if (total == 0L) (firstError.get() ?: "Нет данных от сервера") else ""
+        val err = when {
+            !down && !uploadsAccepted.get() -> firstError.get() ?: "Сервер не подтвердил приём данных"
+            total == 0L -> firstError.get() ?: "Нет данных от сервера"
+            else -> ""
+        }
         listener.speed(phase, if (err.isEmpty()) mbps else 0.0, 1f)
         return Phased(if (err.isEmpty()) mbps else -1.0, if (err.isEmpty()) maxOf(peak, mbps) else -1.0, total, err, loaded.toList())
     }
 
     fun run(context: Context, s: Settings, cancel: AtomicBoolean, listener: Listener): Result {
-        val server = s.server()
         val net = networkLabel(context)
+        fun empty(message: String) = Result(System.currentTimeMillis(), "", net, -1.0, -1.0, -1.0, -1.0,
+            -1.0, -1.0, -1.0, -1.0, 0, 0, message)
+        if (!s.doPing && !s.doDown && !s.doUp) {
+            listener.phase(Phase.DONE)
+            return empty("В настройках замера выберите хотя бы один показатель")
+        }
+        val candidates = if (s.automatic) {
+            listener.phase(Phase.SELECTING)
+            val probes = probeServers(SpeedServers.public, cancel, listener::serverProbe)
+            rankedServers(s, probes).take(3)
+        } else listOf(s.server())
+
+        var result: Result? = null
+        for (server in candidates) {
+            if (cancel.get()) break
+            listener.server(server)
+            val attempt = measure(s, server, net, cancel, listener)
+            result = attempt
+            val hasTransfer = attempt.down >= 0 || attempt.up >= 0
+            val wantsTransfer = s.doDown || s.doUp && server.supportsUpload
+            if (hasTransfer || !wantsTransfer && attempt.ping >= 0) break
+        }
+        listener.phase(Phase.DONE)
+        return result ?: empty(if (cancel.get()) "Прервано" else "Доступных серверов нет. Проверьте подключение или выберите сервер вручную.")
+    }
+
+    private fun measure(s: Settings, server: Server, net: String, cancel: AtomicBoolean, listener: Listener): Result {
         var ping = -1.0; var jitter = -1.0; var loss = -1.0; var loadedPing = -1.0
         var down = -1.0; var up = -1.0; var downPeak = -1.0; var upPeak = -1.0
         var bytesDown = 0L; var bytesUp = 0L
         val errors = ArrayList<String>()
         if (server.downUrl.isBlank() && (s.doDown || s.doPing)) {
-            listener.phase(Phase.DONE)
             return Result(System.currentTimeMillis(), server.name, net, ping, jitter, loss, loadedPing, down, up, downPeak, upPeak, 0, 0, "Для своего сервера укажите адрес скачивания в настройках")
         }
         if (s.doPing) {
@@ -259,6 +362,7 @@ object SpeedEngine {
                 if (cancel.get()) break
                 val ms = pingOnce(server); samples.add(ms)
                 listener.ping(ms, i + 1, total)
+                if (s.automatic && samples.size == 3 && samples.all { it < 0 }) break
                 try { Thread.sleep(120) } catch (_: InterruptedException) { break }
             }
             val st = stats(samples, samples.size)
@@ -273,7 +377,7 @@ object SpeedEngine {
             if (r.error.isNotEmpty()) errors.add("Скачивание: " + r.error)
         }
         if (s.doUp && !cancel.get() && errors.none { it.startsWith("Сервер не") }) {
-            if (server.upUrl.isBlank()) errors.add("У выбранного сервера нет приёма данных — отдача пропущена")
+            if (!server.supportsUpload) errors.add("У выбранного сервера доступно скачивание. Отдача пропущена.")
             else {
                 listener.phase(Phase.UP)
                 val r = transferPhase(false, s, server, cancel, listener, false)
@@ -281,8 +385,8 @@ object SpeedEngine {
                 if (r.error.isNotEmpty()) errors.add("Отдача: " + r.error)
             }
         }
-        listener.phase(Phase.DONE)
-        return Result(System.currentTimeMillis(), server.name, net, ping, jitter, loss, loadedPing, down, up, downPeak, upPeak, bytesDown, bytesUp,
+        val name = if (server.id == "custom") server.name else "${server.name} · ${server.place}"
+        return Result(System.currentTimeMillis(), name, net, ping, jitter, loss, loadedPing, down, up, downPeak, upPeak, bytesDown, bytesUp,
             if (cancel.get()) "Прервано" else errors.joinToString("; "))
     }
 }
@@ -295,14 +399,17 @@ object SpeedStore {
     fun loadSettings(context: Context): SpeedEngine.Settings {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val d = SpeedEngine.Settings()
+        val saved = p.getString("server", d.serverId) ?: d.serverId
+        val server = SpeedEngine.servers.firstOrNull { it.id == saved }?.id
         return SpeedEngine.Settings(
-            serverId = p.getString("server", d.serverId) ?: d.serverId,
+            serverId = server ?: d.serverId,
             customDown = p.getString("customDown", "") ?: "",
             customUp = p.getString("customUp", "") ?: "",
             seconds = p.getInt("seconds", d.seconds), threads = p.getInt("threads", d.threads),
             pings = p.getInt("pings", d.pings), capMb = p.getInt("capMb", d.capMb),
             doPing = p.getBoolean("doPing", true), doDown = p.getBoolean("doDown", true), doUp = p.getBoolean("doUp", true),
-            loaded = p.getBoolean("loaded", true), unit = p.getString("unit", d.unit) ?: d.unit
+            loaded = p.getBoolean("loaded", true), unit = p.getString("unit", d.unit) ?: d.unit,
+            automatic = server == null || p.getBoolean("automatic", server == d.serverId)
         )
     }
 
@@ -311,7 +418,7 @@ object SpeedStore {
             .putString("server", s.serverId).putString("customDown", s.customDown).putString("customUp", s.customUp)
             .putInt("seconds", s.seconds).putInt("threads", s.threads).putInt("pings", s.pings).putInt("capMb", s.capMb)
             .putBoolean("doPing", s.doPing).putBoolean("doDown", s.doDown).putBoolean("doUp", s.doUp)
-            .putBoolean("loaded", s.loaded).putString("unit", s.unit).apply()
+            .putBoolean("loaded", s.loaded).putString("unit", s.unit).putBoolean("automatic", s.automatic).apply()
     }
 
     fun loadHistory(context: Context): List<SpeedEngine.Result> {

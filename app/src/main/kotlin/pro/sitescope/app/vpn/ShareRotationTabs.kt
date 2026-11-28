@@ -191,7 +191,7 @@ internal fun ShareTab(vm: VpnViewModel) {
         Text("Максимум устройств: $limit", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
         Text("занято ${devices.size}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
     }
-    Slider(value = limit.toFloat(), onValueChange = { limit = it.toInt().coerceAtLeast(maxOf(1, devices.size)) }, onValueChangeFinished = { VpnShare.setLimit(context, limit) }, valueRange = 1f..VpnShare.MAX_LIMIT.toFloat())
+    AppSlider(value = limit.toFloat(), onValueChange = { limit = it.toInt().coerceAtLeast(maxOf(1, devices.size)) }, onValueChangeFinished = { VpnShare.setLimit(context, limit) }, valueRange = 1f..VpnShare.MAX_LIMIT.toFloat())
 
     SectionTitle("Устройства")
     if (devices.isEmpty()) SoftCard { Text("Устройств пока нет. Добавьте телефон — появится QR-код для сканирования, или ноутбук — получите инструкцию для Windows 10.", style = MaterialTheme.typography.bodyMedium) }

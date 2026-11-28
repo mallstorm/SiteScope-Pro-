@@ -525,7 +525,7 @@ private fun SettingsTab(vm: KeyHubViewModel) {
     var confirm by remember { mutableStateOf(false) }
     @Composable fun slider(title: String, value: Int, range: IntRange, key: String, set: (Int) -> Unit, hint: String = "") {
         Text("$title: $value", style = MaterialTheme.typography.labelLarge)
-        Slider(value = value.toFloat(), onValueChange = { set(it.toInt()) }, onValueChangeFinished = { KeySettings.put(c, key, value) }, valueRange = range.first.toFloat()..range.last.toFloat())
+        AppSlider(value = value.toFloat(), onValueChange = { set(it.toInt()) }, onValueChangeFinished = { KeySettings.put(c, key, value) }, valueRange = range.first.toFloat()..range.last.toFloat())
         if (hint.isNotEmpty()) Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
