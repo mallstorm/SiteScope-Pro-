@@ -18,6 +18,7 @@ object RestoredState {
         TvViewModel.externalChange++
         try {
             SiteMonitor.reschedule(context)
+            pro.sitescope.app.satellite.DishFeeds.configure(context)
             TvStore.load(context)
             val manager = WorkManager.getInstance(context)
             if (TvStore.autoCheck) manager.enqueueUniquePeriodicWork("tv-check", ExistingPeriodicWorkPolicy.KEEP,

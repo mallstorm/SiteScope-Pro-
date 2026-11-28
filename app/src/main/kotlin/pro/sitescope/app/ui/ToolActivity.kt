@@ -18,6 +18,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import pro.sitescope.app.data.DataScreen
@@ -77,7 +82,13 @@ fun ToolContent(screen: String, tab: Int, targets: String?, state: AppState? = n
             "tvlan" -> { BackHeader("ТВ в локальной сети", onBack); TvLanScreen() }
             "metrics" -> { BackHeader("Метрики поиска", onBack); MetricsScreen(targets) }
             "batch" -> { BackHeader("Проверка списка сайтов", onBack); BatchScreen() }
-            "satellite" -> { BackHeader("Спутниковая антенна", onBack); pro.sitescope.app.satellite.DishScreen() }
+            "satellite" -> {
+                var fullscreen by rememberSaveable { mutableStateOf(false) }
+                if (!fullscreen) BackHeader("Спутниковая антенна", onBack)
+                Column(if (fullscreen) Modifier.statusBarsPadding() else Modifier) {
+                    pro.sitescope.app.satellite.DishScreen { fullscreen = it }
+                }
+            }
             "radio" -> { BackHeader("Радиомонитор", onBack); pro.sitescope.app.radio.RadioScreen(tab) }
             "wifi" -> { BackHeader("Диагностика Wi-Fi", onBack); WifiScreen() }
             else -> NetworkScreen(tab, targets)

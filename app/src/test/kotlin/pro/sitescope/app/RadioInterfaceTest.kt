@@ -76,7 +76,7 @@ class RadioInterfaceTest {
             snapshot("dish-dashboard",activity.get())
             compose.onNodeWithText("Каталог").performClick()
             compose.onNodeWithText("Спутники").assertIsDisplayed()
-            compose.onNodeWithText("Пакеты").performClick()
+            compose.onNodeWithText("Из файла").performClick()
             compose.onNodeWithText("Выбрать файл").assertExists()
             snapshot("dish-catalogue",activity.get())
         } finally {activity.pause().stop().destroy()}

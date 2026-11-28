@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -20,7 +21,7 @@ internal fun DishAngleTile(title:String,value:Double?,kind:Int,modifier:Modifier
     ElevatedCard(modifier) {
         Column(Modifier.fillMaxWidth().padding(vertical=12.dp,horizontal=4.dp),horizontalAlignment=Alignment.CenterHorizontally) {
             Text(title,style=MaterialTheme.typography.labelMedium)
-            Canvas(Modifier.size(64.dp).padding(8.dp)) {
+            Canvas(Modifier.size(64.dp).clipToBounds().padding(8.dp)) {
                 val r=size.minDimension*.43f
                 val c=center
                 when(kind) {
@@ -57,7 +58,7 @@ internal fun DishAngleTile(title:String,value:Double?,kind:Int,modifier:Modifier
 }
 
 @Composable
-internal fun DishCompass(target:Double?,heading:Double?,hasLocation:Boolean) {
+internal fun DishCompass(target:Double?,heading:Double?,hasLocation:Boolean,belowHorizon:Boolean=false) {
     val primary=MaterialTheme.colorScheme.primary
     val ink=MaterialTheme.colorScheme.onSurfaceVariant
     val grid=MaterialTheme.colorScheme.outlineVariant
@@ -88,6 +89,7 @@ internal fun DishCompass(target:Double?,heading:Double?,hasLocation:Boolean) {
             Text(if(hasLocation)"Курс с учётом магнитного склонения" else "Магнитный курс · точка установки не задана",style=MaterialTheme.typography.labelSmall)
             val delta=if(target!=null && heading!=null)wrapped(target-heading) else null
             Text(when {
+                belowHorizon->"Для этой точки наведению мешает горизонт"
                 heading==null->"Нет данных датчика направления"
                 delta==null->"Выберите спутник и точку установки"
                 abs(delta)<1->"Направление совмещено"

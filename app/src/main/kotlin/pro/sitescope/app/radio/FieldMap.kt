@@ -1,6 +1,10 @@
 package pro.sitescope.app.radio
 
+import android.graphics.Canvas
+import android.graphics.Color
+import android.widget.FrameLayout
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -9,15 +13,35 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.tileprovider.MapTileProviderBasic
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.MapTileIndex
+import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.*
 
 data class Pin(val lat: Double, val lon: Double, val title: String, val dbm: Int? = null, val bearing: Int? = null)
 
+enum class FieldMapLayer(val title: String) {
+    Streets("Схема"), Satellite("Спутник"), Hybrid("Гибрид")
+}
+
+private fun esriTiles(name: String, layer: String, extension: String) =
+    object : OnlineTileSourceBase(name, 0, 19, 256, extension, arrayOf(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/$layer/MapServer/tile/"
+    )) {
+        override fun getTileURLString(tile: Long) =
+            "$baseUrl${MapTileIndex.getZoom(tile)}/${MapTileIndex.getY(tile)}/${MapTileIndex.getX(tile)}"
+    }
+
+private val imagery = esriTiles("EsriWorldImagery", "World_Imagery", ".jpg")
+private val roads = esriTiles("EsriWorldTransportation", "Reference/World_Transportation", ".png")
+private val labels = esriTiles("EsriWorldPlaces", "Reference/World_Boundaries_and_Places", ".png")
+
 @Composable
-fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick: ((Pin) -> Unit)? = null, orientation: Float = 0f, modifier: Modifier = Modifier.fillMaxWidth().height(320.dp)) {
+fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick: ((Pin) -> Unit)? = null, orientation: Float = 0f, modifier: Modifier = Modifier.fillMaxWidth().height(320.dp), layer: FieldMapLayer = FieldMapLayer.Streets, recenter: Int = 0, initialZoom: Double = 15.0) {
     val ctx = LocalContext.current
     val pick by rememberUpdatedState(onPick)
     val map = remember(ctx) {
@@ -29,13 +53,40 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
         MapView(ctx).apply {
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
-            controller.setZoom(15.0)
+            setVerticalMapRepetitionEnabled(false)
+            zoomController.setVisibility(CustomZoomButtonsController.Visibility.ALWAYS)
+            controller.setZoom(initialZoom)
         }
     }
-    DisposableEffect(map) { map.onResume(); onDispose { map.onPause(); map.onDetach() } }
-    LaunchedEffect(center.lat, center.lon) { map.controller.setCenter(GeoPoint(center.lat,center.lon)) }
-    LaunchedEffect(pins, line, onPick != null) {
+    val references = remember(map) {
+        listOf(roads, labels).map { source ->
+            val provider = MapTileProviderBasic(ctx.applicationContext, source)
+            provider.setTileRequestCompleteHandler(map.tileRequestCompleteHandler)
+            TilesOverlay(provider, ctx).apply {
+                loadingBackgroundColor = Color.TRANSPARENT
+                loadingLineColor = Color.TRANSPARENT
+                isVerticalWrapEnabled = false
+            }
+        }
+    }
+    DisposableEffect(map, references) {
+        map.onResume()
+        onDispose {
+            references.forEach { map.overlays.remove(it); it.onDetach(map) }
+            map.onPause()
+            map.onDetach()
+        }
+    }
+    LaunchedEffect(layer) {
+        map.setTileSource(if (layer == FieldMapLayer.Streets) TileSourceFactory.MAPNIK else imagery)
+        map.controller.setZoom(map.zoomLevelDouble.coerceIn(map.minZoomLevel, map.maxZoomLevel))
+        map.invalidate()
+    }
+    LaunchedEffect(initialZoom) { map.controller.setZoom(initialZoom) }
+    LaunchedEffect(center.lat, center.lon, recenter) { map.controller.setCenter(GeoPoint(center.lat,center.lon)) }
+    LaunchedEffect(pins, line, onPick != null, layer) {
         map.overlays.clear()
+        if (layer == FieldMapLayer.Hybrid) map.overlays.addAll(references)
         if (onPick != null) map.overlays.add(MapEventsOverlay(object: MapEventsReceiver {
             override fun singleTapConfirmedHelper(p: GeoPoint) = false
             override fun longPressHelper(p: GeoPoint): Boolean { pick?.invoke(Pin(p.latitude,p.longitude,"Точка установки")); return true }
@@ -80,11 +131,35 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
         }) }
         map.invalidate()
     }
-    Column(modifier) {
-    AndroidView(factory = { map }, update = { if (it.mapOrientation != orientation) it.mapOrientation = orientation }, modifier = Modifier.fillMaxWidth().weight(1f))
-    if (line.any { it.dbm != null }) Text("Сигнал dBm · зелёный ≥ −85 · жёлтый ≥ −105 · красный < −105", style = MaterialTheme.typography.labelSmall)
-    if (pins.any { it.bearing != null }) Text("Секторы схематичные, угол 60°", style = MaterialTheme.typography.labelSmall)
-    Text("© OpenStreetMap contributors", style = MaterialTheme.typography.labelSmall)
+    Column(modifier.clipToBounds()) {
+        AndroidView(
+            factory = {
+                // MapView rotates its drawing canvas. Clip in the fixed parent coordinate space.
+                object : FrameLayout(it) {
+                    override fun dispatchDraw(canvas: Canvas) {
+                        val saved = canvas.save()
+                        try {
+                            canvas.clipRect(0, 0, width, height)
+                            super.dispatchDraw(canvas)
+                        } finally {
+                            canvas.restoreToCount(saved)
+                        }
+                    }
+                }.apply {
+                    clipChildren = true
+                    addView(map, FrameLayout.LayoutParams(-1, -1))
+                }
+            },
+            update = { if (map.mapOrientation != orientation) map.setMapOrientation(orientation, true) },
+            modifier = Modifier.fillMaxWidth().weight(1f).clipToBounds()
+        )
+        if (line.any { it.dbm != null }) Text("Сигнал dBm · зелёный ≥ −85 · жёлтый ≥ −105 · красный < −105", style = MaterialTheme.typography.labelSmall)
+        if (pins.any { it.bearing != null }) Text("Секторы схематичные, угол 60°", style = MaterialTheme.typography.labelSmall)
+        val attribution = when (layer) {
+            FieldMapLayer.Streets -> "© OpenStreetMap contributors"
+            FieldMapLayer.Satellite -> "Снимки © Esri, Vantor, Earthstar Geographics и GIS User Community"
+            FieldMapLayer.Hybrid -> "Снимки © Esri и поставщики · дороги и подписи © Esri, HERE и GIS User Community"
+        }
+        Text(attribution, Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall)
     }
 }
-

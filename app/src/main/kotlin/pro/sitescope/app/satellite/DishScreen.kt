@@ -1,6 +1,8 @@
 package pro.sitescope.app.satellite
 
 import android.Manifest
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.unit.sp
 import android.hardware.GeomagneticField
 import android.location.Geocoder
 import android.util.AtomicFile
@@ -30,18 +32,20 @@ import java.util.Locale
 
 fun degrees(value: Double?) = value?.let { "%.1f°".format(Locale.getDefault(),it) } ?: "—"
 
-internal fun readCatalog(source: InputStream): Pair<ByteArray,List<DishEntry>> {
-    val bytes = source.use { input ->
-        val out = java.io.ByteArrayOutputStream()
-        val buf = ByteArray(16384)
-        while(true) {
-            val n=input.read(buf)
-            if(n<0) break
-            require(out.size()+n <= 8_000_000) { "Лимит файла 8 МБ" }
-            out.write(buf,0,n)
-        }
-        out.toByteArray()
+internal fun InputStream.readBounded(): ByteArray {
+    val out = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(16_384)
+    while (true) {
+        val count = read(buffer)
+        if (count < 0) break
+        require(out.size() + count <= 8_000_000) { "Лимит файла 8 МБ" }
+        out.write(buffer, 0, count)
     }
+    return out.toByteArray()
+}
+
+internal fun readCatalog(source: InputStream): Pair<ByteArray, List<DishEntry>> {
+    val bytes = source.use { it.readBounded() }
     val rows = DishCatalogue.parse(bytes.toString(Charsets.UTF_8).lines())
     require(rows.isNotEmpty()) { "Нужен CSV, satellites.xml или lamedb версии 4" }
     return bytes to rows
@@ -49,7 +53,7 @@ internal fun readCatalog(source: InputStream): Pair<ByteArray,List<DishEntry>> {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DishScreen() {
+fun DishScreen(onFullscreen: (Boolean) -> Unit = {}) {
     val ctx=LocalContext.current
     val scope=rememberCoroutineScope()
     val prefs=remember { ctx.getSharedPreferences("dish-install",0) }
@@ -66,6 +70,17 @@ fun DishScreen() {
     var query by rememberSaveable { mutableStateOf("") }
     var address by rememberSaveable { mutableStateOf("") }
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var aired by rememberSaveable { mutableStateOf(false) }
+    var radioMode by rememberSaveable { mutableStateOf("Каналы") }
+    var activeTuning by rememberSaveable { mutableStateOf(prefs.getString("activeTuning", "").orEmpty()) }
+    var fullMap by rememberSaveable { mutableStateOf(false) }
+    var layer by remember {
+        mutableStateOf(FieldMapLayer.entries.firstOrNull { it.name == prefs.getString("mapLayer", "") } ?: FieldMapLayer.Streets)
+    }
+    var centerRequest by remember { mutableIntStateOf(0) }
+    val fullscreen = tab == 1 && fullMap
+    LaunchedEffect(fullscreen) { onFullscreen(fullscreen) }
+    BackHandler(enabled = fullscreen) { fullMap = false }
     var visible by rememberSaveable { mutableStateOf(false) }
     var customOnly by rememberSaveable { mutableStateOf(prefs.getBoolean("customOnly", false)) }
     var favoritesOnly by rememberSaveable { mutableStateOf(false) }
@@ -81,6 +96,7 @@ fun DishScreen() {
     var status by remember { mutableStateOf("") }
     var catalog by remember { mutableStateOf<List<DishEntry>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
+    var locating by remember { mutableStateOf(false) }
     var geocoding by remember { mutableStateOf(false) }
     val cache=remember { AtomicFile(File(ctx.filesDir,"dish-catalog.txt")) }
     val site=point(lat,lon)
@@ -91,8 +107,8 @@ fun DishScreen() {
     LaunchedEffect(Unit) {
         catalog=withContext(Dispatchers.IO) { runCatching { readCatalog(cache.openRead()).second }.getOrDefault(emptyList()) }
     }
-    LaunchedEffect(lat,lon,orbit,offset,smooth,customOnly,lowPass,selectedTitle) {
-        prefs.edit().putString("lat",lat).putString("lon",lon).putString("orbit",orbit).putString("offset",offset).putBoolean("smooth",smooth).putBoolean("customOnly",customOnly).putFloat("lowPass",lowPass).putString("selectedTitle",selectedTitle).apply()
+    LaunchedEffect(lat,lon,orbit,offset,smooth,customOnly,lowPass,selectedTitle,activeTuning,layer) {
+        prefs.edit().putString("lat",lat).putString("lon",lon).putString("orbit",orbit).putString("offset",offset).putBoolean("smooth",smooth).putBoolean("customOnly",customOnly).putFloat("lowPass",lowPass).putString("selectedTitle",selectedTitle).putString("activeTuning",activeTuning).putString("mapLayer",layer.name).apply()
     }
     fun import(open: ()->InputStream) {
         if(busy) return
@@ -115,11 +131,19 @@ fun DishScreen() {
         if(uri != null) import { requireNotNull(ctx.contentResolver.openInputStream(uri)) }
     }
     fun locate() {
+        if (locating) return
+        locating = true
         scope.launch {
-            status="Ищу местоположение…"
-            val fix=currentFix(ctx)
-            if(fix==null) status="Нет свежих координат. Проверьте геолокацию или введите точку вручную."
-            else { lat=fix.latitude.toString();lon=fix.longitude.toString();status="${fix.provider} · ±${fix.accuracy.toInt()} м" }
+            try {
+                status = "Ищу местоположение…"
+                val fix = currentFix(ctx)
+                if (fix == null) status = "Нет свежих координат. Проверьте геолокацию или введите точку вручную."
+                else {
+                    lat = fix.latitude.toString()
+                    lon = fix.longitude.toString()
+                    status = "${clock(fix.time)} · ±${fix.accuracy.toInt()} м"
+                }
+            } finally { locating = false }
         }
     }
     val location=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { if(it.values.any { ok -> ok }) locate() else status="Можно указать точку вручную" }
@@ -140,8 +164,19 @@ fun DishScreen() {
         }.let { rows -> if(catalogMode==1)rows.distinctBy{it.orbital to it.provider} else rows }
     }
     val chosenName = selectedTitle.ifBlank { slots.firstOrNull { it.orbital == orbital }?.name ?: "Орбитальная позиция" }
-    Column(Modifier.fillMaxSize().padding(horizontal=12.dp)) {
-        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+    if (aired) {
+        DishFeedScreen(site, catalog, onChoose = { row ->
+            orbit = row.orbit.toString()
+            selectedTitle = row.satellite
+            activeTuning = listOf(row.channel, row.tuning, row.network, row.note.takeUnless { it == row.tuning }.orEmpty())
+                .filter(String::isNotBlank).joinToString(" · ")
+            aired = false
+            tab = 0
+        }, onClose = { aired = false }, initialQuery = query, initialMode = radioMode)
+        return
+    }
+    Column(Modifier.fillMaxSize()) {
+        if (!fullscreen) Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {
             listOf("Наведение","Карта","Каталог").forEachIndexed {i,label->
                 TextButton({tab=i;camera=false},Modifier.weight(1f)) {
                     Text(label,color=if(tab==i)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -149,7 +184,7 @@ fun DishScreen() {
             }
             IconButton({settingsOpen=true}) {Icon(Icons.Rounded.Settings,"Настройки наведения")}
         }
-        if(status.isNotBlank())Text(status,style=MaterialTheme.typography.labelSmall)
+        if(status.isNotBlank() && !fullscreen)Text(status,Modifier.padding(horizontal=12.dp),style=MaterialTheme.typography.labelSmall)
         if(camera) {
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                 Text(chosenName,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall)
@@ -158,7 +193,7 @@ fun DishScreen() {
             if(angles!=null && angles.elevation>0)Sight(angles,heading,true,Modifier.fillMaxWidth().weight(1f))
             else {Text("Задайте точку установки и выберите спутник над горизонтом.");Spacer(Modifier.weight(1f))}
         } else when(tab) {
-            0 -> LazyColumn(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=16.dp)) {
+            0 -> LazyColumn(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(start=12.dp,end=12.dp,bottom=16.dp)) {
                 item {
                     Surface(onClick={locationOpen=true},color=MaterialTheme.colorScheme.surfaceContainer,shape=MaterialTheme.shapes.medium) {
                         Row(Modifier.fillMaxWidth().padding(12.dp),verticalAlignment=Alignment.CenterVertically) {
@@ -185,13 +220,35 @@ fun DishScreen() {
                         }
                     }
                 }
+                item {
+                    if (activeTuning.isNotBlank()) Text(activeTuning, style = MaterialTheme.typography.bodyMedium)
+                    if (angles != null) {
+                        val az = angles.azimuth?.let { "${compassDirection(it)} · ${degrees(it)}" } ?: "Азимут не определён"
+                        val relative = when {
+                            angles.elevation > 0 -> "${degrees(angles.elevation)} над горизонтом"
+                            else -> "${degrees(kotlin.math.abs(angles.elevation))} ниже горизонта"
+                        }
+                        val distance = "%,.0f км".format(angles.rangeKm)
+                        Text("$az · $relative", style = MaterialTheme.typography.titleSmall)
+                        Text("Расстояние $distance · от точки установки, по орбитальной позиции",
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton({
+                        if (locationPermissions.any(ctx::allowed)) locate() else location.launch(locationPermissions)
+                    }, enabled = !locating) { Text("Рассчитать от моего GPS") }
+                    TextButton({ radioMode = "Каналы"; aired = true }) {
+                        Icon(Icons.Rounded.Search, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Найти канал и параметры вещания")
+                    }
+                }
                 item {Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     DishAngleTile("Азимут",angles?.azimuth,0,Modifier.weight(1f))
                     DishAngleTile("Подъём",angles?.elevation,1,Modifier.weight(1f))
                     DishAngleTile("LNB",angles?.skew,2,Modifier.weight(1f))
                 }}
                 if(angles!=null && angles.elevation<=0)item {Text("Спутник ниже горизонта в выбранной точке",color=MaterialTheme.colorScheme.error)}
-                item {DishCompass(angles?.azimuth?.takeIf{angles.elevation>0},heading?.heading,site!=null)}
+                item {DishCompass(angles?.azimuth?.takeIf{angles.elevation>0},heading?.heading,site!=null,belowHorizon=angles?.let{it.elevation<=0}==true)}
                 if(heading?.accuracy==android.hardware.SensorManager.SENSOR_STATUS_UNRELIABLE)item {Text("Низкая точность компаса. Отойдите от металла и откалибруйте датчик.",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
                 item {Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     FilledTonalButton({if(ctx.allowed(Manifest.permission.CAMERA))camera=true else cameraPerm.launch(Manifest.permission.CAMERA)},Modifier.weight(1f),enabled=angles!=null && angles.elevation>0) {Icon(Icons.Rounded.CameraAlt,null,Modifier.size(18.dp));Spacer(Modifier.width(6.dp));Text("AR-визир")}
@@ -203,27 +260,57 @@ fun DishScreen() {
                 }
             }
             1 -> {
-                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Азимут ${degrees(angles?.azimuth)} · ${orbital?.let(::orbitalLabel) ?: "—"}",style=MaterialTheme.typography.titleSmall)
-                        Text("Долгое нажатие меняет точку установки",style=MaterialTheme.typography.labelSmall)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton({ fullMap = !fullMap }) {
+                        Icon(if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                            if (fullscreen) "Выйти из полноэкранной карты" else "Развернуть карту")
                     }
-                    IconButton({locationOpen=true}) {Icon(Icons.Rounded.MyLocation,"Точка установки")}
+                    Column(Modifier.weight(1f)) {
+                        Text("Азимут ${degrees(angles?.azimuth)} · ${orbital?.let(::orbitalLabel) ?: "—"}",
+                            style = MaterialTheme.typography.titleSmall)
+                        Text(if (angles != null && angles.elevation <= 0) "Спутник ниже горизонта"
+                            else "Удерживайте карту для выбора точки", style = MaterialTheme.typography.labelSmall)
+                    }
+                    IconButton({ follow = !follow }) {
+                        Icon(Icons.Rounded.Explore, if (follow) "Север сверху" else "Вращать по компасу",
+                            tint = if (follow) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton({ if (site == null) locationOpen = true else centerRequest++ },
+                        modifier = Modifier) { Icon(Icons.Rounded.MyLocation, "К точке установки") }
                 }
-                FilterChip(follow,{follow=!follow},{Text(if(follow)"Карта по компасу" else "Север сверху")})
-                val origin=Pin(site?.lat ?: 0.0,site?.lon ?: 0.0,"Точка установки")
-                val end=angles?.azimuth?.let{org.osmdroid.util.GeoPoint(origin.lat,origin.lon).destinationPoint(1500.0,it)}
-                val ray=if(end!=null && angles.elevation>0)listOf(origin,Pin(end.latitude,end.longitude,"Направление на спутник")) else emptyList()
-                if(site==null) {
-                    Text("Укажите точку установки, чтобы показать направление.")
-                    Button({locationOpen=true}){Text("Задать точку")}
-                    Spacer(Modifier.weight(1f))
-                } else FieldMap(origin,listOf(origin),ray,{lat=it.lat.toString();lon=it.lon.toString()},
-                    if(follow)-(heading?.heading ?: 0.0).toFloat() else 0f,Modifier.fillMaxWidth().weight(1f))
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    FieldMapLayer.entries.forEach { option ->
+                        FilterChip(layer == option, { layer = option }, { Text(option.title, fontSize = 12.sp) })
+                    }
+                    if (follow) Text(degrees(heading?.heading), Modifier.align(Alignment.CenterVertically),
+                        style = MaterialTheme.typography.labelSmall)
+                }
+                val origin = site?.let { Pin(it.lat, it.lon, "Точка установки") } ?: Pin(18.0, 0.0, "")
+                val azimuth = angles?.azimuth
+                val ray = if (azimuth != null && angles.elevation > 0) {
+                    val end = org.osmdroid.util.GeoPoint(origin.lat, origin.lon).destinationPoint(1500.0, azimuth)
+                    listOf(origin, Pin(end.latitude, end.longitude, "Направление на спутник"))
+                } else emptyList()
+                if (site == null) TextButton({ locationOpen = true }, Modifier.padding(horizontal = 8.dp)) {
+                    Text("GPS или адрес")
+                }
+                FieldMap(
+                    origin, if (site == null) emptyList() else listOf(origin), ray,
+                    onPick = { lat = it.lat.toString(); lon = it.lon.toString() },
+                    orientation = if (follow) -(heading?.heading ?: 0.0).toInt().toFloat() else 0f,
+                    modifier = Modifier.fillMaxWidth().weight(1f), layer = layer, recenter = centerRequest,
+                    initialZoom = if (site == null) 2.0 else 15.0,
+                )
             }
-            2 -> LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(bottom=16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+            2 -> LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=12.dp,end=12.dp,bottom=16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                 item {
-                    Chips(listOf("Спутники","Пакеты","Из файла"),listOf("Спутники","Пакеты","Из файла")[catalogMode]){catalogMode=listOf("Спутники","Пакеты","Из файла").indexOf(it)}
+                    FilledTonalButton({ radioMode = "Каналы"; aired = true }, Modifier.fillMaxWidth()) {
+                        Text("Каналы, пакеты и изменения эфира")
+                    }
+                    Chips(listOf("Спутники","Пакеты","Из файла"),listOf("Спутники","Пакеты","Из файла")[catalogMode]){ selection ->
+                        if (selection == "Пакеты") { radioMode = "Пакеты"; aired = true }
+                        else catalogMode = listOf("Спутники","Пакеты","Из файла").indexOf(selection)
+                    }
                     OutlinedTextField(query,{query=it},Modifier.fillMaxWidth(),singleLine=true,label={Text("Спутник, позиция, канал или пакет")},leadingIcon={Icon(Icons.Rounded.Search,null)})
                     Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                         FilterChip(visible,{visible=!visible},{Text("Над горизонтом")})
@@ -254,7 +341,7 @@ fun DishScreen() {
                 }
                 items(shown){row->
                     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                        Surface(onClick={orbit=row.orbital.toString();selectedTitle=if(catalogMode==1)row.provider else row.channel.ifBlank{row.name};tab=0},Modifier.weight(1f),color=MaterialTheme.colorScheme.surface,shape=MaterialTheme.shapes.small) {
+                        Surface(onClick={orbit=row.orbital.toString();selectedTitle=if(catalogMode==1)row.provider else row.channel.ifBlank{row.name};activeTuning=row.tuning;tab=0},Modifier.weight(1f),color=MaterialTheme.colorScheme.surface,shape=MaterialTheme.shapes.small) {
                             Row(Modifier.padding(vertical=12.dp,horizontal=8.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
                                 Text(orbitalLabel(row.orbital),Modifier.width(72.dp),color=MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.labelLarge)
                                 Column {
@@ -304,7 +391,7 @@ fun DishScreen() {
     if(settingsOpen)ModalBottomSheet(onDismissRequest={settingsOpen=false}) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
             Text("Настройки наведения",style=MaterialTheme.typography.titleLarge)
-            OutlinedTextField(orbit,{orbit=it;selectedTitle=""},Modifier.fillMaxWidth(),label={Text("Орбита: E (+), W (−)")},singleLine=true,isError=orbital==null)
+            OutlinedTextField(orbit,{orbit=it;selectedTitle="";activeTuning=""},Modifier.fillMaxWidth(),label={Text("Орбита: E (+), W (−)")},singleLine=true,isError=orbital==null)
             OutlinedTextField(offset,{offset=it},Modifier.fillMaxWidth(),label={Text("Поправка компаса, °")},singleLine=true,isError=offset.replace(',','.').toDoubleOrNull()?.let{it !in -180.0..180.0} ?: true)
             Row(verticalAlignment=Alignment.CenterVertically) {Text("Сглаживание компаса",Modifier.weight(1f));Switch(smooth,{smooth=it})}
             if(smooth) {
