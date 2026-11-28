@@ -103,7 +103,7 @@ fun DishScreen(onFullscreen: (Boolean) -> Unit = {}) {
     val orbital=orbit.trim().replace(',','.').toDoubleOrNull()?.takeIf { it in -180.0..180.0 }
     val angles=if(site != null && orbital != null) dishAngles(site,orbital) else null
     val declination=remember(site) { site?.let { GeomagneticField(it.lat.toFloat(),it.lon.toFloat(),0f,System.currentTimeMillis()).declination.toDouble() } ?: 0.0 }
-    val heading=if(camera || tab==0 || (tab==1 && follow)) attitude(declination+(offset.replace(',','.').toDoubleOrNull()?.takeIf { it in -180.0..180.0 } ?: 0.0),smooth,lowPass) else null
+    val heading=if(camera || tab==0 || (tab==1 && follow)) attitude(declination+(offset.replace(',','.').toDoubleOrNull()?.takeIf { it in -180.0..180.0 } ?: 0.0),smooth,lowPass, precise = camera) else null
     LaunchedEffect(Unit) {
         catalog=withContext(Dispatchers.IO) { runCatching { readCatalog(cache.openRead()).second }.getOrDefault(emptyList()) }
     }
@@ -199,7 +199,7 @@ fun DishScreen(onFullscreen: (Boolean) -> Unit = {}) {
                 Text(chosenName,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall)
                 TextButton({camera=false}) {Text("Закрыть визир")}
             }
-            if(angles!=null && angles.elevation>0)Sight(angles,heading,true,Modifier.fillMaxWidth().weight(1f))
+            if(angles!=null && angles.elevation>0)AirVisor(angles,heading,Modifier.fillMaxWidth().weight(1f))
             else {Text("Задайте точку установки и выберите спутник над горизонтом.");Spacer(Modifier.weight(1f))}
         } else when(tab) {
             0 -> LazyColumn(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(start=12.dp,end=12.dp,bottom=16.dp)) {
@@ -277,8 +277,11 @@ fun DishScreen(onFullscreen: (Boolean) -> Unit = {}) {
                     Column(Modifier.weight(1f)) {
                         Text("Азимут ${degrees(angles?.azimuth)} · ${orbital?.let(::orbitalLabel) ?: "—"}",
                             style = MaterialTheme.typography.titleSmall)
-                        Text(if (angles != null && angles.elevation <= 0) "Спутник ниже горизонта"
-                            else "Удерживайте карту для выбора точки", style = MaterialTheme.typography.labelSmall)
+                        Text(when {
+                            angles != null && angles.elevation <= 0 -> "Спутник ниже горизонта"
+                            follow && heading?.heading != null -> "Курс ${degrees(heading.heading)} · удерживайте карту для выбора точки"
+                            else -> "Удерживайте карту для выбора точки"
+                        }, style = MaterialTheme.typography.labelSmall)
                     }
                     IconButton({ follow = !follow }) {
                         Icon(Icons.Rounded.Explore, if (follow) "Север сверху" else "Вращать по компасу",
@@ -287,14 +290,8 @@ fun DishScreen(onFullscreen: (Boolean) -> Unit = {}) {
                     IconButton({ if (site == null) locationOpen = true else centerRequest++ },
                         modifier = Modifier) { Icon(Icons.Rounded.MyLocation, "К точке установки") }
                 }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    FieldMapLayer.entries.forEach { option ->
-                        FilterChip(layer == option, { layer = option }, { Text(option.title, fontSize = 12.sp) })
-                    }
-                    if (follow) Text(degrees(heading?.heading), Modifier.align(Alignment.CenterVertically),
-                        style = MaterialTheme.typography.labelSmall)
-                }
-                val origin = site?.let { Pin(it.lat, it.lon, "Точка установки") } ?: Pin(18.0, 0.0, "")
+                FieldMapLayers(layer) { layer = it }
+                val origin = site?.let { Pin(it.lat, it.lon, "Точка установки", isLocation = true) } ?: Pin(18.0, 0.0, "")
                 val azimuth = angles?.azimuth
                 val ray = if (azimuth != null && angles.elevation > 0) {
                     val end = org.osmdroid.util.GeoPoint(origin.lat, origin.lon).destinationPoint(1500.0, azimuth)

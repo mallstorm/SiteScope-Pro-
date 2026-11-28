@@ -1,11 +1,50 @@
 package pro.sitescope.app
 
+import android.hardware.SensorManager
+import android.view.Surface
 import org.junit.Assert.*
 import org.junit.Test
 import pro.sitescope.app.satellite.*
 import pro.sitescope.app.radio.*
 
 class RadioSatelliteTest {
+    @Test fun visorAimingUsesCameraAxesDeclinationAndDisplayRotation() {
+        val cameraNorth = floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 1f, 0f)
+        val target = DishAngles(17.0, 1.0, null, 42000.0)
+        val portrait = cameraAim(target, cameraNorth, Surface.ROTATION_0, 15.0)!!
+        assertEquals(2.0, portrait.horizontal, 0.001)
+        assertEquals(1.0, portrait.vertical, 0.001)
+        val landscape = cameraAim(target, cameraNorth, Surface.ROTATION_90, 15.0)!!
+        assertEquals(1.0, landscape.horizontal, 0.002)
+        assertEquals(-2.0, landscape.vertical, 0.002)
+        assertEquals(portrait.error, landscape.error, 1e-6)
+        val behind = cameraAim(target.copy(azimuth = 195.0, elevation = 0.0), cameraNorth, Surface.ROTATION_0, 15.0)!!
+        assertTrue(behind.forward < 0)
+        assertEquals(180.0, behind.error, 1e-6)
+    }
+
+    @Test fun visorHandlesZenithEvenWhenSatelliteAzimuthIsUndefined() {
+        val cameraUp = floatArrayOf(1f, 0f, 0f, 0f, -1f, 0f, 0f, 0f, -1f)
+        val zenith = DishAngles(null, 90.0, null, 35786.0)
+        assertEquals(0.0, cameraAim(zenith, cameraUp, Surface.ROTATION_0, 0.0)!!.error, 1e-6)
+        assertNull(cameraAim(zenith.copy(elevation = 20.0), cameraUp, Surface.ROTATION_0, 0.0))
+    }
+
+    @Test fun visorLocksOnlyAfterStableAlignmentAndReleasesWithHysteresis() {
+        val normal = SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM
+        assertTrue(reliableAim(normal, 3.0))
+        assertFalse(reliableAim(normal, 12.0))
+        assertFalse(reliableAim(SensorManager.SENSOR_STATUS_ACCURACY_LOW, 1.0))
+        val aiming = advanceAimLock(AimLock(), 0.8, true, 10L)
+        assertFalse(advanceAimLock(aiming, 0.7, true, 299_000_010L).aligned)
+        assertEquals(AimLock(), advanceAimLock(aiming, 1.3, true, 200_000_010L))
+        val aligned = advanceAimLock(aiming, 0.7, true, 300_000_010L)
+        assertTrue(aligned.aligned)
+        assertTrue(advanceAimLock(aligned, 1.5, true, 400_000_010L).aligned)
+        assertFalse(advanceAimLock(aligned, 2.0, true, 400_000_010L).aligned)
+        assertFalse(advanceAimLock(aligned, 0.1, false, 400_000_010L).aligned)
+    }
+
     @Test fun observerAtSubsatellitePointHasZenithAndUndefinedAzimuth() {
         val angles = dishAngles(SitePoint(0.0, 36.0), 36.0)
         assertEquals(90.0, angles.elevation, 0.0001)

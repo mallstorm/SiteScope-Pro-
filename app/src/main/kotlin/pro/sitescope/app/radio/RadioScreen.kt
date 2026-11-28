@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Build
 import android.telephony.ServiceState
 import android.telephony.TelephonyManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
@@ -39,7 +40,7 @@ internal fun Chips(options:List<String>,selected:String,select:(String)->Unit){
 }
 
 @Composable
-fun RadioScreen(startTab:Int=0){
+fun RadioScreen(startTab: Int = 0, onFullscreen: (Boolean) -> Unit = {}) {
     val ctx=LocalContext.current
     val owner=LocalLifecycleOwner.current
     val view=androidx.compose.ui.platform.LocalView.current
@@ -57,6 +58,10 @@ fun RadioScreen(startTab:Int=0){
     }
     // External widget / shortcut tab numbers from alpha3 retain their destinations.
     var page by rememberSaveable(startTab) {mutableIntStateOf(when(startTab){1->2;2->6;3->5;else->0})}
+    var fullMap by rememberSaveable { mutableStateOf(false) }
+    val fullscreen = page == 3 && fullMap
+    LaunchedEffect(fullscreen) { onFullscreen(fullscreen) }
+    BackHandler(enabled = fullscreen) { fullMap = false }
     var refresh by remember{mutableIntStateOf(0)}
     var frame by remember{mutableStateOf<RadioFrame?>(null)}
     var series by remember{mutableStateOf<Map<String,List<Pair<Long,Int>>>>(emptyMap())}
@@ -100,7 +105,7 @@ fun RadioScreen(startTab:Int=0){
     val labels=listOf("Сигнал","Соты","Журнал","Карта","Wi-Fi","Ещё")
     val icons=listOf(Icons.Rounded.SignalCellularAlt,Icons.Rounded.CellTower,Icons.Rounded.History,Icons.Rounded.Map,Icons.Rounded.Wifi,Icons.Rounded.MoreHoriz)
     Column(Modifier.fillMaxSize()) {
-        if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(horizontal=12.dp))
+        if(error.isNotBlank() && !fullscreen)Text(error,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(horizontal=12.dp))
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when(page) {
                 0->SignalDashboard(current,series,active!=null,record,{refresh++},grant)
@@ -109,7 +114,8 @@ fun RadioScreen(startTab:Int=0){
                     SectionHeading("Журнал измерений","Маршруты, соты и экспорт CSV / KML")
                     SurveyHistory(active,live?.time)
                 }
-                3->SurveyMapScreen(current,position,active,live?.time,record,grant,{page=6})
+                3 -> SurveyMapScreen(current, position, active, live?.time, record, grant, { page = 6 },
+                    permissionRevision = refresh, fullscreen = fullscreen, onFullscreen = { fullMap = !fullMap })
                 4->WifiScreen()
                 5->Column(Modifier.padding(horizontal=12.dp)) {RadioOptions(prefs)}
                 6->Column(Modifier.padding(horizontal=12.dp)) {
@@ -121,7 +127,7 @@ fun RadioScreen(startTab:Int=0){
                 }
             }
         }
-        NavigationBar(windowInsets=WindowInsets(0,0,0,0)) {
+        if (!fullscreen) NavigationBar(windowInsets=WindowInsets(0,0,0,0)) {
             labels.forEachIndexed {i,label->
                 NavigationBarItem(selected=page==i || (i==5 && page==6),onClick={if(i==5)more=true else page=i},
                     icon={Box {

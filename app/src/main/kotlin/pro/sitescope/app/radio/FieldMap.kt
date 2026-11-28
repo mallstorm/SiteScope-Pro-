@@ -3,7 +3,9 @@ package pro.sitescope.app.radio
 import android.graphics.Canvas
 import android.graphics.Color
 import android.widget.FrameLayout
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -11,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import pro.sitescope.app.R
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.MapTileProviderBasic
@@ -22,10 +26,20 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.*
 
-data class Pin(val lat: Double, val lon: Double, val title: String, val dbm: Int? = null, val bearing: Int? = null)
+data class Pin(val lat: Double, val lon: Double, val title: String, val dbm: Int? = null, val bearing: Int? = null, val isLocation: Boolean = false)
 
 enum class FieldMapLayer(val title: String) {
     Streets("Схема"), Satellite("Спутник"), Hybrid("Гибрид")
+}
+
+@Composable
+internal fun FieldMapLayers(layer: FieldMapLayer, onSelect: (FieldMapLayer) -> Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        FieldMapLayer.entries.forEach { option ->
+            FilterChip(selected = layer == option, onClick = { onSelect(option) }, label = { Text(option.title) })
+        }
+    }
 }
 
 private fun esriTiles(name: String, layer: String, extension: String) =
@@ -41,7 +55,7 @@ private val roads = esriTiles("EsriWorldTransportation", "Reference/World_Transp
 private val labels = esriTiles("EsriWorldPlaces", "Reference/World_Boundaries_and_Places", ".png")
 
 @Composable
-fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick: ((Pin) -> Unit)? = null, orientation: Float = 0f, modifier: Modifier = Modifier.fillMaxWidth().height(320.dp), layer: FieldMapLayer = FieldMapLayer.Streets, recenter: Int = 0, initialZoom: Double = 15.0) {
+fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick: ((Pin) -> Unit)? = null, orientation: Float = 0f, modifier: Modifier = Modifier.fillMaxWidth().height(320.dp), layer: FieldMapLayer = FieldMapLayer.Streets, recenter: Int = 0, initialZoom: Double = 15.0, followCenter: Boolean = true) {
     val ctx = LocalContext.current
     val pick by rememberUpdatedState(onPick)
     val map = remember(ctx) {
@@ -83,7 +97,9 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
         map.invalidate()
     }
     LaunchedEffect(initialZoom) { map.controller.setZoom(initialZoom) }
-    LaunchedEffect(center.lat, center.lon, recenter) { map.controller.setCenter(GeoPoint(center.lat,center.lon)) }
+    LaunchedEffect(map, recenter, center.lat.takeIf { followCenter }, center.lon.takeIf { followCenter }) {
+        map.controller.setCenter(GeoPoint(center.lat, center.lon))
+    }
     LaunchedEffect(pins, line, onPick != null, layer) {
         map.overlays.clear()
         if (layer == FieldMapLayer.Hybrid) map.overlays.addAll(references)
@@ -119,16 +135,20 @@ fun FieldMap(center: Pin, pins: List<Pin>, line: List<Pin> = emptyList(), onPick
                 })
             }
             map.overlays.add(Marker(map).apply {
-            position = GeoPoint(p.lat,p.lon); title = p.title
-            if (p.dbm != null) {
-                val bitmap = android.graphics.Bitmap.createBitmap(28, 28, android.graphics.Bitmap.Config.ARGB_8888)
-                val canvas = android.graphics.Canvas(bitmap)
-                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = signalColor(p.dbm) }
-                canvas.drawCircle(14f, 14f, 12f, paint)
-                icon = android.graphics.drawable.BitmapDrawable(ctx.resources, bitmap)
-            }
-            setAnchor(Marker.ANCHOR_CENTER,Marker.ANCHOR_BOTTOM)
-        }) }
+                position = GeoPoint(p.lat, p.lon)
+                title = p.title
+                if (p.isLocation) {
+                    icon = ContextCompat.getDrawable(ctx, R.drawable.ic_map_location_crystal)
+                } else if (p.dbm != null) {
+                    val bitmap = android.graphics.Bitmap.createBitmap(28, 28, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = signalColor(p.dbm) }
+                    canvas.drawCircle(14f, 14f, 12f, paint)
+                    icon = android.graphics.drawable.BitmapDrawable(ctx.resources, bitmap)
+                }
+                setAnchor(Marker.ANCHOR_CENTER, if (p.dbm != null && !p.isLocation) Marker.ANCHOR_CENTER else Marker.ANCHOR_BOTTOM)
+            })
+        }
         map.invalidate()
     }
     Column(modifier.clipToBounds()) {

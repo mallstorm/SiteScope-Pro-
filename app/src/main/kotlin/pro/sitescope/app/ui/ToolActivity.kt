@@ -96,7 +96,13 @@ fun ToolContent(screen: String, tab: Int, targets: String?, state: AppState? = n
                     pro.sitescope.app.satellite.DishScreen { fullscreen = it }
                 }
             }
-            "radio" -> { BackHeader("Радиомонитор", onBack); pro.sitescope.app.radio.RadioScreen(tab) }
+            "radio" -> {
+                var fullscreen by rememberSaveable { mutableStateOf(false) }
+                if (!fullscreen) BackHeader("Радиомонитор", onBack)
+                Column(if (fullscreen) Modifier.statusBarsPadding() else Modifier) {
+                    pro.sitescope.app.radio.RadioScreen(tab) { fullscreen = it }
+                }
+            }
             "wifi" -> { BackHeader("Диагностика Wi-Fi", onBack); WifiScreen() }
             else -> NetworkScreen(tab, targets)
         }
