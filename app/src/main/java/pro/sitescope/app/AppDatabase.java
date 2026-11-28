@@ -226,6 +226,7 @@ public final class AppDatabase extends SQLiteOpenHelper {
             db.delete("exposure_targets", null, null); db.delete("exposure_runs", null, null);
             db.delete("router_connections", null, null); db.delete("router_snapshots", null, null);
             db.delete("app_meta", "key=?", new String[]{"legacy_migrated_v1"});
+            DeviceRegistryStore.setResetThrough(db, -1L);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
         migrateLegacyOnce();

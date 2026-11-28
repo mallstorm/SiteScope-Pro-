@@ -32,7 +32,7 @@ import pro.sitescope.app.vpn.VpnScreen
  * Сводка повторяет макет: все четыре направления на одном экране, каждая карточка ведёт в свой раздел.
  */
 @Composable
-fun ProtectScreen(section: Int, vpnTab: Int, state: AppState? = null) {
+fun ProtectScreen(section: Int, vpnTab: Int, state: AppState? = null, requestedServer: String? = null) {
     var current by remember(section) { mutableIntStateOf((section + 1).coerceIn(0, 4)) }
     var vpnStart by remember(vpnTab) { mutableIntStateOf(if (vpnTab == 0) 8 else vpnTab.coerceIn(0, 9)) }
     // Порядок вкладок как в макете; число — индекс вкладки внутри VpnScreen.
@@ -47,7 +47,7 @@ fun ProtectScreen(section: Int, vpnTab: Int, state: AppState? = null) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (current) {
                 0 -> ProtectSummary { target, tab -> vpnStart = if (target == 1 && tab == 0) 8 else tab; current = target }
-                1 -> key(vpnStart) { VpnScreen(initialTab = vpnStart, importLink = state?.serverRequest, onImportDone = { state?.serverRequest = null }, showTabs = false, onKeys = { state?.openRoute("keys") }) }
+                1 -> key(vpnStart) { VpnScreen(initialTab = vpnStart, importLink = state?.serverRequest, onImportDone = { state?.serverRequest = null }, showTabs = false, requestedServer = requestedServer, onKeys = { state?.openRoute("keys") }) }
                 2 -> DpiScreen()
                 3 -> AnonScreen()
                 else -> TlsInspectorScreen()

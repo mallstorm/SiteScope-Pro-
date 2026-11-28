@@ -454,12 +454,22 @@ object KeyExport {
     fun text(items: List<KeyItem>) = items.joinToString("\n") { k -> labeled(k).let { if (k.type == "socks" && it.startsWith("socks5://")) "socks://" + it.removePrefix("socks5://") else it } }
     /** Простой список host:port для ручного добавления прокси. */
     fun hostPort(items: List<KeyItem>) = items.filter { it.proxy }.joinToString("\n") { (if (it.host.contains(':')) "[" + it.host + "]" else it.host) + ":" + it.port }
-    /** Ссылка для добавления в «Серверы»; null — ядро не поддерживает протокол. */
-    fun profileLink(k: KeyItem): String? = when {
-        k.udp -> null
-        k.type == "http" -> "httpproxy://" + labeled(k).removePrefix("http://")
-        else -> labeled(k)
+    /** HTTP uses CONNECT in Xray. HTTPS on a result denotes a successful HTTPS target check. */
+    fun profileLink(key: KeyItem): String? {
+        if (key.udp) return null
+        val link = labeled(key)
+        val body = link.substringAfter("://", "").takeIf(String::isNotEmpty) ?: return null
+        return when (key.type) {
+            "http" -> "httpproxy://$body"
+            "socks" -> (if (link.startsWith("socks://", ignoreCase = true)) "socks://" else "socks5://") + body
+            "vless", "vmess", "trojan", "ss" -> link
+            else -> null
+        }
     }
+
+    fun canConnect(key: KeyItem): Boolean = key.alive && profileLink(key) != null &&
+        (key.type != "http" || key.https == 1)
+
     fun subscription(items: List<KeyItem>) = Base64.encodeToString(text(items).toByteArray(), Base64.NO_WRAP)
 }
 

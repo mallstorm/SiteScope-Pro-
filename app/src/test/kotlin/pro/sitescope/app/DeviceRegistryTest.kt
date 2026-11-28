@@ -138,6 +138,46 @@ class DeviceRegistryTest {
         assertEquals(1, DeviceRegistryStore.list(app, "192.168.1.2", 10).size)
     }
 
+    @Test fun clearingArchiveKeepsPortReportsAndProfilesWithoutRecreatingOldCards() {
+        val session = Models.ScanSession().apply {
+            scope = lan
+            timestamp = 40
+            targetExpression = "192.168.1.2"
+            openResults.add(Models.PortResult().apply { ip = "192.168.1.2"; port = 22; service = "SSH"; open = true })
+        }
+        DataStore(app).saveScan(session)
+        DeviceInventoryStore.saveSnapshot(app, listOf(Models.DiscoveredDevice().apply {
+            ip = "192.168.1.3"; port = 1900; protocol = "SSDP/UPnP"; scope = lan
+        }), "LAN")
+        ConnectionProfileStore.save(app, ServiceEndpoint().apply {
+            host = "192.168.1.4"; port = 22; protocol = "SSH"; uri = "ssh://192.168.1.4:22"; scope = lan
+        })
+        DeviceRegistryStore.sync(app)
+        assertEquals(3, all().size)
+        val beforeClear = AppDatabase.get(app).exportPortable()
+
+        DeviceRegistryStore.clearArchive(app)
+        TestStores.reset()
+        DeviceRegistryStore.sync(app)
+        record(found("192.168.1.3", time = 40))
+        assertEquals("profile", all().single().observations.single().kind)
+        assertEquals(1, ConnectionProfileStore.list(app).size)
+        assertTrue(DeviceInventoryStore.list(app).isEmpty())
+        AppDatabase.get(app).read().rawQuery("SELECT COUNT(*) FROM scan_sessions", null).use {
+            assertTrue(it.moveToFirst())
+            assertEquals(1, it.getInt(0))
+        }
+        val afterClear = AppDatabase.get(app).exportPortable()
+        AppDatabase.get(app).restorePortable(beforeClear)
+        DeviceRegistryStore.sync(app)
+        assertEquals(3, all().size)
+        AppDatabase.get(app).restorePortable(afterClear)
+        DeviceRegistryStore.sync(app)
+        assertEquals("profile", all().single().observations.single().kind)
+        record(found("192.168.1.5", time = System.currentTimeMillis() + 1))
+        assertEquals(2, all().size)
+    }
+
     @Test fun versionTwoUpgradePreservesProfilesAndAddsRegistry() {
         val e = ServiceEndpoint().apply { host = "192.168.1.15"; port = 22; protocol = "SSH"; uri = "ssh://192.168.1.15:22" }
         ConnectionProfileStore.save(app, e)

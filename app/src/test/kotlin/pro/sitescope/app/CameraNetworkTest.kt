@@ -2,6 +2,7 @@ package pro.sitescope.app
 
 import android.app.Application
 import android.net.*
+import java.net.InetAddress
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -14,6 +15,9 @@ import org.robolectric.annotation.Implements
 import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.ShadowNetwork
 import org.robolectric.shadows.ShadowNetworkCapabilities
+import org.robolectric.util.ReflectionHelpers
+import org.robolectric.util.ReflectionHelpers.ClassParameter
+import pro.sitescope.app.net.findLocalLan
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28, 35], application = Application::class, shadows = [CameraNetworkTest.Choice::class])
@@ -46,6 +50,31 @@ class CameraNetworkTest {
         return n
     }
     private val app get() = RuntimeEnvironment.getApplication() as Application
+    @Test fun currentLanIgnoresMobileAndTunnelAddressesAndUsesActualWifiPrefix() {
+        fun link(cidr: String) = LinkProperties().apply {
+            val address = ReflectionHelpers.callConstructor(LinkAddress::class.java,
+                ClassParameter.from(InetAddress::class.java, InetAddress.getByName(cidr.substringBefore('/'))),
+                ClassParameter.from(Int::class.javaPrimitiveType, cidr.substringAfter('/').toInt()))
+            ReflectionHelpers.callInstanceMethod<Boolean>(this, "addLinkAddress", ClassParameter.from(LinkAddress::class.java, address))
+        }
+        val manager = app.getSystemService(ConnectivityManager::class.java)!!
+        val mobile = network(110, NetworkCapabilities.TRANSPORT_CELLULAR)
+        val vpn = network(111, NetworkCapabilities.TRANSPORT_VPN)
+        Choice.links[vpn] = link("10.10.14.2/30")
+        Choice.active = vpn
+        assertNull(findLocalLan(manager))
+
+        val wifi = network(112, NetworkCapabilities.TRANSPORT_WIFI)
+        Choice.links[wifi] = link("192.168.3.148/25")
+        Choice.active = mobile
+        assertNull(findLocalLan(manager))
+        Choice.active = vpn
+        assertEquals(wifi, findLocalLan(manager)?.network)
+        assertEquals("192.168.3.128/25", findLocalLan(manager)?.subnet)
+        Shadow.extract<ShadowNetworkCapabilities>(Choice.caps.getValue(vpn)).addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+        assertNull(findLocalLan(manager))
+    }
+
     @Test fun discoveredLanRemainsSelectedWhenVpnIsDefault() {
         val wifi = network(101, NetworkCapabilities.TRANSPORT_WIFI)
         Choice.active = network(102, NetworkCapabilities.TRANSPORT_VPN)

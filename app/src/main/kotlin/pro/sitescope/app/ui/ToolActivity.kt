@@ -70,7 +70,7 @@ fun ToolContent(screen: String, tab: Int, targets: String?, state: AppState? = n
         when (screen) {
             "data" -> { BackHeader("Мои данные", onBack); DataScreen(tab) }
             "protect" -> ProtectScreen(-1, 0, state)
-            "vpn" -> ProtectScreen(0, tab, state)
+            "vpn" -> ProtectScreen(0, tab, state, requestedServer = targets)
             "tls-inspector" -> ProtectScreen(3, 0, state)
             "https-content" -> { BackHeader("HTTPS · содержимое", onBack); HttpsContentScreen() }
             "settings" -> { BackHeader("Настройки", onBack); SettingsScreen() }
@@ -78,7 +78,14 @@ fun ToolContent(screen: String, tab: Int, targets: String?, state: AppState? = n
             "tvmask" -> { BackHeader("Поиск ТВ по маске ссылки", onBack); MaskSearchScreen() }
             "dpi" -> ProtectScreen(1, 0, state)
             "anon" -> ProtectScreen(2, 0, state)
-            "keys" -> pro.sitescope.app.keys.KeyHubScreen(onBack)
+            "keys" -> pro.sitescope.app.keys.KeyHubScreen(onBack, onVpnServer = { id ->
+                if (state != null) state.openRoute("vpn", 1, id)
+                else open(context, ToolActivity::class.java) {
+                    putExtra("screen", "vpn")
+                    putExtra("tab", 1)
+                    putExtra("targets", id)
+                }
+            })
             "tvlan" -> { BackHeader("ТВ в локальной сети", onBack); TvLanScreen() }
             "metrics" -> { BackHeader("Метрики поиска", onBack); MetricsScreen(targets) }
             "batch" -> { BackHeader("Проверка списка сайтов", onBack); BatchScreen() }

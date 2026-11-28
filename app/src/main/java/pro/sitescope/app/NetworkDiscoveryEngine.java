@@ -53,6 +53,10 @@ public final class NetworkDiscoveryEngine {
     }
 
     public static Task start(final Context context, final Listener listener) {
+        return start(context, null, listener);
+    }
+
+    public static Task start(final Context context, final Network requestedLan, final Listener listener) {
         final Task task = new Task();
         task.thread = new Thread(new Runnable() {
             @Override public void run() {
@@ -60,7 +64,7 @@ public final class NetworkDiscoveryEngine {
                 WifiManager.MulticastLock multicastLock = null;
                 String error = "";
                 try {
-                    selectLan(context, task);
+                    selectLan(context, task, requestedLan);
                     task.scope = NetworkScope.capture(context, task.lan);
                     WifiManager wifi = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
                     if (wifi != null && task.wifi) {
@@ -97,9 +101,10 @@ public final class NetworkDiscoveryEngine {
             && (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET));
     }
 
-    private static void selectLan(Context context, Task task) throws Exception {
+    private static void selectLan(Context context, Task task, Network requestedLan) throws Exception {
         ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm != null) for (Network network : cm.getAllNetworks()) {
+            if (requestedLan != null && !requestedLan.equals(network)) continue;
             NetworkCapabilities caps = cm.getNetworkCapabilities(network);
             if (!isLan(caps)) continue;
             LinkProperties props = cm.getLinkProperties(network);

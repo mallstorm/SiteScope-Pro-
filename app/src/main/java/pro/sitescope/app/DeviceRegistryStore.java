@@ -97,6 +97,42 @@ public final class DeviceRegistryStore {
         return NetworkScope.digest(host.toLowerCase(Locale.US)+"|"+port+"|"+protocol+"|"+(path==null||path.isEmpty()?"/":path));
     }
 
+    private static final String RESET_THROUGH = "device_archive_reset_through";
+
+    /** Clears discovered cards without deleting saved connections or the original port reports. */
+    public static synchronized void clearArchive(Context context) {
+        SQLiteDatabase db = AppDatabase.get(context).write();
+        db.beginTransaction();
+        try {
+            setResetThrough(db, System.currentTimeMillis());
+            db.delete("inventory_snapshots", null, null);
+            db.delete("device_observations", "kind IN ('discovery','scan')", null);
+            db.execSQL("DELETE FROM device_cards WHERE NOT EXISTS(SELECT 1 FROM device_observations o WHERE o.card_id=device_cards.id)");
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    private static long resetThrough(SQLiteDatabase db) {
+        try (Cursor cursor = db.query("app_meta", new String[]{"value"}, "key=?", new String[]{RESET_THROUGH}, null, null, null)) {
+            return cursor.moveToFirst() ? cursor.getLong(0) : -1L;
+        }
+    }
+
+    static void setResetThrough(SQLiteDatabase db, long timestamp) {
+        if (timestamp < 0) {
+            db.delete("app_meta", "key=?", new String[]{RESET_THROUGH});
+            return;
+        }
+        ContentValues cutoff = new ContentValues();
+        cutoff.put("key", RESET_THROUGH);
+        cutoff.put("value", Long.toString(timestamp));
+        if (db.insertWithOnConflict("app_meta", null, cutoff, SQLiteDatabase.CONFLICT_REPLACE) < 0) {
+            throw new IllegalStateException("Не удалось сохранить состояние архива устройств");
+        }
+    }
+
     /** Copies are collected outside the registry lock to avoid cross-store lock inversion. */
     public static void sync(Context context) {
         List<DeviceInventoryStore.Snapshot> snapshots=DeviceInventoryStore.list(context);
@@ -105,13 +141,15 @@ public final class DeviceRegistryStore {
         synchronized(DeviceRegistryStore.class) {
             SQLiteDatabase db=AppDatabase.get(context).write();db.beginTransaction();
             try {
+                long cutoff = resetThrough(db);
                 for(DeviceInventoryStore.Snapshot s:snapshots) {
+                    if (s.timestamp <= cutoff) continue;
                     List<Observation> batch=new ArrayList<Observation>();
                     for(Models.DiscoveredDevice d:s.devices)batch.add(discovery(d,d.scope==null?new NetworkScope("legacy:discovery:"+s.id,"Сеть прежнего поиска не определена",false):d.scope,s.timestamp));
                     markAmbiguous(batch);
                     for(Observation o:batch)observe(db,o,true);DeviceHistoryStore.prune(db,System.currentTimeMillis());
                 }
-                Cursor scans=db.rawQuery("SELECT s.json,r.json FROM scan_results r JOIN scan_sessions s ON s.row_id=r.session_id ORDER BY s.timestamp ASC",null);
+                Cursor scans=db.rawQuery("SELECT s.json,r.json FROM scan_results r JOIN scan_sessions s ON s.row_id=r.session_id WHERE s.timestamp>? ORDER BY s.timestamp ASC",new String[]{Long.toString(cutoff)});
                 try { while(scans.moveToNext()) {
                     JSONObject session=new JSONObject(scans.getString(0));
                     NetworkScope scope=NetworkScope.fromJson(session.optJSONObject("scope"),"scan:"+session.optLong("timestamp")+":"+NetworkScope.digest(session.optString("targetExpression")));
@@ -138,7 +176,7 @@ public final class DeviceRegistryStore {
     }
     static void recordBatch(SQLiteDatabase db,List<Observation> batch) {
         db.beginTransaction();
-        try{markAmbiguous(batch);int count=0;for(Observation o:batch){observe(db,o,true);if(++count%500==0)DeviceHistoryStore.prune(db,System.currentTimeMillis());}DeviceHistoryStore.prune(db,System.currentTimeMillis());db.setTransactionSuccessful();}finally{db.endTransaction();}
+        try{markAmbiguous(batch);long cutoff=resetThrough(db);int count=0;for(Observation o:batch){if(!"profile".equals(o.kind)&&o.seenAt<=cutoff)continue;observe(db,o,true);if(++count%500==0)DeviceHistoryStore.prune(db,System.currentTimeMillis());}DeviceHistoryStore.prune(db,System.currentTimeMillis());db.setTransactionSuccessful();}finally{db.endTransaction();}
     }
     private static String observe(SQLiteDatabase db,Observation o) { return observe(db,o,false); }
     private static String observe(SQLiteDatabase db,Observation o,boolean history) {
@@ -237,6 +275,8 @@ public final class DeviceRegistryStore {
     static JSONObject exportGraph(SQLiteDatabase db) throws Exception {
         JSONObject root=new JSONObject();JSONArray cards=new JSONArray(),observations=new JSONArray();db.beginTransactionNonExclusive();
         try {
+            long cutoff = resetThrough(db);
+            if (cutoff >= 0) root.put("resetThrough", cutoff);
             Cursor c=db.query("device_cards",null,null,null,null,null,"id");try{while(c.moveToNext()){JSONObject o=new JSONObject();o.put("id",c.getString(c.getColumnIndexOrThrow("id")));o.put("alias",c.getString(c.getColumnIndexOrThrow("alias")));o.put("createdAt",c.getLong(c.getColumnIndexOrThrow("created_at")));o.put("updatedAt",c.getLong(c.getColumnIndexOrThrow("updated_at")));o.put("names",new JSONArray(c.getString(c.getColumnIndexOrThrow("names"))));cards.put(o);}}finally{c.close();}
             c=db.query("device_observations",new String[]{"card_id","json"},null,null,null,null,"id");try{while(c.moveToNext()){JSONObject o=new JSONObject(c.getString(1));o.put("cardId",c.getString(0));observations.put(o);}}finally{c.close();}
             root.put("history",DeviceHistoryStore.exportState(db));root.put("cards",cards);root.put("observations",observations);db.setTransactionSuccessful();return root;
@@ -249,7 +289,9 @@ public final class DeviceRegistryStore {
         DeviceHistoryStore.validate(graph.optJSONObject("history"),ids);
     }
     static void restoreGraph(SQLiteDatabase db,JSONObject graph) throws Exception {
-        if(graph!=null)validateGraph(graph);db.delete("device_observations",null,null);db.delete("device_cards",null,null);if(graph==null){DeviceHistoryStore.restore(db,null);return;}
+        if(graph!=null)validateGraph(graph);db.delete("device_observations",null,null);db.delete("device_cards",null,null);
+        setResetThrough(db, graph == null ? -1L : graph.optLong("resetThrough", -1L));
+        if(graph==null){DeviceHistoryStore.restore(db,null);return;}
         JSONArray cards=graph.getJSONArray("cards"),rows=graph.getJSONArray("observations");
         for(int i=0;i<cards.length();i++){JSONObject o=cards.getJSONObject(i);ContentValues v=new ContentValues();v.put("id",o.getString("id"));v.put("alias",o.optString("alias"));v.put("names",o.optJSONArray("names")==null?"[]":o.optJSONArray("names").toString());v.put("created_at",o.optLong("createdAt"));v.put("updated_at",o.optLong("updatedAt"));db.insertOrThrow("device_cards",null,v);refreshSearch(db,o.getString("id"));}
         for(int i=0;i<rows.length();i++){JSONObject o=rows.getJSONObject(i);writeObservation(db,o.getString("cardId"),Observation.fromJson(o));}

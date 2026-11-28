@@ -182,6 +182,17 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
         val error = withContext(Dispatchers.IO) { try { servers.add(raw.trim()); null } catch (e: Exception) { e.message ?: "Ссылка не распознана" } }
         withContext(Dispatchers.IO) { reloadData() }; done(error)
     }
+    fun refreshServers() = io { }
+
+    fun prepareServerConnection(id: String, done: (Boolean) -> Unit) = viewModelScope.launch {
+        val selected = withContext(Dispatchers.IO) {
+            runCatching { servers.select(id); reloadData() }.isSuccess
+        }
+        if (selected) mode = VpnMode.SERVER
+        else appliedNote = "Сервер недоступен"
+        done(selected)
+    }
+
     fun selectServer(id: String) = io { servers.select(id); if (serverActive && runningProfileId != id) { reloadData(); viewModelScope.launch { mode = VpnMode.SERVER; start() } } }
     fun renameServer(id: String, name: String) = io { servers.rename(id, name.trim()) }
     fun deleteServer(id: String) = io { servers.delete(id) }
@@ -397,7 +408,7 @@ class VpnViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 @Composable
-fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () -> Unit = {}, showTabs: Boolean = true, onKeys: () -> Unit = {}, vm: VpnViewModel = viewModel()) {
+fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () -> Unit = {}, showTabs: Boolean = true, onKeys: () -> Unit = {}, requestedServer: String? = null, vm: VpnViewModel = viewModel()) {
     val context = LocalContext.current
     var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 9)) }
     androidx.activity.compose.BackHandler(enabled = !showTabs && tab in listOf(0, 2, 3, 4, 5)) { tab = 9 }
@@ -408,6 +419,16 @@ fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () 
         if (vm.mode == VpnMode.SERVER && vm.selectedServer.isEmpty()) { toast(context, "Сначала добавьте сервер"); tab = 1; return }
         val prepare = try { VpnService.prepare(context) } catch (e: Exception) { null }
         if (prepare != null) permission.launch(prepare) else vm.start()
+    }
+    LaunchedEffect(requestedServer) { vm.refreshServers() }
+    var preparingServer by remember { mutableStateOf(false) }
+    fun connectServer(id: String) {
+        if (vm.busy || preparingServer) return
+        preparingServer = true
+        vm.prepareServerConnection(id) {
+            preparingServer = false
+            if (it) connect()
+        }
     }
     // Ссылка сервера из QR-кода: добавляем и показываем вкладку «Серверы».
     LaunchedEffect(importLink) {
@@ -433,7 +454,7 @@ fun VpnScreen(initialTab: Int = 0, importLink: String? = null, onImportDone: () 
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) {
             when (tab) {
                 0 -> HostsTab(vm)
-                1 -> ServersTab(vm)
+                1 -> ServersTab(vm, requestedServer, preparingServer, ::connectServer)
                 2 -> DnsTab(vm)
                 3 -> RoutesTab(vm)
                 4 -> CaptureTab(vm)
@@ -573,15 +594,30 @@ private fun EntrySheet(vm: VpnViewModel, existing: HostsEntry?, onClose: () -> U
 // ------------------------------------------------------------------ Серверы
 
 @Composable
-private fun ServersTab(vm: VpnViewModel) {
+private fun ServersTab(vm: VpnViewModel, requestedServer: String?, preparing: Boolean, onConnectServer: (String) -> Unit) {
     val context = LocalContext.current
     var adding by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<XrayProfileStore.Info?>(null) }
     var rename by remember { mutableStateOf<XrayProfileStore.Info?>(null) }
     val t = tones
     SectionTitle("Серверы")
-    Text("Ваши серверы Xray (VLESS, VMess, Trojan, Shadowsocks). Ключи хранятся в защищённом хранилище телефона.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("Серверы Xray и прокси SOCKS5 / HTTP CONNECT. HTTP CONNECT передаёт TCP.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(8.dp))
+    vm.serverList.firstOrNull { it.id == requestedServer }?.let { profile ->
+        val connected = vm.serverActive && vm.runningProfileId == profile.id
+        SoftCard(color = t.infoSoft, modifier = Modifier.padding(bottom = 8.dp)) {
+            Text(profile.name, style = MaterialTheme.typography.titleSmall)
+            Text("${profile.type} · ${profile.endpoint}", style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { onConnectServer(profile.id) }, enabled = !preparing && !vm.busy && !connected,
+                modifier = Modifier.padding(top = 6.dp)) {
+                Text(when {
+                    connected -> "Подключено"
+                    vm.active -> "Переключить VPN"
+                    else -> "Подключить через этот сервер"
+                })
+            }
+        }
+    }
     if (vm.serverList.size > 1) {
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { vm.pingServers() }, enabled = !vm.pingingServers, modifier = Modifier.weight(1f)) {

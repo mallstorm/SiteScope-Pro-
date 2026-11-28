@@ -49,13 +49,50 @@ public final class XrayProfileStore {
     }
 
     public synchronized Info add(String raw) throws Exception {
+        return insert(raw, XrayProfileParser.parse(raw), true);
+    }
+
+    /** Import from the key catalogue without changing which server is currently selected. */
+    public synchronized Info importFromCatalogue(String raw, boolean[] created) throws Exception {
         XrayProfileParser.ParsedProfile parsed = XrayProfileParser.parse(raw);
+        String key = importIdentity(raw);
+        for (Info profile : profiles()) {
+            if (!parsed.type.equals(profile.type) || !parsed.endpoint.equals(profile.endpoint)) continue;
+            String saved = raw(profile.id);
+            if (key.equals(importIdentity(saved)) || sameOutbound(parsed, saved)) {
+                created[0] = false;
+                return profile;
+            }
+        }
+        Info profile = insert(raw, parsed, ids().isEmpty());
+        created[0] = true;
+        return profile;
+    }
+
+    private static String importIdentity(String raw) {
+        String clean = raw.trim();
+        int label = clean.indexOf('#');
+        return label < 0 ? clean : clean.substring(0, label);
+    }
+
+    private static boolean sameOutbound(XrayProfileParser.ParsedProfile profile, String saved) {
+        if (profile.outbound == null) return false;
+        try {
+            return profile.outbound.toString().equals(String.valueOf(XrayProfileParser.parse(saved).outbound));
+        } catch (Exception invalid) {
+            return false;
+        }
+    }
+
+    private Info insert(String raw, XrayProfileParser.ParsedProfile parsed, boolean select) throws Exception {
         String id = UUID.randomUUID().toString();
         secure.put(secretKey(id), raw.trim());
         writeMetadata(id, parsed.name, parsed.type, parsed.endpoint, System.currentTimeMillis());
         List<String> ids = ids();
         ids.add(id);
-        prefs.edit().putString(KEY_IDS, encodeIds(ids)).putString(KEY_ACTIVE, id).apply();
+        SharedPreferences.Editor edit = prefs.edit().putString(KEY_IDS, encodeIds(ids));
+        if (select) edit.putString(KEY_ACTIVE, id);
+        edit.apply();
         return info(id);
     }
 

@@ -178,14 +178,18 @@ public final class XrayProfileParser {
         int hash = body.indexOf('#');
         if (hash >= 0) { name = decode(body.substring(hash + 1)); body = body.substring(0, hash); }
         int question = body.indexOf('?'); if (question >= 0) body = body.substring(0, question);
-        int slash = body.indexOf('/'); if (slash >= 0) body = body.substring(0, slash);
+        int slash = body.indexOf('/', body.lastIndexOf('@') + 1); if (slash >= 0) body = body.substring(0, slash);
         String user = "", pass = "", hostPort = body;
         int at = body.lastIndexOf('@');
         if (at >= 0) {
             String cred = body.substring(0, at); hostPort = body.substring(at + 1);
-            String text = cred.contains(":") ? cred : new String(decodeBase64(cred), StandardCharsets.UTF_8);
+            boolean urlEncoded = cred.contains(":");
+            String text = urlEncoded ? cred : new String(decodeBase64(cred), StandardCharsets.UTF_8);
             int colon = text.indexOf(':');
-            if (colon >= 0) { user = decode(text.substring(0, colon)); pass = decode(text.substring(colon + 1)); } else user = text;
+            if (colon >= 0) {
+                user = text.substring(0, colon); pass = text.substring(colon + 1);
+                if (urlEncoded) { user = decode(user); pass = decode(pass); }
+            } else user = text;
         }
         HostPort hp = splitHostPort(hostPort, socks ? 1080 : 8080);
         JSONObject server = new JSONObject();
@@ -299,6 +303,7 @@ public final class XrayProfileParser {
     private static byte[] decodeBase64(String value) {
         String clean = value == null ? "" : value.trim();
         int mod = clean.length() % 4; if (mod != 0) clean += "====".substring(mod);
+        if (clean.indexOf('+') >= 0 || clean.indexOf('/') >= 0) return Base64.decode(clean, Base64.DEFAULT);
         try { return Base64.decode(clean, Base64.URL_SAFE | Base64.NO_WRAP); }
         catch (Exception first) { return Base64.decode(clean, Base64.DEFAULT); }
     }

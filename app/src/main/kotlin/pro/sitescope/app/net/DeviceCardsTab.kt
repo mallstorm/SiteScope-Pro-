@@ -16,6 +16,8 @@ import androidx.compose.material.icons.rounded.*
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,45 +57,114 @@ private fun typeIcon(type: String, text: String): androidx.compose.ui.graphics.v
 
 @Composable
 internal fun DevicesTab(vm: NetViewModel, onTab: (Int) -> Unit = {}) {
+    var archive by rememberSaveable { mutableStateOf(false) }
+    LifecycleResumeEffect(vm) { vm.updateLan(); onPauseOrDispose { } }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(!archive, { archive = false }, { Text("Сейчас") })
+            FilterChip(archive, { archive = true }, { Text("Архив") })
+        }
+        if (archive) ArchivedDevicesTab(vm, onTab) else CurrentLanTab(vm)
+    }
+}
+
+@Composable
+private fun CurrentLanTab(vm: NetViewModel) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val devices = if (vm.lan != null) vm.liveAggregates() else emptyList()
+    val shown = devices.filter {
+        query.isBlank() || listOf(it.ip, it.title(), it.manufacturer, it.protocols.joinToString(" "))
+            .any { value -> value.contains(query.trim(), ignoreCase = true) }
+    }
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        MetricStrip(listOf(
+            Metric(Icons.Rounded.Wifi, "Подключение", vm.connectionLabel),
+            Metric(Icons.Rounded.Devices, "Найдено", devices.size.toString())
+        ))
+        if (vm.lan == null) {
+            EmptyState(Icons.Rounded.WifiOff, "Нет локальной сети",
+                "Подключитесь к Wi-Fi или Ethernet. Результаты прошлых проверок доступны в «Архиве».")
+            return@Column
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (vm.discovering) OutlinedButton(vm::stopDiscovery) { Text("Остановить") }
+            else Button(vm::startDiscovery) { Icon(Icons.Rounded.Radar, null); Spacer(Modifier.width(6.dp)); Text("Обновить поиск") }
+            if (vm.discoveryTime > 0L) Text("Поиск: ${cardTime(vm.discoveryTime)}", style = MaterialTheme.typography.labelSmall)
+        }
+        if (vm.discovering) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (vm.discoveryStatus.isNotBlank()) Text(vm.discoveryStatus, style = MaterialTheme.typography.bodySmall)
+        if (vm.discoveryError.isNotBlank()) ErrorCard(vm.discoveryError)
+        if (devices.isNotEmpty()) OutlinedTextField(
+            query, { query = it }, Modifier.fillMaxWidth(), label = { Text("Фильтр устройств") }, singleLine = true
+        )
+        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (!vm.discovering && shown.isEmpty()) item {
+                Text(when {
+                    query.isNotBlank() -> "Совпадений нет"
+                    vm.discoveryTime > 0L -> "Устройства не ответили на локальный поиск."
+                    else -> "Нажмите «Обновить поиск», чтобы проверить локальную сеть."
+                })
+            }
+            items(shown, key = { it.ip }) { device ->
+                var expanded by rememberSaveable { mutableStateOf(false) }
+                SoftCard(padding = 12.dp, onClick = { expanded = !expanded }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Devices, null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(device.title(), style = MaterialTheme.typography.titleSmall)
+                            Text(listOf(device.ip, device.manufacturer, device.model, device.protocols.joinToString(", "))
+                                .filter(String::isNotBlank).distinct().joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+                    }
+                    if (expanded) device.services.forEach { service ->
+                        Text(listOf(service.protocol, service.name, service.services).filter { !it.isNullOrBlank() }
+                            .distinct().joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArchivedDevicesTab(vm: NetViewModel, onTab: (Int) -> Unit) {
     var wol by remember { mutableStateOf(false) }
     var history by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val t = tones
-    val subnet = remember { vm.localSubnet() }
+    var clearArchive by remember { mutableStateOf(false) }
+    LaunchedEffect(vm) { vm.refreshCards() }
     var lastScan by remember { mutableStateOf<pro.sitescope.app.Models.ScanSession?>(null) }
     LaunchedEffect(vm.scan.active) {
         lastScan = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { try { pro.sitescope.app.DataStore(context.applicationContext).scans().firstOrNull() } catch (e: Exception) { null } }
     }
-    val liveIps = vm.live.map { it.ip }.toSet()
     var showFilters by remember { mutableStateOf(false) }
     var typeFilter by remember { mutableStateOf("") }
-    var onlyOnline by remember { mutableStateOf(false) }
     fun typeOf(card: DeviceRegistryStore.Card): String {
         val o = card.observations.firstOrNull()
         val ident = try { o?.identity() } catch (e: Exception) { null }
         return categoryOf(ident?.deviceType.orEmpty().ifEmpty { try { o?.data?.optString("deviceType").orEmpty() } catch (e: Exception) { "" } }, card.title + " " + card.protocols)
     }
-    fun isOnline(card: DeviceRegistryStore.Card) = card.addresses.split(',').any { it.trim() in liveIps }
-    val filtered = vm.cards.filter { (typeFilter.isEmpty() || typeOf(it) == typeFilter) && (!onlyOnline || isOnline(it)) }
+    val filtered = vm.cards.filter { typeFilter.isEmpty() || typeOf(it) == typeFilter }
     val present = vm.cards.map { typeOf(it) }.toSet()
-    val openServices = lastScan?.openResults?.size ?: 0
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        SmartSearchBar(vm.cardQuery, vm::searchCards, "Найти устройство, IP, MAC или сервис", onGo = { }, scan = true)
-        MetricStrip(listOf(
-            Metric(Icons.Rounded.Wifi, "Текущая сеть", subnet.ifEmpty { "—" }),
-            Metric(Icons.Rounded.Layers, "Найдено устройств", vm.cardCount.toString()),
-            Metric(Icons.Rounded.Storage, "Открытых сервисов", if (lastScan != null) openServices.toString() else "—")
-        ))
-        if (vm.discovering) Text("${vm.discoveryStatus} · ответов: ${vm.live.size}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (vm.discovering || vm.cardsLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if (vm.discoveryError.isNotBlank()) ErrorCard(vm.discoveryError)
+        SmartSearchBar(vm.cardQuery, vm::searchCards, "Найти устройство, IP, MAC или сервис", onGo = { vm.refreshCards() }, scan = true)
+        if (vm.cardsLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (vm.cardsError.isNotBlank()) ErrorCard(vm.cardsError)
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Обнаруженные устройства (${vm.cardCount})", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Архив карточек (${vm.cardCount})", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     TextButton(onClick = { showFilters = !showFilters }, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                        Icon(Icons.Rounded.FilterList, null, Modifier.size(18.dp)); Spacer(Modifier.width(2.dp)); Text(if (typeFilter.isNotEmpty() || onlyOnline) "Фильтры •" else "Фильтры", maxLines = 1)
+                        Icon(Icons.Rounded.FilterList, null, Modifier.size(18.dp)); Spacer(Modifier.width(2.dp)); Text(if (typeFilter.isNotEmpty()) "Фильтры •" else "Фильтры", maxLines = 1)
                     }
                     var menu by remember { mutableStateOf(false) }
                     Box {
@@ -104,26 +175,27 @@ internal fun DevicesTab(vm: NetViewModel, onTab: (Int) -> Unit = {}) {
                                 val text = vm.cards.joinToString("\n") { c -> c.title + " — " + c.addresses + " — " + c.protocols }
                                 shareText(context, text.ifEmpty { "Устройств нет" }, "Устройства сети")
                             })
+                            DropdownMenuItem(text = { Text("Обновить архив") }, leadingIcon = { Icon(Icons.Rounded.Refresh, null) },
+                                onClick = { menu = false; vm.refreshCards() })
+                            DropdownMenuItem(text = { Text("Очистить архив устройств") }, leadingIcon = { Icon(Icons.Rounded.DeleteOutline, null) },
+                                enabled = !vm.discovering && !vm.scan.active, onClick = { menu = false; clearArchive = true })
                             DropdownMenuItem(text = { Text("История изменений") }, leadingIcon = { Icon(Icons.Rounded.History, null) }, onClick = { menu = false; history = true })
                             DropdownMenuItem(text = { Text("Включить по сети (WoL)") }, leadingIcon = { Icon(Icons.Rounded.PowerSettingsNew, null) }, onClick = { menu = false; wol = true })
                         }
                     }
                     Spacer(Modifier.width(4.dp))
-                    if (vm.discovering) OutlinedButton(onClick = vm::stopDiscovery, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("Стоп") }
-                    else FilledTonalIconButton(onClick = vm::startDiscovery, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.Radar, "Найти устройства", Modifier.size(20.dp)) }
                 }
             }
             if (showFilters) item {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    MiniChip("Все", typeFilter.isEmpty() && !onlyOnline) { typeFilter = ""; onlyOnline = false }
-                    MiniChip("Онлайн", onlyOnline, dot = t.good) { onlyOnline = !onlyOnline }
+                    MiniChip("Все", typeFilter.isEmpty()) { typeFilter = "" }
                     CATEGORIES.filter { it.first in present }.forEach { (id, title) -> MiniChip(title, typeFilter == id) { typeFilter = if (typeFilter == id) "" else id } }
                 }
             }
             if (filtered.isEmpty() && vm.cards.isNotEmpty()) item { Text("Под выбранные фильтры ничего не подходит.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             if (vm.cards.isEmpty() && !vm.cardsLoading) item {
                 EmptyState(Icons.Rounded.Devices, if (vm.cardCount == 0) "Пока пусто" else "Ничего не найдено",
-                    "Нажмите «Найти», проверьте порты или сохраните подключение. Карточки сохраняются между запусками.")
+                    "Здесь сохраняются результаты прошлых проверок и карточки ваших подключений.")
             }
             items(filtered, key = { it.id }) { card ->
                 val obs = card.observations.firstOrNull()
@@ -131,7 +203,6 @@ internal fun DevicesTab(vm: NetViewModel, onTab: (Int) -> Unit = {}) {
                 val vendor = identity?.manufacturer.orEmpty()
                 val type = identity?.deviceType.orEmpty().ifEmpty { try { obs?.data?.optString("deviceType").orEmpty() } catch (e: Exception) { "" } }
                 val protocols = card.protocols.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-                val online = card.addresses.split(',').any { it.trim() in liveIps }
                 val confidence = identity?.confidenceLabel() ?: "—"
                 Row(
                     Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest)
@@ -155,8 +226,7 @@ internal fun DevicesTab(vm: NetViewModel, onTab: (Int) -> Unit = {}) {
                             Text(confidence, style = MaterialTheme.typography.labelSmall, maxLines = 2)
                         }
                         Spacer(Modifier.height(3.dp))
-                        if (online) Pill("Онлайн", t.good, t.goodSoft, icon = Icons.Rounded.Circle)
-                        else Pill(if (vm.discovering) "Ждём ответа" else "Не отвечает", MaterialTheme.colorScheme.onSurfaceVariant, MaterialTheme.colorScheme.surfaceContainerHigh)
+                        Text(cardTime(card.updatedAt), style = MaterialTheme.typography.labelSmall, maxLines = 2)
                     }
                     Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.outline)
                 }
@@ -187,7 +257,7 @@ internal fun DevicesTab(vm: NetViewModel, onTab: (Int) -> Unit = {}) {
                             Spacer(Modifier.width(8.dp)); Text("$done%", style = MaterialTheme.typography.labelLarge)
                         }
                         Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                            ScanStat(Icons.Rounded.Devices, "Найдено устройств", vm.cardCount.toString(), Modifier.weight(1f))
+                            ScanStat(Icons.Rounded.Devices, "Адресов с ответом", s.openResults.map { it.ip }.distinct().size.toString(), Modifier.weight(1f))
                             ScanStat(Icons.Rounded.Layers, "Проверено портов", "%,d".format(Locale("ru"), s.completedProbes), Modifier.weight(1f))
                             ScanStat(Icons.Rounded.LockOpen, "Открытых сервисов", s.openResults.size.toString(), Modifier.weight(1f))
                             ScanStat(Icons.Rounded.WarningAmber, "Рискованных портов", risky.toString(), Modifier.weight(1f), if (risky == 0) t.good else t.bad)
@@ -198,7 +268,6 @@ internal fun DevicesTab(vm: NetViewModel, onTab: (Int) -> Unit = {}) {
             item {
                 CompactTitle("Быстрые действия")
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    NetQuick(Icons.Rounded.Search, "Найти", "Устройство или сервис в сети", Modifier.weight(1f)) { if (!vm.discovering) vm.startDiscovery() }
                     NetQuick(Icons.Rounded.Checklist, "Сканер портов", "Проверка портов и сервисов", Modifier.weight(1f)) { onTab(1) }
                     NetQuick(Icons.Rounded.AddCircleOutline, "Добавить подключение", "VPN, SSH, RDP и др.", Modifier.weight(1f)) { onTab(2) }
                 }
@@ -211,6 +280,13 @@ internal fun DevicesTab(vm: NetViewModel, onTab: (Int) -> Unit = {}) {
     vm.selectedCard?.let { DeviceCardSheet(vm, it) }
     if (wol) WolSheet(vm) { wol = false }
     if (history) DeviceHistorySheet("") { history = false }
+    if (clearArchive) AlertDialog(
+        onDismissRequest = { clearArchive = false },
+        title = { Text("Очистить архив устройств?") },
+        text = { Text("Удалятся снимки локальной сети и карточки из прошлых обнаружений и проверок портов вместе с их историей. Сохранённые подключения и отчёты о портах останутся.") },
+        confirmButton = { TextButton({ clearArchive = false; vm.clearDeviceArchive() }) { Text("Очистить") } },
+        dismissButton = { TextButton({ clearArchive = false }) { Text("Отмена") } }
+    )
 }
 
 @Composable

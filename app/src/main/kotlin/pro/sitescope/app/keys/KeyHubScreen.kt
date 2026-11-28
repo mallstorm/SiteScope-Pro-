@@ -200,11 +200,38 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun addToServers(list: List<KeyItem>, done: (Int) -> Unit) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val store = XrayProfileStore(context); var n = 0
-            for (k in list) try { KeyExport.profileLink(k)?.let { store.add(it); n++ } } catch (e: Exception) { }
-            withContext(Dispatchers.Main) { done(n) }
+    data class ServerImport(val added: Int, val existing: Int, val skipped: Int, val onlyId: String?)
+
+    var importing by mutableStateOf(false)
+        private set
+
+    fun addToServers(list: List<KeyItem>, done: (ServerImport) -> Unit) {
+        if (importing) return
+        importing = true
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val store = XrayProfileStore(context)
+                    var added = 0
+                    var existing = 0
+                    var onlyId: String? = null
+                    val created = BooleanArray(1)
+                    for (key in list) {
+                        val link = KeyExport.profileLink(key) ?: continue
+                        val profile = runCatching { store.importFromCatalogue(link, created) }.getOrNull() ?: continue
+                        if (created[0]) added++ else existing++
+                        if (list.size == 1) onlyId = profile.id
+                    }
+                    ServerImport(added, existing, list.size - added - existing, onlyId)
+                }
+                done(result)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                done(ServerImport(0, 0, list.size, null))
+            } finally {
+                importing = false
+            }
         }
     }
 }
@@ -212,7 +239,7 @@ class KeyHubViewModel(app: Application) : AndroidViewModel(app) {
 private fun countryName(code: String) = if (code.length != 2) "Не определена" else Locale("", code).getDisplayCountry(Locale("ru")).replaceFirstChar { it.uppercase() }.ifEmpty { code }
 
 @Composable
-fun KeyHubScreen(onBack: () -> Unit, vm: KeyHubViewModel = viewModel()) {
+fun KeyHubScreen(onBack: () -> Unit, onVpnServer: (String) -> Unit, vm: KeyHubViewModel = viewModel()) {
     var tab by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         AppHeader("Ключи и прокси", "VLESS, VMess, SS, Trojan, SOCKS, HTTP, Hysteria2, WireGuard", onBack = onBack) {
@@ -221,7 +248,7 @@ fun KeyHubScreen(onBack: () -> Unit, vm: KeyHubViewModel = viewModel()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (tab) {
                 0 -> SearchTab(vm, onShow = { tab = 1 })
-                1 -> KeysTab(vm)
+                1 -> KeysTab(vm, onVpnServer)
                 else -> SettingsTab(vm)
             }
         }
@@ -308,7 +335,7 @@ private fun SearchTab(vm: KeyHubViewModel, onShow: () -> Unit) {
 // ------------------------------------------------------------------ Ключи
 
 @Composable
-private fun KeysTab(vm: KeyHubViewModel) {
+private fun KeysTab(vm: KeyHubViewModel, onVpnServer: (String) -> Unit) {
     val context = LocalContext.current
     val t = tones
     var country by remember { mutableStateOf<String?>(null) }
@@ -353,7 +380,9 @@ private fun KeysTab(vm: KeyHubViewModel) {
             if (all.any { it.proxy }) { MiniChip("Элитные", elite) { elite = !elite }; MiniChip("HTTPS ✓", httpsOnly) { httpsOnly = !httpsOnly } }
             if (all.any { it.v6 }) MiniChip("IPv6", v6Only) { v6Only = !v6Only }
         }
-        if (vm.running) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (vm.running || vm.importing) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (all.any { it.proxy }) Text("Значок ключа открывает сервер в VPN. Для HTTP требуется отметка HTTPS ✓.",
+            Modifier.padding(horizontal = 12.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall)
         if (shown.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
             Text(if (all.isEmpty()) "Ключей пока нет. Запустите поиск на первой вкладке." else "Нет ключей под выбранные фильтры", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -375,6 +404,14 @@ private fun KeysTab(vm: KeyHubViewModel) {
                             k.ms == -2L -> Pill("нет", t.bad, t.badSoft)
                             k.tls == 2 -> Pill("TLS ✗", t.warn, t.warnSoft)
                             else -> Pill("${k.ms} мс", if (k.ms <= 150) t.good else if (k.ms <= 400) t.warn else t.bad, if (k.ms <= 150) t.goodSoft else if (k.ms <= 400) t.warnSoft else t.badSoft)
+                        }
+                        if (KeyExport.canConnect(k)) IconButton(onClick = {
+                            vm.addToServers(listOf(k)) { result ->
+                                val id = result.onlyId
+                                if (id != null) onVpnServer(id) else toast(context, "Не удалось открыть сервер в VPN")
+                            }
+                        }, enabled = !vm.importing) {
+                            Icon(Icons.Rounded.VpnKey, "Использовать в VPN")
                         }
                     }
                 }
@@ -436,7 +473,10 @@ private fun ExportSheet(vm: KeyHubViewModel, chosen: List<KeyItem>, onClose: () 
             if (chosen.any { it.proxy }) ExportRow(Icons.Rounded.FormatListBulleted, "Список ip:port (прокси)", "Для ручного добавления SOCKS и HTTP в любое приложение") { copyText(context, KeyExport.hostPort(chosen), "Скопировано"); onClose() }
             ExportRow(Icons.Rounded.Share, "Поделиться", "Отправить список в другое приложение") { shareText(context, text, "Ключи Xray"); onClose() }
             ExportRow(Icons.Rounded.Download, "Добавить в мои серверы", "Появятся на вкладке «Серверы» и в пуле ротации") {
-                vm.addToServers(chosen) { n -> toast(context, "Добавлено серверов: $n" + (if (n < chosen.size) " (Hysteria2, TUIC и WireGuard ядро пока не принимает)" else "")); onClose() }
+                vm.addToServers(chosen) { result ->
+                    toast(context, "Добавлено ${result.added} · уже есть ${result.existing} · пропущено ${result.skipped}")
+                    onClose()
+                }
             }
             ExportRow(Icons.Rounded.Wifi, if (serving) "Подписка по Wi-Fi: выключить" else "Подписка по Wi-Fi: включить", "Ссылка вида http://адрес/sub/… для v2rayNG, пока телефон в одной сети") {
                 if (serving) { KeySubServer.stop(); serving = false } else serving = KeySubServer.start(sub)

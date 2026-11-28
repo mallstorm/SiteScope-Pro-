@@ -4,6 +4,10 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.LinkProperties
+import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
@@ -30,7 +34,6 @@ import pro.sitescope.app.SettingsStore
 import pro.sitescope.app.ip.IpTools
 import java.net.DatagramPacket
 import java.net.DatagramSocket
-import java.net.Inet4Address
 import java.net.InetAddress
 
 /** Готовые наборы портов для сканера — чтобы не вспоминать номера. */
@@ -105,6 +108,15 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+    fun clearDeviceArchive() {
+        if (discovering || scan.active) return
+        changeCard { DeviceRegistryStore.clearArchive(context) }
+        live.clear()
+        discoveryTime = 0L
+        latest = null
+        previous = null
+        snapshotCount = 0
+    }
     fun renameCard(id: String, name: String) = changeCard { DeviceRegistryStore.rename(context, id, name) }
     fun mergeCards(target: String, other: String) = changeCard { DeviceRegistryStore.merge(context, target, other) }
     fun splitCard(id: String, observations: List<String>, name: String) = changeCard { DeviceRegistryStore.split(context, id, observations, name) }
@@ -125,24 +137,87 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
         latest = list.getOrNull(0); previous = list.getOrNull(1); snapshotCount = list.size
     }
 
+    private val connectivity get() = context.getSystemService(ConnectivityManager::class.java)
+    internal var lan by mutableStateOf<LocalLan?>(null); private set
+    var connectionLabel by mutableStateOf(""); private set
+    var discoveryTime by mutableStateOf(0L); private set
+    private var discoveryGeneration = 0
+    private fun watchNetworks() = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { main.post { updateLan() } }
+        override fun onLost(network: Network) { main.post { updateLan() } }
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) { main.post { updateLan() } }
+        override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) { main.post { updateLan() } }
+    }
+    private val defaultCallback = watchNetworks()
+    private val lanCallback = watchNetworks()
+    private var cleared = false
+
+    fun updateLan() {
+        if (cleared) return
+        val manager = connectivity
+        val next = manager?.let { runCatching { findLocalLan(it) }.getOrNull() }
+        connectionLabel = if (next != null) next.description + " · " + next.subnet else {
+            val caps = manager?.activeNetwork?.let { manager.getNetworkCapabilities(it) }
+            when {
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "Мобильная сеть"
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true -> "VPN · локальная сеть не определена"
+                else -> "Wi-Fi или Ethernet не подключены"
+            }
+        }
+        if (lan != next) {
+            val wasSearching = discovering
+            lan = next
+            discoveryGeneration++
+            task?.cancel()
+            task = null
+            discovering = false
+            live.clear()
+            discoveryTime = 0L
+            discoveryStatus = ""
+            discoveryError = if (wasSearching) "Подключение изменилось. Запустите поиск для новой сети." else ""
+        }
+    }
+
     fun startDiscovery() {
+        updateLan()
         if (discovering) return
-        discovering = true; discoveryError = ""; discoveryStatus = "Ищем устройства в вашей сети…"; live.clear()
-        task = NetworkDiscoveryEngine.start(context, object : NetworkDiscoveryEngine.Listener {
-            override fun onStatus(status: String?) { main.post { discoveryStatus = status ?: "" } }
-            override fun onDevice(device: Models.DiscoveredDevice?) { if (device != null) main.post { live.add(device) } }
+        val target = lan ?: run {
+            discoveryError = "Для поиска устройств подключитесь к Wi-Fi или Ethernet."
+            return
+        }
+        val generation = ++discoveryGeneration
+        discovering = true
+        discoveryError = ""
+        discoveryStatus = "Ищем устройства"
+        discoveryTime = 0L
+        live.clear()
+        task = NetworkDiscoveryEngine.start(context, target.network, object : NetworkDiscoveryEngine.Listener {
+            override fun onStatus(status: String?) {
+                main.post { if (generation == discoveryGeneration) discoveryStatus = status.orEmpty() }
+            }
+            override fun onDevice(device: Models.DiscoveredDevice?) {
+                if (device != null) main.post { if (generation == discoveryGeneration) live.add(device) }
+            }
             override fun onComplete(devices: MutableList<Models.DiscoveredDevice>?, cancelled: Boolean, error: String?) {
                 main.post {
+                    updateLan()
+                    if (generation != discoveryGeneration) return@post
                     viewModelScope.launch {
+                        val finishedAt = System.currentTimeMillis()
                         val storageError = withContext(Dispatchers.IO) {
                             try {
                                 if (!devices.isNullOrEmpty()) DeviceInventoryStore.saveSnapshot(context, devices, "LAN Discovery")
                                 ""
                             } catch (e: Exception) { "Не удалось сохранить результаты поиска" }
                         }
+                        if (generation != discoveryGeneration) return@launch
                         discovering = false
-                        discoveryError = listOf(error ?: "", storageError).filter { it.isNotBlank() }.joinToString(" · ")
-                        live.clear(); loadSnapshots(); refreshCards()
+                        discoveryError = listOf(error.orEmpty(), storageError).filter(String::isNotBlank).joinToString(" · ")
+                        live.clear()
+                        live.addAll(devices.orEmpty())
+                        discoveryTime = if (!cancelled && (error.isNullOrBlank() || live.isNotEmpty())) finishedAt else 0L
+                        loadSnapshots()
+                        refreshCards()
                         discoveryStatus = if (cancelled) "Поиск остановлен" else ""
                     }
                 }
@@ -170,23 +245,20 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
     var scan by mutableStateOf(ScanService.snapshot()); private set
     private val observer = ScanService.Observer { s -> main.post { val finished = s.completed && (!scan.completed || scan.startedAt != s.startedAt); scan = s; if (finished) refreshCards() } }
 
-    override fun onCleared() { ScanService.unregister(observer); task?.cancel(); super.onCleared() }
-
-    /** Подсеть, к которой сейчас подключён телефон (не шире /24, чтобы проверка была быстрой). */
-    fun localSubnet(): String {
-        try {
-            val cm = context.getSystemService(ConnectivityManager::class.java) ?: return ""
-            val props = cm.getLinkProperties(cm.activeNetwork ?: return "") ?: return ""
-            for (la in props.linkAddresses) {
-                val a = la.address
-                if (a is Inet4Address && !a.isLoopbackAddress) {
-                    val b = a.address
-                    return "${b[0].toInt() and 255}.${b[1].toInt() and 255}.${b[2].toInt() and 255}.0/24"
-                }
-            }
-        } catch (e: Exception) { }
-        return ""
+    override fun onCleared() {
+        cleared = true
+        discoveryGeneration++
+        ScanService.unregister(observer)
+        task?.cancel()
+        connectivity?.let { manager ->
+            runCatching { manager.unregisterNetworkCallback(defaultCallback) }
+            runCatching { manager.unregisterNetworkCallback(lanCallback) }
+        }
+        super.onCleared()
     }
+
+    /** Ограниченный диапазон для поля целей. Туннель и сотовый интерфейс исключены. */
+    fun localSubnet(): String = connectivity?.let { runCatching { findLocalLan(it)?.scanSubnet }.getOrNull() }.orEmpty()
 
     class Plan(val hosts: Int, val ports: Int, val probes: Long, val needsConfirm: Boolean)
 
@@ -264,6 +336,15 @@ class NetViewModel(app: Application) : AndroidViewModel(app) {
         if (scan.targetExpression.isNotEmpty()) { targets = scan.targetExpression; ports = scan.portExpression }
         else targets = localSubnet()
         ScanService.register(observer)
+        updateLan()
+        connectivity?.let { manager ->
+            runCatching { manager.registerDefaultNetworkCallback(defaultCallback) }
+            runCatching {
+                val lanRequest = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                    .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET).build()
+                manager.registerNetworkCallback(lanRequest, lanCallback)
+            }
+        }
     }
 
     private fun loadWol() {
